@@ -1,0 +1,91 @@
+"""Gemeinsame Kommandozeilen-/Konfigurations-Hilfsfunktionen, die sowohl
+von der Pipeline (otr_obia_pipeline.py) als auch vom Daten-Check-Skript
+(check_data.py) verwendet werden, damit man Einstellungen nicht mehr im
+Code selbst ändern muss."""
+import argparse
+import json
+
+
+def build_arg_parser(description):
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "Pfad zu einer JSON-Datei mit Einstellungen, die die "
+            'Standardwerte aus CONFIG überschreiben, z.B. '
+            '{"imagery_dir": "...", "min_overlap_ratio": 0.4}.'
+        ),
+    )
+    parser.add_argument(
+        "--imagery-dir", dest="imagery_dir", metavar="DIR",
+        help="Ordner mit den Sentinel-2-GeoTIFFs (ein Bild pro Mine).",
+    )
+    parser.add_argument(
+        "--labels-path", dest="labels_path", metavar="PATH",
+        help="GeoPackage/Shapefile mit den digitalisierten Dump-Polygonen.",
+    )
+    parser.add_argument(
+        "--mine-id-field", dest="mine_id_field", metavar="SPALTE",
+        help="Spaltenname in labels_path, der die Minen-ID enthält.",
+    )
+    parser.add_argument(
+        "--output-dir", dest="output_dir", metavar="DIR",
+        help="Ausgabeordner für das klassifizierte GeoPackage.",
+    )
+    parser.add_argument(
+        "--n-segments-per-mine", dest="n_segments_per_mine", type=int, metavar="N",
+        help="SLIC-Zielanzahl Superpixel pro Mine.",
+    )
+    parser.add_argument(
+        "--compactness", dest="compactness", type=float,
+        help="SLIC-Kompaktheit (Form- vs. Farbtreue).",
+    )
+    parser.add_argument(
+        "--min-overlap-ratio", dest="min_overlap_ratio", type=float,
+        help="Mindest-Überlappungsanteil, ab dem ein Segment als positiv (Dump) gilt.",
+    )
+    parser.add_argument(
+        "--texture-band", dest="texture_band", metavar="BAND",
+        help="Name des Bands, auf dem die GLCM-Textur berechnet wird.",
+    )
+    parser.add_argument(
+        "--n-estimators", dest="n_estimators", type=int, metavar="N",
+        help="Anzahl Bäume im Random Forest.",
+    )
+    parser.add_argument(
+        "--random-state", dest="random_state", type=int,
+        help="Zufalls-Seed für reproduzierbare Ergebnisse.",
+    )
+    return parser
+
+
+def resolve_config(base_config, args):
+    """Baut die endgültige Konfiguration in dieser Prioritätsreihenfolge
+    (niedrigste zuerst): CONFIG-Standardwerte < --config-Datei <
+    einzelne Kommandozeilen-Flags."""
+    cfg = dict(base_config)
+
+    config_path = getattr(args, "config", None)
+    if config_path:
+        with open(config_path) as f:
+            overrides = json.load(f)
+        cfg.update(overrides)
+
+    cli_overrides = {
+        "imagery_dir": args.imagery_dir,
+        "labels_path": args.labels_path,
+        "mine_id_field": args.mine_id_field,
+        "output_dir": args.output_dir,
+        "n_segments_per_mine": args.n_segments_per_mine,
+        "compactness": args.compactness,
+        "min_overlap_ratio": args.min_overlap_ratio,
+        "texture_band": args.texture_band,
+        "n_estimators": args.n_estimators,
+        "random_state": args.random_state,
+    }
+    for key, value in cli_overrides.items():
+        if value is not None:
+            cfg[key] = value
+
+    return cfg

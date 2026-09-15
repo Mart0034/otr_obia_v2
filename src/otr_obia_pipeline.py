@@ -512,4 +512,10 @@ def main(cfg=CONFIG):
 
 
 if __name__ == "__main__":
-    main()
+    from cli import build_arg_parser, resolve_config
+
+    parser = build_arg_parser(
+        "OBIA-Pipeline: klassifiziert Sentinel-2-Segmente als Reifenhalde oder nicht."
+    )
+    cli_args = parser.parse_args()
+    main(resolve_config(CONFIG, cli_args))

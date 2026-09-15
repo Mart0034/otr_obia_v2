@@ -67,17 +67,54 @@ es landet also nichts davon im Git-Repository):
    Namensschema vorher zu prüfen (siehe `CONFIG["mine_id_field"]` /
    `extract_mine_id()` im Skript).
 
-## Pipeline ausführen
+## Daten vor dem Lauf prüfen
 
-Das `CONFIG`-Dictionary am Anfang von `src/otr_obia_pipeline.py`
-entsprechend den eigenen Daten anpassen (Pfade, Bandnamen, Schwellwerte),
-dann ausführen:
+Vor dem eigentlichen (unter Umständen langwierigen) Pipeline-Lauf lohnt
+sich der Daten-Check. Er meldet innerhalb weniger Sekunden, ob die
+GeoTIFFs die richtige Anzahl Bänder haben, wie viele Pixel fehlen/
+NoData sind, und ob die Minen-ID jeder Datei wirklich zu einem Eintrag
+in der Label-Datei passt:
 
 ```bash
-python3 src/otr_obia_pipeline.py
+python3 src/check_data.py --imagery-dir data/imagery --labels-path data/dump_labels.gpkg
 ```
 
-Das Skript macht dann Folgendes:
+Bei Problemen ist der Exit-Code ungleich null. Eine Mine mit
+"KEIN LABEL-MATCH" bedeutet: die aus dem Dateinamen erratene Minen-ID
+passt zu keinem Eintrag in der Label-Datei. Das sollte vor dem
+eigentlichen Pipeline-Lauf behoben werden, nicht danach.
+
+## Pipeline ausführen
+
+Einstellungen müssen nicht mehr im Code geändert werden. Entweder das
+`CONFIG`-Dictionary am Anfang von `src/otr_obia_pipeline.py` anpassen,
+oder Optionen direkt auf der Kommandozeile übergeben:
+
+```bash
+python3 src/otr_obia_pipeline.py \
+  --imagery-dir data/imagery \
+  --labels-path data/dump_labels.gpkg \
+  --output-dir output
+```
+
+`python3 src/otr_obia_pipeline.py --help` zeigt alle verfügbaren
+Optionen (dieselben Optionen funktionieren auch bei `check_data.py`).
+Eine ganze Reihe von Einstellungen lässt sich auch in einer JSON-Datei
+sammeln und mit `--config` übergeben:
+
+```json
+{"imagery_dir": "data/imagery", "min_overlap_ratio": 0.4, "n_estimators": 600}
+```
+
+```bash
+python3 src/otr_obia_pipeline.py --config my_settings.json
+```
+
+Einzelne Flags gewinnen immer gegenüber der Config-Datei, die Config-
+Datei gewinnt immer gegenüber den eingebauten Standardwerten in
+`CONFIG`.
+
+Der Pipeline-Lauf (mit beiden Methoden) macht dann Folgendes:
 1. Baut den Segment-Datensatz aus den Bildern und Labels aller Minen auf.
 2. Trainiert einen Random Forest und validiert ihn per Kreuzvalidierung
    (gruppiert nach Mine, damit keine Mine gleichzeitig in Training und

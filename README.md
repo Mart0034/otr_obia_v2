@@ -62,16 +62,51 @@ committed):
    front (see `CONFIG["mine_id_field"]` / `extract_mine_id()` in the
    script).
 
-## Running the pipeline
+## Checking your data before running
 
-Edit the `CONFIG` dictionary at the top of `src/otr_obia_pipeline.py` to
-point at your data (paths, band names, thresholds), then run:
+Before running the full pipeline (which can take a while), run the data
+checker. It reports, in seconds, whether your GeoTIFFs have the right
+number of bands, how many pixels are missing/no-data, and whether every
+mine's ID actually matches an entry in the labels file:
 
 ```bash
-python3 src/otr_obia_pipeline.py
+python3 src/check_data.py --imagery-dir data/imagery --labels-path data/dump_labels.gpkg
 ```
 
-This will:
+It exits with a non-zero status if anything looks wrong, so a mine
+listed as "KEIN LABEL-MATCH" (no matching label) means that mine's ID
+in the imagery filename doesn't line up with the labels file. Fix that
+before running the full pipeline, not after.
+
+## Running the pipeline
+
+You no longer need to edit the code to change settings. Either edit the
+`CONFIG` dictionary at the top of `src/otr_obia_pipeline.py`, or pass
+options on the command line:
+
+```bash
+python3 src/otr_obia_pipeline.py \
+  --imagery-dir data/imagery \
+  --labels-path data/dump_labels.gpkg \
+  --output-dir output
+```
+
+Run `python3 src/otr_obia_pipeline.py --help` to see every available
+option (same options work for `check_data.py`). You can also collect a
+whole set of settings in a JSON file and pass it with `--config`:
+
+```json
+{"imagery_dir": "data/imagery", "min_overlap_ratio": 0.4, "n_estimators": 600}
+```
+
+```bash
+python3 src/otr_obia_pipeline.py --config my_settings.json
+```
+
+Individual flags always win over the config file, which always wins
+over the built-in defaults in `CONFIG`.
+
+Running the pipeline (with either method) will:
 1. Build the segment dataset from every mine's imagery + labels.
 2. Train a Random Forest and cross-validate it (grouped by mine, so no
    mine's data leaks between training and validation).
