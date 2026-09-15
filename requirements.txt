@@ -1,7 +1,7 @@
 rasterio
 geopandas
 shapely
-scikit-image
+scikit-image>=0.19
 scikit-learn
 pandas
 numpy

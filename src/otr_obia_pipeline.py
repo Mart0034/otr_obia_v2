@@ -50,6 +50,7 @@ Erwartete Eingangsdaten:
 import os
 import glob
 import re
+import logging
 
 import numpy as np
 import pandas as pd
@@ -62,6 +63,8 @@ from skimage.feature import graycomatrix, graycoprops
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import classification_report, f1_score, roc_auc_score
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # KONFIGURATION - hier an die eigenen Pfade/Daten anpassen
@@ -89,7 +92,7 @@ CONFIG = {
 # ------------------------------------------------------------------
 # 1) Rasterdaten laden
 # ------------------------------------------------------------------
-def load_mine_raster(path):
+def load_mine_raster(path, expected_n_bands=None):
     """Lädt einen Sentinel-2-Stack (Bänder, Höhe, Breite) + Georeferenz."""
     with rasterio.open(path) as src:
         arr = src.read()  # shape: (bands, H, W)
@@ -97,6 +100,13 @@ def load_mine_raster(path):
         crs = src.crs
         nodata = src.nodata
     arr = np.moveaxis(arr, 0, -1)  # -> (H, W, bands)
+
+    if expected_n_bands is not None and arr.shape[-1] != expected_n_bands:
+        raise ValueError(
+            f"{path}: erwartet {expected_n_bands} Bänder (siehe CONFIG['band_names']), "
+            f"aber im GeoTIFF sind {arr.shape[-1]} Bänder vorhanden."
+        )
+    logger.debug("%s geladen: shape=%s, crs=%s, nodata=%s", path, arr.shape, crs, nodata)
     return arr, transform, crs, nodata
 
 
@@ -105,24 +115,52 @@ def extract_mine_id(filename, pattern=r"(mine[_\-]?\d+|\d+)"):
     Bei Bedarf an das tatsächliche Namensschema anpassen."""
     base = os.path.splitext(os.path.basename(filename))[0]
     m = re.search(pattern, base, flags=re.IGNORECASE)
-    return m.group(0) if m else base
+    mine_id = m.group(0) if m else base
+    if m is None:
+        logger.warning(
+            "Konnte keine mine_id aus Dateiname '%s' extrahieren, verwende den "
+            "vollständigen Dateinamen ('%s') als mine_id. Prüfe ggf. das "
+            "Namensschema/die pattern-Regex.", filename, mine_id,
+        )
+    return mine_id
 
 
 # ------------------------------------------------------------------
 # 2) Segmentierung
 # ------------------------------------------------------------------
-def segment_mine(arr, n_segments, compactness):
+def segment_mine(arr, n_segments, compactness, nodata=None):
     """SLIC-Superpixel-Segmentierung auf allen Bändern gleichzeitig.
     Ersetzt die GRASS-i.segment-Variante aus QGIS/GRASS, funktioniert
     aber identisch im Prinzip (Region-Growing/Clustering) und ist
     reiner Python-Code ohne GRASS-Abhängigkeit."""
-    # NaNs/Inf robust behandeln
+    # Gültige Pixel bestimmen (kein NoData, keine NaN/Inf-Werte) -> werden
+    # von der Segmentierung ausgeschlossen, damit keine "Fantasie-Segmente"
+    # aus randlichen/fehlenden Bildbereichen entstehen und die spätere
+    # Normierung nicht verzerrt wird.
+    valid_mask = np.all(np.isfinite(arr), axis=-1)
+    if nodata is not None:
+        valid_mask &= ~np.all(arr == nodata, axis=-1)
+    if not valid_mask.any():
+        raise ValueError("Rasterbild enthält keine gültigen (Nicht-NoData) Pixel.")
+
+    n_invalid = int((~valid_mask).sum())
+    if n_invalid > 0:
+        logger.info(
+            "%d von %d Pixeln als NoData/ungültig erkannt und von der "
+            "Segmentierung ausgeschlossen.", n_invalid, valid_mask.size,
+        )
+
+    # NaNs/Inf robust behandeln (nur zur Absicherung; die als NoData
+    # markierten Pixel fließen dank 'mask' unten ohnehin nicht ins Ergebnis ein)
     safe_arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
     # SLIC erwartet vernünftig skalierte Werte -> pro Band normieren
+    # (Perzentile nur über gültige Pixel, damit NoData die Skalierung nicht verzerrt)
     norm = np.zeros_like(safe_arr, dtype=np.float32)
     for b in range(safe_arr.shape[-1]):
         band = safe_arr[..., b]
-        lo, hi = np.percentile(band, [2, 98])
+        valid_band = band[valid_mask]
+        lo, hi = np.percentile(valid_band, [2, 98])
         if hi - lo < 1e-6:
             hi = lo + 1e-6
         norm[..., b] = np.clip((band - lo) / (hi - lo), 0, 1)
@@ -134,6 +172,7 @@ def segment_mine(arr, n_segments, compactness):
         channel_axis=-1,
         start_label=1,
         enforce_connectivity=True,
+        mask=valid_mask,
     )
     return segments
 
@@ -152,12 +191,27 @@ def segments_to_polygons(segments, transform, crs, mine_id):
     gdf = gpd.GeoDataFrame(records, crs=crs)
     # SLIC kann Segmente in mehrere disjunkte Polygone aufteilen -> dissolven
     gdf = gdf.dissolve(by=["mine_id", "segment_id"], as_index=False)
+    logger.debug("%s: %d Segment-Polygone erzeugt (crs=%s)", mine_id, len(gdf), crs)
     return gdf
 
 
 # ------------------------------------------------------------------
 # 3) Merkmale pro Segment
 # ------------------------------------------------------------------
+def compute_shape_features(seg_gdf):
+    """Berechnet geometrische Formmerkmale je Segment: Fläche, Umfang und
+    Kompaktheit (Polsby-Popper-Maß: 1.0 = perfekter Kreis, kleiner = länglich
+    oder verwinkelt). Wird in der Modul-Doku als "Formmerkmale" angekündigt,
+    fehlte aber bisher in der Implementierung."""
+    seg_gdf = seg_gdf.copy()
+    seg_gdf["shape_area"] = seg_gdf.geometry.area
+    seg_gdf["shape_perimeter"] = seg_gdf.geometry.length
+    seg_gdf["shape_compactness"] = (
+        4 * np.pi * seg_gdf["shape_area"] / (seg_gdf["shape_perimeter"] ** 2 + 1e-9)
+    )
+    return seg_gdf
+
+
 def compute_segment_features(arr, segments, band_names, texture_band):
     """Berechnet je Segment: Mittelwert & Std pro Band + GLCM-Textur
     auf dem gewählten Band (z. B. Dark Surface Index)."""
@@ -216,10 +270,14 @@ def label_segments(seg_gdf, labels_gdf, min_overlap_ratio):
     """Markiert ein Segment als positiv (label=1), wenn der Anteil
     seiner Fläche, der mit einem Dump-Label überlappt, >= min_overlap_ratio."""
     seg_gdf = seg_gdf.copy()
-    seg_gdf["area"] = seg_gdf.geometry.area
+    if "shape_area" not in seg_gdf.columns:
+        seg_gdf["shape_area"] = seg_gdf.geometry.area
 
     if labels_gdf.empty:
+        seg_gdf["overlap_area"] = 0.0
+        seg_gdf["overlap_ratio"] = 0.0
         seg_gdf["label"] = 0
+        logger.info("Keine Dump-Labels für diese Mine vorhanden -> alle Segmente label=0.")
         return seg_gdf
 
     overlay = gpd.overlay(seg_gdf, labels_gdf[["geometry"]], how="intersection")
@@ -228,9 +286,18 @@ def label_segments(seg_gdf, labels_gdf, min_overlap_ratio):
 
     seg_gdf = seg_gdf.set_index(["mine_id", "segment_id"])
     seg_gdf["overlap_area"] = overlap_by_seg.reindex(seg_gdf.index).fillna(0.0)
-    seg_gdf["overlap_ratio"] = seg_gdf["overlap_area"] / seg_gdf["area"]
+    seg_gdf["overlap_ratio"] = seg_gdf["overlap_area"] / seg_gdf["shape_area"]
     seg_gdf["label"] = (seg_gdf["overlap_ratio"] >= min_overlap_ratio).astype(int)
     seg_gdf = seg_gdf.reset_index()
+
+    n_pos = int(seg_gdf["label"].sum())
+    if n_pos == 0:
+        logger.warning(
+            "Dump-Labels für diese Mine vorhanden, aber kein Segment erreicht "
+            "min_overlap_ratio=%.2f -> 0 positive Segmente. Falls das unerwartet "
+            "ist, prüfe ob die mine_id in labels_path wirklich zu dieser Mine passt.",
+            min_overlap_ratio,
+        )
     return seg_gdf
 
 
@@ -239,25 +306,66 @@ def label_segments(seg_gdf, labels_gdf, min_overlap_ratio):
 # ------------------------------------------------------------------
 def build_dataset(cfg):
     labels_gdf = gpd.read_file(cfg["labels_path"])
+    if cfg["mine_id_field"] not in labels_gdf.columns:
+        raise ValueError(
+            f"Spalte '{cfg['mine_id_field']}' (CONFIG['mine_id_field']) nicht in "
+            f"{cfg['labels_path']} gefunden. Vorhandene Spalten: {list(labels_gdf.columns)}"
+        )
+    # mine_id robust als String vergleichen: extract_mine_id() liefert immer
+    # einen String, die Label-Spalte kann je nach Quelldatei int oder str sein.
+    # Ohne diese Normalisierung matcht z.B. mine_id "12" (aus Dateiname) nicht
+    # gegen den int 12 in labels_path, und die Mine bekommt still label=0.
+    labels_gdf = labels_gdf.copy()
+    labels_gdf["_mine_id_str"] = labels_gdf[cfg["mine_id_field"]].astype(str).str.strip()
+
     imagery_paths = sorted(glob.glob(os.path.join(cfg["imagery_dir"], "*.tif")))
     if not imagery_paths:
         raise FileNotFoundError(f"Keine GeoTIFFs in {cfg['imagery_dir']} gefunden.")
+    logger.info("%d GeoTIFFs in %s gefunden.", len(imagery_paths), cfg["imagery_dir"])
 
     all_features = []
     all_polygons = []
+    target_crs = None  # Koordinatensystem der ersten Mine -> gemeinsames Ziel-CRS
 
     for path in imagery_paths:
         mine_id = extract_mine_id(path)
-        arr, transform, crs, nodata = load_mine_raster(path)
+        logger.info("Verarbeite Mine '%s' (%s) ...", mine_id, os.path.basename(path))
 
-        segments = segment_mine(arr, cfg["n_segments_per_mine"], cfg["compactness"])
+        arr, transform, crs, nodata = load_mine_raster(
+            path, expected_n_bands=len(cfg["band_names"])
+        )
+
+        if target_crs is None:
+            target_crs = crs
+        elif crs != target_crs:
+            logger.warning(
+                "Mine '%s' hat ein anderes Koordinatensystem (%s) als die erste "
+                "verarbeitete Mine (%s). Segmente werden nach %s reprojiziert, "
+                "damit beim Zusammenführen aller Minen nichts verschoben wird.",
+                mine_id, crs, target_crs, target_crs,
+            )
+
+        segments = segment_mine(
+            arr, cfg["n_segments_per_mine"], cfg["compactness"], nodata=nodata
+        )
         seg_polys = segments_to_polygons(segments, transform, crs, mine_id)
+        seg_polys = compute_shape_features(seg_polys)
 
-        mine_labels = labels_gdf[labels_gdf[cfg["mine_id_field"]] == mine_id]
+        mine_labels = labels_gdf[labels_gdf["_mine_id_str"] == str(mine_id).strip()]
+        if not labels_gdf.empty and mine_labels.empty:
+            logger.warning(
+                "Keine Einträge in %s mit %s == '%s' gefunden (insgesamt %d "
+                "Label-Einträge vorhanden). Prüfe, ob die aus dem Dateinamen "
+                "extrahierte mine_id zum Namensschema in labels_path passt.",
+                cfg["labels_path"], cfg["mine_id_field"], mine_id, len(labels_gdf),
+            )
         if not mine_labels.empty and mine_labels.crs != crs:
             mine_labels = mine_labels.to_crs(crs)
 
         seg_polys = label_segments(seg_polys, mine_labels, cfg["min_overlap_ratio"])
+
+        if crs != target_crs:
+            seg_polys = seg_polys.to_crs(target_crs)
 
         feats = compute_segment_features(arr, segments, cfg["band_names"], cfg["texture_band"])
         merged = seg_polys.merge(feats, on="segment_id", how="inner")
@@ -266,10 +374,10 @@ def build_dataset(cfg):
         all_polygons.append(merged[["mine_id", "segment_id", "geometry"]])
 
         n_pos = int(merged["label"].sum())
-        print(f"  {mine_id}: {len(merged)} Segmente, davon {n_pos} positiv")
+        logger.info("  %s: %d Segmente, davon %d positiv", mine_id, len(merged), n_pos)
 
     feature_df = pd.concat(all_features, ignore_index=True)
-    polygons_gdf = gpd.GeoDataFrame(pd.concat(all_polygons, ignore_index=True), crs=crs)
+    polygons_gdf = gpd.GeoDataFrame(pd.concat(all_polygons, ignore_index=True), crs=target_crs)
     return feature_df, polygons_gdf
 
 
@@ -277,18 +385,30 @@ def build_dataset(cfg):
 # 6) Training + räumliche Validierung (Split NACH Mine, wie im Report)
 # ------------------------------------------------------------------
 def train_and_evaluate(feature_df, cfg):
-    feature_cols = [c for c in feature_df.columns
-                     if c not in ("segment_id", "mine_id", "label", "area",
-                                  "overlap_area", "overlap_ratio")]
+    # overlap_area/overlap_ratio werden direkt aus dem Label abgeleitet
+    # (Data Leakage) und dürfen daher NICHT als Merkmal verwendet werden.
+    # shape_area/shape_perimeter/shape_compactness sind dagegen legitime
+    # Formmerkmale und bleiben bewusst drin.
+    non_feature_cols = ("segment_id", "mine_id", "label", "overlap_area", "overlap_ratio")
+    feature_cols = [c for c in feature_df.columns if c not in non_feature_cols]
+    logger.info("Verwende %d Merkmale: %s", len(feature_cols), feature_cols)
+
     X = feature_df[feature_cols].fillna(0.0).values
     y = feature_df["label"].values
     groups = feature_df["mine_id"].values
 
-    n_splits = min(5, feature_df["mine_id"].nunique())
+    n_mines = feature_df["mine_id"].nunique()
+    n_splits = min(5, n_mines)
+    if n_splits < 5:
+        logger.warning(
+            "Nur %d Minen im Datensatz -> GroupKFold läuft mit n_splits=%d statt 5.",
+            n_mines, n_splits,
+        )
     gkf = GroupKFold(n_splits=n_splits)
 
     fold_scores = []
     for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
+        val_mines = sorted(set(groups[val_idx]))
         clf = RandomForestClassifier(
             n_estimators=cfg["n_estimators"],
             class_weight="balanced",
@@ -296,7 +416,19 @@ def train_and_evaluate(feature_df, cfg):
             n_jobs=-1,
         )
         clf.fit(X[train_idx], y[train_idx])
-        proba = clf.predict_proba(X[val_idx])[:, 1]
+        if len(clf.classes_) < 2:
+            # Trainings-Split dieser Fold enthält nur eine Klasse (z.B. eine
+            # Mine ganz ohne positive Segmente) -> predict_proba hätte nur
+            # 1 statt 2 Spalten und würde mit IndexError abstürzen.
+            only_class = float(clf.classes_[0])
+            proba = np.full(len(val_idx), only_class)
+            logger.warning(
+                "Fold %d (Validierungs-Minen: %s): Trainingsdaten enthalten nur "
+                "Klasse %.0f -> Modell kann nicht lernen, verwende konstante "
+                "proba=%.1f für diese Fold.", fold, val_mines, only_class, only_class,
+            )
+        else:
+            proba = clf.predict_proba(X[val_idx])[:, 1]
         pred = (proba >= 0.5).astype(int)
 
         f1 = f1_score(y[val_idx], pred, zero_division=0)
@@ -304,13 +436,16 @@ def train_and_evaluate(feature_df, cfg):
             auc = roc_auc_score(y[val_idx], proba)
         except ValueError:
             auc = float("nan")  # falls eine Fold nur eine Klasse enthält
+            logger.warning(
+                "Fold %d (Validierungs-Minen: %s) enthält nur eine Klasse -> AUC=nan.",
+                fold, val_mines,
+            )
 
-        fold_scores.append({"fold": fold, "f1": f1, "auc": auc})
-        print(f"  Fold {fold}: F1={f1:.3f}  AUC={auc:.3f}")
+        fold_scores.append({"fold": fold, "f1": f1, "auc": auc, "val_mines": val_mines})
+        logger.info("  Fold %d (Minen=%s): F1=%.3f  AUC=%.3f", fold, val_mines, f1, auc)
 
     scores_df = pd.DataFrame(fold_scores)
-    print("\nMittelwerte über alle Folds:")
-    print(scores_df[["f1", "auc"]].mean())
+    logger.info("Mittelwerte über alle Folds:\n%s", scores_df[["f1", "auc"]].mean())
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
     final_clf = RandomForestClassifier(
@@ -322,8 +457,9 @@ def train_and_evaluate(feature_df, cfg):
     final_clf.fit(X, y)
 
     importances = pd.Series(final_clf.feature_importances_, index=feature_cols)
-    print("\nWichtigste Merkmale:")
-    print(importances.sort_values(ascending=False).head(10))
+    logger.info(
+        "Wichtigste Merkmale:\n%s", importances.sort_values(ascending=False).head(10)
+    )
 
     return final_clf, feature_cols, scores_df
 
@@ -345,8 +481,8 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     os.makedirs(cfg["output_dir"], exist_ok=True)
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")
     result.to_file(out_path, driver="GPKG")
-    print(f"\nExportiert nach: {out_path}")
-    print("In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle ~0.5).")
+    logger.info("Exportiert nach: %s", out_path)
+    logger.info("In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle ~0.5).")
     return out_path
 
 
@@ -354,17 +490,24 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
 # main
 # ------------------------------------------------------------------
 def main(cfg=CONFIG):
-    print("1) Baue Segment-Datensatz aus allen Minen auf ...")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
     feature_df, polygons_gdf = build_dataset(cfg)
 
-    print(f"\nGesamt: {len(feature_df)} Segmente, "
-          f"{int(feature_df['label'].sum())} positiv "
-          f"({feature_df['mine_id'].nunique()} Minen).")
+    logger.info(
+        "Gesamt: %d Segmente, %d positiv (%d Minen).",
+        len(feature_df), int(feature_df["label"].sum()), feature_df["mine_id"].nunique(),
+    )
 
-    print("\n2) Training + räumliche Kreuzvalidierung (GroupKFold nach Mine) ...")
+    logger.info("2) Training + räumliche Kreuzvalidierung (GroupKFold nach Mine) ...")
     clf, feature_cols, scores_df = train_and_evaluate(feature_df, cfg)
 
-    print("\n3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
+    logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)
 
 
