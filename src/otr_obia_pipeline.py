@@ -110,6 +110,10 @@ CONFIG = {
     "n_jobs": None,                               # Minen parallel verarbeiten:
                                                    # None = alle CPU-Kerne nutzen,
                                                    # 1 = sequentiell (alter Modus)
+    "use_cache": False,                           # zwischengespeicherten
+                                                   # Segment-Datensatz aus
+                                                   # output_dir wiederverwenden
+                                                   # statt neu zu berechnen
     "output_dir": "output",
 }
 
@@ -509,6 +513,13 @@ def train_and_evaluate(feature_df, cfg):
         )
     gkf = GroupKFold(n_splits=n_splits)
 
+    # Sammelt für jedes Segment die Vorhersage AUS DER FOLD, in der seine
+    # Mine im Validierungs-Set war (nie aus dem Training gesehen). Das ist
+    # die einzige ehrliche Grundlage für eine Mine-Level-Erkennungsquote -
+    # das später auf ALLEN Daten trainierte final_clf hat jede Mine schon
+    # gesehen und würde eine völlig irreführende ~100%-Trefferquote zeigen.
+    out_of_fold_proba = np.full(len(y), np.nan)
+
     fold_scores = []
     for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
         val_mines = sorted(set(groups[val_idx]))
@@ -533,6 +544,7 @@ def train_and_evaluate(feature_df, cfg):
         else:
             proba = clf.predict_proba(X[val_idx])[:, 1]
         pred = (proba >= 0.5).astype(int)
+        out_of_fold_proba[val_idx] = proba
 
         f1 = f1_score(y[val_idx], pred, zero_division=0)
         try:
@@ -549,6 +561,21 @@ def train_and_evaluate(feature_df, cfg):
 
     scores_df = pd.DataFrame(fold_scores)
     logger.info("Mittelwerte über alle Folds:\n%s", scores_df[["f1", "auc"]].mean())
+
+    # Ehrliche Mine-Level-Erkennungsquote NUR aus Out-of-Fold-Vorhersagen
+    # (jedes Segment wurde von einem Modell vorhergesagt, das seine Mine nie
+    # im Training gesehen hat). Wichtig: das ist eine andere Zahl als die,
+    # die predict_and_export() später für das QGIS-Export-GeoPackage
+    # berechnet - jene nutzt das finale Modell, das auf ALLEN Minen
+    # trainiert wurde, und ist daher KEINE Generalisierungs-Schätzung.
+    oof_result = feature_df[["mine_id", "segment_id", "label"]].copy()
+    oof_result["dump_pred"] = (out_of_fold_proba >= 0.5).astype(int)
+    logger.info(
+        "Ehrliche (Out-of-Fold-) Mine-Level-Erkennung, NUR aus "
+        "Kreuzvalidierung, jede Mine wurde von einem Modell vorhergesagt, "
+        "das sie nie im Training gesehen hat:"
+    )
+    summarize_mine_detection(oof_result)
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
     final_clf = RandomForestClassifier(
@@ -594,6 +621,13 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     result["dump_proba"] = proba
     result["dump_pred"] = (proba >= 0.5).astype(int)
 
+    logger.warning(
+        "Die folgende Erkennungsquote nutzt das finale Modell, das auf ALLEN "
+        "Minen trainiert wurde (inkl. jeder hier gezeigten). Das ist KEINE "
+        "Generalisierungs-Schätzung, sondern zeigt nur, wie die exportierte "
+        "Karte aussieht. Die ehrliche Zahl steht weiter oben unter "
+        "'Ehrliche (Out-of-Fold-) Mine-Level-Erkennung'."
+    )
     summarize_mine_detection(result)
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
@@ -656,8 +690,28 @@ def main(cfg=CONFIG):
         datefmt="%H:%M:%S",
     )
 
-    logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
-    feature_df, polygons_gdf = build_dataset(cfg)
+    cache_features = os.path.join(cfg["output_dir"], "feature_cache.pkl")
+    cache_polygons = os.path.join(cfg["output_dir"], "polygons_cache.gpkg")
+
+    if cfg.get("use_cache") and os.path.exists(cache_features) and os.path.exists(cache_polygons):
+        # Das Segmentieren + Merkmale-Berechnen ist der mit Abstand teuerste
+        # Schritt (bei den echten Daten ca. 25 Minuten). Für schnelles
+        # Iterieren an Schwellwerten/Modell-Einstellungen lohnt es sich,
+        # diesen Schritt nicht bei jedem Versuch zu wiederholen.
+        logger.info("1) Lade zwischengespeicherten Segment-Datensatz aus %s ...", cfg["output_dir"])
+        feature_df = pd.read_pickle(cache_features)
+        polygons_gdf = gpd.read_file(cache_polygons)
+    else:
+        logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
+        feature_df, polygons_gdf = build_dataset(cfg)
+        os.makedirs(cfg["output_dir"], exist_ok=True)
+        feature_df.to_pickle(cache_features)
+        polygons_gdf.to_file(cache_polygons, driver="GPKG")
+        logger.info(
+            "Segment-Datensatz zwischengespeichert in %s (mit --use-cache beim "
+            "nächsten Mal wiederverwenden, ohne alles neu zu berechnen).",
+            cfg["output_dir"],
+        )
 
     logger.info(
         "Gesamt: %d Segmente, %d positiv (%d Minen).",

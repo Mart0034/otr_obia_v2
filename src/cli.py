@@ -76,6 +76,13 @@ def build_arg_parser(description):
              "(jede Mine ist unabhängig von den anderen). "
              "Standard: alle verfügbaren CPU-Kerne. 1 = sequentiell.",
     )
+    parser.add_argument(
+        "--use-cache", dest="use_cache", action="store_true", default=None,
+        help="Zwischengespeicherten Segment-Datensatz aus einem vorherigen "
+             "Lauf wiederverwenden (aus output_dir), statt Segmentierung "
+             "und Merkmalsberechnung neu zu machen - deutlich schneller "
+             "zum Ausprobieren neuer Schwellwerte/Modell-Einstellungen.",
+    )
     return parser
 
 
@@ -104,6 +111,7 @@ def resolve_config(base_config, args):
         "n_estimators": args.n_estimators,
         "random_state": args.random_state,
         "n_jobs": args.n_jobs,
+        "use_cache": args.use_cache,
     }
     for key, value in cli_overrides.items():
         if value is not None:
