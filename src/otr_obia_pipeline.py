@@ -266,11 +266,20 @@ def compute_segment_features(arr, segments, band_names, texture_band):
 
     tex_idx = band_names.index(texture_band)
     tex_band = arr[..., tex_idx]
-    # für GLCM auf 8-Bit-Stufen quantisieren
-    tex_band_q = np.clip(
-        ((tex_band - np.nanmin(tex_band)) /
-         (np.nanmax(tex_band) - np.nanmin(tex_band) + 1e-6) * 255),
-        0, 255,
+    # für GLCM auf 8-Bit-Stufen quantisieren. Die echten Sentinel-2-Exporte
+    # haben keinen expliziten NoData-Wert gesetzt, wolkenmaskierte Pixel
+    # sind stattdessen direkt NaN -> ohne nan_to_num würde NaN nach uint8
+    # gecastet (undefiniertes Ergebnis, nur eine RuntimeWarning als Hinweis),
+    # was am Rand einzelner Segmente (Bounding-Box kann Nachbarpixel
+    # außerhalb des eigentlichen Segments erwischen) zufällige "Textur"-
+    # Werte in die GLCM-Berechnung einschleusen könnte.
+    tex_band_q = np.nan_to_num(
+        np.clip(
+            ((tex_band - np.nanmin(tex_band)) /
+             (np.nanmax(tex_band) - np.nanmin(tex_band) + 1e-6) * 255),
+            0, 255,
+        ),
+        nan=0.0,
     ).astype(np.uint8)
 
     rows = []
