@@ -73,11 +73,32 @@ CONFIG = {
     "imagery_dir": "data/imagery",              # ein GeoTIFF pro Mine
     "labels_path": "data/dump_labels.gpkg",      # digitalisierte Dump-Polygone
     "mine_id_field": "mine_id",                  # Spaltenname in labels_path
-    "n_segments_per_mine": 800,                  # SLIC-Zielanzahl Superpixel
+    "n_segments_per_mine": 800,                  # SLIC-Zielanzahl Superpixel,
+                                                   # NUR verwendet wenn
+                                                   # target_segment_px=None
+    # target_segment_px/max_segments_per_mine: bei den echten Antofagasta-
+    # Daten reichen die Minenbilder von ~72.000 bis ~5.860.000 Pixeln (Faktor
+    # 80), ein fester n_segments_per_mine erzeugt dadurch bei großen Minen
+    # riesige Segmente (bis zu 7300 Pixel) gegenüber oft nur 1-10 Pixel
+    # großen Dump-Polygonen -> praktisch nie genug Überlappung für ein
+    # positives Label. target_segment_px berechnet n_segments stattdessen
+    # pro Mine aus der Bildgröße (gültige Pixel / target_segment_px),
+    # begrenzt durch max_segments_per_mine, damit große Minen die Laufzeit
+    # nicht explodieren lassen. Werte unten sind ein erster, an den echten
+    # Dump-Größen kalibrierter Versuch (siehe Datenanalyse), keine final
+    # getunten Werte.
+    "target_segment_px": 30,
+    "max_segments_per_mine": 4000,
     "compactness": 8,                             # SLIC: Form- vs. Farbtreue
-    "min_overlap_ratio": 0.30,                    # Segment = positiv, wenn
-                                                   # >= 30% seiner Fläche im
-                                                   # gelabelten Dump liegt
+    "min_overlap_ratio": 0.10,                    # Segment = positiv, wenn
+                                                   # >= 10% seiner Fläche im
+                                                   # gelabelten Dump liegt.
+                                                   # Abgesenkt von 0.30: die
+                                                   # meisten echten Dump-
+                                                   # Polygone sind kleiner als
+                                                   # ein einzelnes Segment,
+                                                   # 30% Überlappung war real
+                                                   # kaum je erreichbar.
     "band_names": [
         "blue", "green", "red", "nir", "swir1", "swir2",
         "ndvi", "ndwi", "dsi", "bsi",
@@ -128,11 +149,21 @@ def extract_mine_id(filename, pattern=r"(mine[_\-]?\d+|\d+)"):
 # ------------------------------------------------------------------
 # 2) Segmentierung
 # ------------------------------------------------------------------
-def segment_mine(arr, n_segments, compactness, nodata=None):
+def segment_mine(arr, n_segments, compactness, nodata=None,
+                  target_segment_px=None, max_segments=None):
     """SLIC-Superpixel-Segmentierung auf allen Bändern gleichzeitig.
     Ersetzt die GRASS-i.segment-Variante aus QGIS/GRASS, funktioniert
     aber identisch im Prinzip (Region-Growing/Clustering) und ist
-    reiner Python-Code ohne GRASS-Abhängigkeit."""
+    reiner Python-Code ohne GRASS-Abhängigkeit.
+
+    Ist target_segment_px gesetzt, wird n_segments IGNORIERT und
+    stattdessen pro Mine aus der Anzahl gültiger Pixel berechnet
+    (valid_pixels / target_segment_px), begrenzt durch max_segments.
+    Das ist wichtig, weil ein fester n_segments-Wert bei Minen mit
+    stark unterschiedlicher Bildgröße (hier: 80x-Unterschied) völlig
+    unterschiedlich große Segmente erzeugt - bei großen Minen viel zu
+    große Segmente im Vergleich zu den oft nur wenige Pixel großen
+    Dump-Polygonen."""
     # Gültige Pixel bestimmen (kein NoData, keine NaN/Inf-Werte) -> werden
     # von der Segmentierung ausgeschlossen, damit keine "Fantasie-Segmente"
     # aus randlichen/fehlenden Bildbereichen entstehen und die spätere
@@ -149,6 +180,17 @@ def segment_mine(arr, n_segments, compactness, nodata=None):
             "%d von %d Pixeln als NoData/ungültig erkannt und von der "
             "Segmentierung ausgeschlossen.", n_invalid, valid_mask.size,
         )
+
+    if target_segment_px is not None:
+        n_valid = int(valid_mask.sum())
+        computed = max(20, round(n_valid / target_segment_px))
+        if max_segments is not None:
+            computed = min(computed, max_segments)
+        logger.debug(
+            "target_segment_px=%d -> n_segments=%d (statt fixem Wert %d)",
+            target_segment_px, computed, n_segments,
+        )
+        n_segments = computed
 
     # NaNs/Inf robust behandeln (nur zur Absicherung; die als NoData
     # markierten Pixel fließen dank 'mask' unten ohnehin nicht ins Ergebnis ein)
@@ -346,7 +388,9 @@ def build_dataset(cfg):
             )
 
         segments = segment_mine(
-            arr, cfg["n_segments_per_mine"], cfg["compactness"], nodata=nodata
+            arr, cfg["n_segments_per_mine"], cfg["compactness"], nodata=nodata,
+            target_segment_px=cfg.get("target_segment_px"),
+            max_segments=cfg.get("max_segments_per_mine"),
         )
         seg_polys = segments_to_polygons(segments, transform, crs, mine_id)
         seg_polys = compute_shape_features(seg_polys)
@@ -469,7 +513,20 @@ def train_and_evaluate(feature_df, cfg):
 # ------------------------------------------------------------------
 def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     X_all = feature_df[feature_cols].fillna(0.0).values
-    proba = clf.predict_proba(X_all)[:, 1]
+    if len(clf.classes_) < 2:
+        # Das Modell wurde nur auf einer Klasse trainiert (z.B. 0 positive
+        # Segmente insgesamt) -> predict_proba hätte nur 1 statt 2 Spalten
+        # und würde mit IndexError abstürzen. Gleiche Situation wie in
+        # train_and_evaluate(), hier für das finale Modell.
+        only_class = float(clf.classes_[0])
+        proba = np.full(len(X_all), only_class)
+        logger.warning(
+            "Finales Modell wurde nur mit Klasse %.0f trainiert (keine "
+            "positiven Segmente im gesamten Datensatz) -> konstante "
+            "proba=%.1f für alle Segmente.", only_class, only_class,
+        )
+    else:
+        proba = clf.predict_proba(X_all)[:, 1]
 
     result = polygons_gdf.merge(
         feature_df[["mine_id", "segment_id", "label"]],

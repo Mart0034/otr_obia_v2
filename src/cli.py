@@ -35,7 +35,20 @@ def build_arg_parser(description):
     )
     parser.add_argument(
         "--n-segments-per-mine", dest="n_segments_per_mine", type=int, metavar="N",
-        help="SLIC-Zielanzahl Superpixel pro Mine.",
+        help="SLIC-Zielanzahl Superpixel pro Mine. Wird ignoriert, solange "
+             "target_segment_px gesetzt ist (siehe --target-segment-px).",
+    )
+    parser.add_argument(
+        "--target-segment-px", dest="target_segment_px", type=int, metavar="N",
+        help="Zielgröße eines Segments in Pixeln; n_segments wird daraus pro "
+             "Mine berechnet (gültige Pixel / N), statt eines festen Werts. "
+             "0 deaktiviert das und nutzt wieder --n-segments-per-mine.",
+    )
+    parser.add_argument(
+        "--max-segments-per-mine", dest="max_segments_per_mine", type=int, metavar="N",
+        help="Obergrenze für die berechnete Segmentanzahl pro Mine (nur mit "
+             "--target-segment-px relevant), damit große Minen die Laufzeit "
+             "nicht explodieren lassen.",
     )
     parser.add_argument(
         "--compactness", dest="compactness", type=float,
@@ -78,6 +91,7 @@ def resolve_config(base_config, args):
         "mine_id_field": args.mine_id_field,
         "output_dir": args.output_dir,
         "n_segments_per_mine": args.n_segments_per_mine,
+        "max_segments_per_mine": getattr(args, "max_segments_per_mine", None),
         "compactness": args.compactness,
         "min_overlap_ratio": args.min_overlap_ratio,
         "texture_band": args.texture_band,
@@ -87,5 +101,11 @@ def resolve_config(base_config, args):
     for key, value in cli_overrides.items():
         if value is not None:
             cfg[key] = value
+
+    # --target-segment-px 0 heißt "deaktivieren" (zurück zu einem festen
+    # n_segments_per_mine); jeder andere Wert überschreibt normal.
+    target_segment_px = getattr(args, "target_segment_px", None)
+    if target_segment_px is not None:
+        cfg["target_segment_px"] = None if target_segment_px == 0 else target_segment_px
 
     return cfg
