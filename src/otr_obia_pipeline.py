@@ -594,12 +594,56 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     result["dump_proba"] = proba
     result["dump_pred"] = (proba >= 0.5).astype(int)
 
+    summarize_mine_detection(result)
+
     os.makedirs(cfg["output_dir"], exist_ok=True)
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")
     result.to_file(out_path, driver="GPKG")
     logger.info("Exportiert nach: %s", out_path)
     logger.info("In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle ~0.5).")
     return out_path
+
+
+def summarize_mine_detection(result):
+    """Fasst pro Mine zusammen, ob ein bekannter Dump überhaupt gefunden
+    wurde (mindestens ein Segment korrekt als positiv vorhergesagt).
+    Bei nur einer Handvoll positiver Minen ist das aussagekräftiger als
+    ein einzelner Gesamt-Score über alle Segmente hinweg - eine Mine mit
+    vielen Segmenten kann den Gesamt-F1 dominieren, ohne dass klar wird,
+    ob die tatsächlich interessanten (seltenen) Dump-Minen erkannt wurden."""
+    by_mine = result.groupby("mine_id").agg(
+        n_segments=("segment_id", "count"),
+        n_true_positive=("label", "sum"),
+        n_pred_positive=("dump_pred", "sum"),
+    ).reset_index()
+
+    dump_mines = by_mine[by_mine["n_true_positive"] > 0].copy()
+    if dump_mines.empty:
+        logger.info(
+            "Keine Mine mit bestätigtem Dump im Ergebnis - keine "
+            "Mine-Level-Erkennungsübersicht möglich."
+        )
+        return dump_mines
+
+    dump_mines["detected"] = dump_mines["n_pred_positive"] > 0
+    n_detected = int(dump_mines["detected"].sum())
+    n_total = len(dump_mines)
+
+    logger.info(
+        "Mine-Level-Erkennung: bei wie vielen der %d Minen mit bekanntem Dump "
+        "wurde mindestens ein Segment korrekt als positiv erkannt?", n_total,
+    )
+    for _, row in dump_mines.sort_values("mine_id").iterrows():
+        flag = "GEFUNDEN" if row["detected"] else "NICHT gefunden"
+        logger.info(
+            "  %s: %d echte positive Segmente, %d vorhergesagt positiv  [%s]",
+            row["mine_id"], row["n_true_positive"], row["n_pred_positive"], flag,
+        )
+    logger.info(
+        "Erkannt: %d von %d bekannten Dump-Minen (%.0f%%)",
+        n_detected, n_total, 100 * n_detected / n_total,
+    )
+    return dump_mines
 
 
 # ------------------------------------------------------------------
