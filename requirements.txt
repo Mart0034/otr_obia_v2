@@ -3,5 +3,6 @@ geopandas
 shapely
 scikit-image>=0.19
 scikit-learn
+imbalanced-learn
 pandas
 numpy

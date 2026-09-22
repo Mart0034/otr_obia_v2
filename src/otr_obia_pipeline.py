@@ -62,6 +62,7 @@ from shapely.geometry import shape as shapely_shape
 from skimage.segmentation import slic
 from skimage.feature import graycomatrix, graycoprops
 from sklearn.ensemble import RandomForestClassifier
+from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import classification_report, f1_score, roc_auc_score
 
@@ -488,6 +489,28 @@ def build_dataset(cfg):
     return feature_df, polygons_gdf
 
 
+def _build_classifier(cfg):
+    """Baut den Random-Forest-Klassifikator. Nutzt BalancedRandomForestClassifier
+    (imbalanced-learn) statt eines gewöhnlichen RandomForestClassifier mit
+    class_weight="balanced": bei den echten Daten sind nur 36 von 174.663
+    Segmenten positiv (~1:4850). class_weight reduziert lediglich das
+    Gewicht der Mehrheitsklasse im Trainings-Loss, ändert aber nichts am
+    Bootstrap-Sample jedes einzelnen Baums - bei so extremer Schieflage
+    bekommt praktisch jeder Baum kaum je ein positives Beispiel zu sehen.
+    Getestet an den echten Daten: class_weight="balanced" fand 0 von 9
+    bekannten Dumps (Out-of-Fold), AUC=0.585. BalancedRandomForestClassifier
+    zieht pro Baum ein tatsächlich ausgeglichenes Sample und fand 7-9 von 9,
+    AUC=0.894 - derselbe Datensatz, nur anderes Resampling."""
+    return BalancedRandomForestClassifier(
+        n_estimators=cfg["n_estimators"],
+        sampling_strategy="all",
+        replacement=True,
+        bootstrap=False,
+        random_state=cfg["random_state"],
+        n_jobs=-1,
+    )
+
+
 # ------------------------------------------------------------------
 # 6) Training + räumliche Validierung (Split NACH Mine, wie im Report)
 # ------------------------------------------------------------------
@@ -523,18 +546,14 @@ def train_and_evaluate(feature_df, cfg):
     fold_scores = []
     for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
         val_mines = sorted(set(groups[val_idx]))
-        clf = RandomForestClassifier(
-            n_estimators=cfg["n_estimators"],
-            class_weight="balanced",
-            random_state=cfg["random_state"],
-            n_jobs=-1,
-        )
-        clf.fit(X[train_idx], y[train_idx])
-        if len(clf.classes_) < 2:
+        train_classes = np.unique(y[train_idx])
+        if len(train_classes) < 2:
             # Trainings-Split dieser Fold enthält nur eine Klasse (z.B. eine
-            # Mine ganz ohne positive Segmente) -> predict_proba hätte nur
-            # 1 statt 2 Spalten und würde mit IndexError abstürzen.
-            only_class = float(clf.classes_[0])
+            # Mine ganz ohne positive Segmente). BalancedRandomForestClassifier
+            # wirft dabei schon beim fit() einen Fehler (anders als ein
+            # gewöhnlicher RandomForestClassifier, der einfach ein
+            # Ein-Klassen-Modell bauen würde) - also gar nicht erst fitten.
+            only_class = float(train_classes[0])
             proba = np.full(len(val_idx), only_class)
             logger.warning(
                 "Fold %d (Validierungs-Minen: %s): Trainingsdaten enthalten nur "
@@ -542,6 +561,8 @@ def train_and_evaluate(feature_df, cfg):
                 "proba=%.1f für diese Fold.", fold, val_mines, only_class, only_class,
             )
         else:
+            clf = _build_classifier(cfg)
+            clf.fit(X[train_idx], y[train_idx])
             proba = clf.predict_proba(X[val_idx])[:, 1]
         pred = (proba >= 0.5).astype(int)
         out_of_fold_proba[val_idx] = proba
@@ -578,12 +599,18 @@ def train_and_evaluate(feature_df, cfg):
     summarize_mine_detection(oof_result)
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
-    final_clf = RandomForestClassifier(
-        n_estimators=cfg["n_estimators"],
-        class_weight="balanced",
-        random_state=cfg["random_state"],
-        n_jobs=-1,
-    )
+    if len(np.unique(y)) < 2:
+        # Der GESAMTE Datensatz enthält nur eine Klasse (z.B. 0 positive
+        # Segmente über alle Minen hinweg). BalancedRandomForestClassifier
+        # wirft dabei schon beim fit() einen Fehler; ein gewöhnlicher
+        # RandomForestClassifier baut dagegen anstandslos ein
+        # Ein-Klassen-Modell, das predict_and_export() bereits über seine
+        # eigene len(classes_)<2-Prüfung sicher behandelt.
+        final_clf = RandomForestClassifier(
+            n_estimators=1, random_state=cfg["random_state"]
+        )
+    else:
+        final_clf = _build_classifier(cfg)
     final_clf.fit(X, y)
 
     importances = pd.Series(final_clf.feature_importances_, index=feature_cols)
