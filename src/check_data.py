@@ -48,6 +48,7 @@ def check_data(cfg):
     logger.info("%d GeoTIFFs in %s gefunden.", len(imagery_paths), cfg["imagery_dir"])
 
     imagery_mine_ids = set()
+    n_matched = 0
     for path in imagery_paths:
         mine_id = extract_mine_id(path)
         imagery_mine_ids.add(mine_id)
@@ -67,18 +68,37 @@ def check_data(cfg):
         valid_pct = 100 * float(valid_mask.mean())
 
         matched = mine_id in label_mine_ids
-        status = "OK" if matched else "KEIN LABEL-MATCH"
+        if matched:
+            n_matched += 1
+        # Kein Label-Eintrag ist hier KEIN Fehler: eine Mine ohne bestätigten
+        # Dump hat bei diesem Workflow bewusst keinen Eintrag in labels_path
+        # (siehe merge_labels.py), und die Pipeline behandelt das bereits
+        # korrekt als label=0. Nur wenn WIRKLICH GAR KEINE Mine matcht, ist
+        # das ein Hinweis auf ein echtes Namensschema-Problem (siehe unten).
+        status = "DUMP-LABEL" if matched else "kein Dump-Label"
         logger.info(
             "  %s (mine_id='%s'): %d Bänder, crs=%s, gültige Pixel=%.1f%%  [%s]",
             os.path.basename(path), mine_id, arr.shape[-1], crs, valid_pct, status,
         )
-        if not matched:
-            ok = False
         if valid_pct < 50:
             logger.warning(
                 "  -> nur %.1f%% gültige Pixel, evtl. falsches NoData oder Bildfehler.",
                 valid_pct,
             )
+
+    if label_mine_ids and imagery_mine_ids and n_matched == 0:
+        logger.error(
+            "Keine einzige Minen-ID aus %s stimmt mit einer Minen-ID aus den "
+            "Bilddateien überein. Das deutet auf ein grundsätzliches Problem "
+            "mit dem Namensschema hin (z.B. Text- vs. Zahlen-IDs), nicht "
+            "einfach auf lauter negative Minen. Bitte Namensschema prüfen.",
+        )
+        ok = False
+    elif imagery_mine_ids:
+        logger.info(
+            "%d von %d Minen haben ein bestätigtes Dump-Label, der Rest wird "
+            "als negativ behandelt.", n_matched, len(imagery_mine_ids),
+        )
 
     orphan_labels = label_mine_ids - imagery_mine_ids
     if orphan_labels:

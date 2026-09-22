@@ -53,6 +53,24 @@ def test_fails_when_labels_file_missing(tmp_path, write_synthetic_raster):
     assert check_data(_base_cfg(imagery_dir, tmp_path / "missing.gpkg")) is False
 
 
+def test_passes_when_most_mines_have_no_label(tmp_path, write_synthetic_raster):
+    # Mirrors the real data: most mines are confirmed negative (no entry in
+    # labels_path at all), only a few have an actual dump label. That must
+    # not be treated as a data problem.
+    imagery_dir = tmp_path / "imagery"
+    imagery_dir.mkdir()
+    for i in range(5):
+        write_synthetic_raster(imagery_dir / f"{i}.tif", seed=i)
+
+    labels_gdf = gpd.GeoDataFrame(
+        {"mine_id": [2]}, geometry=[box(0, 0, 1, 1)], crs="EPSG:32632"
+    )
+    labels_path = tmp_path / "labels.gpkg"
+    labels_gdf.to_file(labels_path, driver="GPKG")
+
+    assert check_data(_base_cfg(imagery_dir, labels_path)) is True
+
+
 def test_fails_when_no_imagery_found(tmp_path):
     imagery_dir = tmp_path / "imagery"
     imagery_dir.mkdir()
