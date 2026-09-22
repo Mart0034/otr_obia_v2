@@ -70,6 +70,12 @@ def build_arg_parser(description):
         "--random-state", dest="random_state", type=int,
         help="Zufalls-Seed für reproduzierbare Ergebnisse.",
     )
+    parser.add_argument(
+        "--n-jobs", dest="n_jobs", type=int, metavar="N",
+        help="Anzahl paralleler Prozesse zum Verarbeiten der Minen "
+             "(jede Mine ist unabhängig von den anderen). "
+             "Standard: alle verfügbaren CPU-Kerne. 1 = sequentiell.",
+    )
     return parser
 
 
@@ -97,6 +103,7 @@ def resolve_config(base_config, args):
         "texture_band": args.texture_band,
         "n_estimators": args.n_estimators,
         "random_state": args.random_state,
+        "n_jobs": args.n_jobs,
     }
     for key, value in cli_overrides.items():
         if value is not None:

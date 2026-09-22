@@ -51,6 +51,7 @@ import os
 import glob
 import re
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -106,6 +107,9 @@ CONFIG = {
     "texture_band": "dsi",                        # Band für GLCM-Textur
     "n_estimators": 400,
     "random_state": 42,
+    "n_jobs": None,                               # Minen parallel verarbeiten:
+                                                   # None = alle CPU-Kerne nutzen,
+                                                   # 1 = sequentiell (alter Modus)
     "output_dir": "output",
 }
 
@@ -343,6 +347,77 @@ def label_segments(seg_gdf, labels_gdf, min_overlap_ratio):
     return seg_gdf
 
 
+def _init_worker_logging():
+    """Wird einmal pro Worker-Prozess ausgeführt. Bei 'fork' (Linux-Default)
+    ist das Logging meist schon aus dem Hauptprozess geerbt, bei 'spawn'
+    (Windows/macOS-Default) startet der Prozess aber komplett neu und hätte
+    sonst keine Ausgabe. basicConfig() ist ein No-op, falls bereits
+    konfiguriert, schadet also in keinem der beiden Fälle."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+def _process_one_mine(path, cfg, labels_gdf, target_crs):
+    """Verarbeitet eine einzelne Mine vollständig (Segmentierung, Merkmale,
+    Labeling). Eigene Top-Level-Funktion, damit sie in build_dataset()
+    parallel in mehreren Prozessen laufen kann - jede Mine ist unabhängig
+    von jeder anderen, es gibt also keinen Grund, sie nacheinander
+    abzuarbeiten."""
+    mine_id = extract_mine_id(path)
+    logger.info("Verarbeite Mine '%s' (%s) ...", mine_id, os.path.basename(path))
+
+    arr, transform, crs, nodata = load_mine_raster(
+        path, expected_n_bands=len(cfg["band_names"])
+    )
+
+    if crs != target_crs:
+        logger.warning(
+            "Mine '%s' hat ein anderes Koordinatensystem (%s) als die erste "
+            "Mine (%s). Segmente werden nach %s reprojiziert, damit beim "
+            "Zusammenführen aller Minen nichts verschoben wird.",
+            mine_id, crs, target_crs, target_crs,
+        )
+
+    segments = segment_mine(
+        arr, cfg["n_segments_per_mine"], cfg["compactness"], nodata=nodata,
+        target_segment_px=cfg.get("target_segment_px"),
+        max_segments=cfg.get("max_segments_per_mine"),
+    )
+    seg_polys = segments_to_polygons(segments, transform, crs, mine_id)
+    seg_polys = compute_shape_features(seg_polys)
+
+    mine_labels = labels_gdf[labels_gdf["_mine_id_str"] == str(mine_id).strip()]
+    if not labels_gdf.empty and mine_labels.empty:
+        logger.warning(
+            "Keine Einträge in %s mit %s == '%s' gefunden (insgesamt %d "
+            "Label-Einträge vorhanden). Prüfe, ob die aus dem Dateinamen "
+            "extrahierte mine_id zum Namensschema in labels_path passt.",
+            cfg["labels_path"], cfg["mine_id_field"], mine_id, len(labels_gdf),
+        )
+    if not mine_labels.empty and mine_labels.crs != crs:
+        mine_labels = mine_labels.to_crs(crs)
+
+    seg_polys = label_segments(seg_polys, mine_labels, cfg["min_overlap_ratio"])
+
+    if crs != target_crs:
+        seg_polys = seg_polys.to_crs(target_crs)
+
+    feats = compute_segment_features(arr, segments, cfg["band_names"], cfg["texture_band"])
+    merged = seg_polys.merge(feats, on="segment_id", how="inner")
+
+    n_pos = int(merged["label"].sum())
+    logger.info("  %s: %d Segmente, davon %d positiv", mine_id, len(merged), n_pos)
+
+    features = pd.DataFrame(merged.drop(columns="geometry"))
+    polygons = gpd.GeoDataFrame(
+        merged[["mine_id", "segment_id", "geometry"]].copy(), crs=target_crs
+    )
+    return features, polygons
+
+
 # ------------------------------------------------------------------
 # 5) Gesamten Datensatz aus allen Minen aufbauen
 # ------------------------------------------------------------------
@@ -365,60 +440,35 @@ def build_dataset(cfg):
         raise FileNotFoundError(f"Keine GeoTIFFs in {cfg['imagery_dir']} gefunden.")
     logger.info("%d GeoTIFFs in %s gefunden.", len(imagery_paths), cfg["imagery_dir"])
 
-    all_features = []
-    all_polygons = []
-    target_crs = None  # Koordinatensystem der ersten Mine -> gemeinsames Ziel-CRS
+    # Ziel-Koordinatensystem = das der ersten Mine (nur den Header lesen, nicht
+    # die Bilddaten). Muss VOR der parallelen Verarbeitung feststehen, weil bei
+    # paralleler Ausführung nicht mehr garantiert ist, welche Mine "zuerst"
+    # fertig wird.
+    with rasterio.open(imagery_paths[0]) as src:
+        target_crs = src.crs
 
-    for path in imagery_paths:
-        mine_id = extract_mine_id(path)
-        logger.info("Verarbeite Mine '%s' (%s) ...", mine_id, os.path.basename(path))
+    n_jobs = cfg.get("n_jobs") or os.cpu_count() or 1
+    n_jobs = max(1, min(n_jobs, len(imagery_paths)))
 
-        arr, transform, crs, nodata = load_mine_raster(
-            path, expected_n_bands=len(cfg["band_names"])
+    results = [None] * len(imagery_paths)
+    if n_jobs <= 1:
+        for i, path in enumerate(imagery_paths):
+            results[i] = _process_one_mine(path, cfg, labels_gdf, target_crs)
+    else:
+        logger.info(
+            "Verarbeite %d Minen parallel mit %d Prozessen ...",
+            len(imagery_paths), n_jobs,
         )
+        with ProcessPoolExecutor(max_workers=n_jobs, initializer=_init_worker_logging) as executor:
+            future_to_idx = {
+                executor.submit(_process_one_mine, path, cfg, labels_gdf, target_crs): i
+                for i, path in enumerate(imagery_paths)
+            }
+            for future in as_completed(future_to_idx):
+                results[future_to_idx[future]] = future.result()
 
-        if target_crs is None:
-            target_crs = crs
-        elif crs != target_crs:
-            logger.warning(
-                "Mine '%s' hat ein anderes Koordinatensystem (%s) als die erste "
-                "verarbeitete Mine (%s). Segmente werden nach %s reprojiziert, "
-                "damit beim Zusammenführen aller Minen nichts verschoben wird.",
-                mine_id, crs, target_crs, target_crs,
-            )
-
-        segments = segment_mine(
-            arr, cfg["n_segments_per_mine"], cfg["compactness"], nodata=nodata,
-            target_segment_px=cfg.get("target_segment_px"),
-            max_segments=cfg.get("max_segments_per_mine"),
-        )
-        seg_polys = segments_to_polygons(segments, transform, crs, mine_id)
-        seg_polys = compute_shape_features(seg_polys)
-
-        mine_labels = labels_gdf[labels_gdf["_mine_id_str"] == str(mine_id).strip()]
-        if not labels_gdf.empty and mine_labels.empty:
-            logger.warning(
-                "Keine Einträge in %s mit %s == '%s' gefunden (insgesamt %d "
-                "Label-Einträge vorhanden). Prüfe, ob die aus dem Dateinamen "
-                "extrahierte mine_id zum Namensschema in labels_path passt.",
-                cfg["labels_path"], cfg["mine_id_field"], mine_id, len(labels_gdf),
-            )
-        if not mine_labels.empty and mine_labels.crs != crs:
-            mine_labels = mine_labels.to_crs(crs)
-
-        seg_polys = label_segments(seg_polys, mine_labels, cfg["min_overlap_ratio"])
-
-        if crs != target_crs:
-            seg_polys = seg_polys.to_crs(target_crs)
-
-        feats = compute_segment_features(arr, segments, cfg["band_names"], cfg["texture_band"])
-        merged = seg_polys.merge(feats, on="segment_id", how="inner")
-
-        all_features.append(pd.DataFrame(merged.drop(columns="geometry")))
-        all_polygons.append(merged[["mine_id", "segment_id", "geometry"]])
-
-        n_pos = int(merged["label"].sum())
-        logger.info("  %s: %d Segmente, davon %d positiv", mine_id, len(merged), n_pos)
+    all_features = [feats for feats, _ in results]
+    all_polygons = [polys for _, polys in results]
 
     feature_df = pd.concat(all_features, ignore_index=True)
     polygons_gdf = gpd.GeoDataFrame(pd.concat(all_polygons, ignore_index=True), crs=target_crs)
