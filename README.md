@@ -62,6 +62,17 @@ committed):
    front (see `CONFIG["mine_id_field"]` / `extract_mine_id()` in the
    script).
 
+4. **`data/mine_boundaries.gpkg`** (optional but recommended): the real
+   mine boundary polygons (not the buffered image extent). Each Sentinel-2
+   export includes a 500m buffer of surrounding terrain around the mine,
+   which can never contain a tire dump but still gets segmented and
+   classified. Pointing `--mine-boundary-path data/mine_boundaries.gpkg`
+   (column `mine_id` by default, see `--mine-boundary-id-field`) at this
+   file drops every segment that falls entirely outside the real
+   boundary before classification, removing a meaningful share of false
+   positives for free. Without this option the pipeline behaves exactly
+   as before (no filtering).
+
 ## Checking your data before running
 
 Before running the full pipeline (which can take a while), run the data
@@ -113,12 +124,27 @@ Running the pipeline (with either method) will:
 3. Classify every segment and export `output/segments_classified.gpkg`.
 
 Load that GeoPackage into QGIS (drag & drop) and color by the
-`dump_proba` column (Graduated, threshold ~0.5) to inspect results.
+`dump_proba` column (Graduated, threshold ~0.5 by default, see below) to
+inspect results.
 
 Everything the pipeline does is logged with timestamps to the console,
 including warnings for anything that looks off (mismatched mine IDs,
 no-data pixels found, a cross-validation fold with only one class,
 etc.). Check the log output for warnings after a run.
+
+### Choosing a classification threshold
+
+`--classification-threshold` (default `0.5`) controls the cutoff on
+`dump_proba` used both for the cross-validation metrics and for the
+`dump_pred` column in the exported map. With data this imbalanced, 0.5
+is not necessarily the best trade-off — a higher threshold (e.g. `0.7`
+or `0.8`) sharply cuts the number of false-positive segments at the cost
+of missing a few of the fainter true dumps. Every run now logs a
+threshold-sweep table (out-of-fold, so it's an honest comparison) showing
+how many mines get detected and how many segments get flagged positive
+at several thresholds, so you can pick a value and re-run with
+`--use-cache` (skips re-segmenting, only retrains/re-exports) instead of
+guessing.
 
 ## Running the tests
 

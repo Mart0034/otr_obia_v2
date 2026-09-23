@@ -67,6 +67,18 @@ es landet also nichts davon im Git-Repository):
    Namensschema vorher zu prüfen (siehe `CONFIG["mine_id_field"]` /
    `extract_mine_id()` im Skript).
 
+4. **`data/mine_boundaries.gpkg`** (optional, aber empfohlen): die
+   tatsächlichen Minen-Grenzpolygone (nicht der gepufferte Bildausschnitt).
+   Jeder Sentinel-2-Export enthält einen 500m-Puffer umliegendes Gelände
+   rund um die Mine, das nie eine Reifenhalde enthalten kann, aber trotzdem
+   segmentiert und klassifiziert wird. Mit
+   `--mine-boundary-path data/mine_boundaries.gpkg` (Spalte `mine_id` als
+   Standard, siehe `--mine-boundary-id-field`) werden Segmente, die
+   komplett außerhalb der echten Grenze liegen, schon vor der
+   Klassifikation ausgeschlossen - reduziert False Positives ohne
+   Mehraufwand. Ohne diese Option verhält sich die Pipeline exakt wie
+   zuvor (kein Filtern).
+
 ## Daten vor dem Lauf prüfen
 
 Vor dem eigentlichen (unter Umständen langwierigen) Pipeline-Lauf lohnt
@@ -124,13 +136,29 @@ Der Pipeline-Lauf (mit beiden Methoden) macht dann Folgendes:
 
 Dieses GeoPackage kann per Drag & Drop in QGIS geladen werden; zur
 Kontrolle nach der Spalte `dump_proba` einfärben (Graduated,
-Schwellwert ca. 0,5).
+Schwellwert standardmäßig ca. 0,5, siehe unten).
 
 Alles, was die Pipeline tut, wird mit Zeitstempel in die Konsole
 geloggt, inklusive Warnungen bei allem, was auffällig aussieht
 (nicht zuordenbare Minen-IDs, gefundene No-Data-Pixel, eine
 Kreuzvalidierungs-Fold mit nur einer Klasse usw.). Nach jedem Lauf
 lohnt sich ein Blick auf die Warnungen im Log.
+
+### Schwellwert für die Klassifikation wählen
+
+`--classification-threshold` (Standard `0.5`) legt fest, ab welchem
+`dump_proba`-Wert ein Segment als positiv gilt - sowohl für die
+Kreuzvalidierungs-Metriken als auch für die `dump_pred`-Spalte im
+exportierten GeoPackage. Bei so unausgeglichenen Daten ist 0,5 nicht
+unbedingt der beste Kompromiss: ein höherer Schwellwert (z. B. `0.7`
+oder `0.8`) senkt die Anzahl falsch-positiver Segmente deutlich, auf
+Kosten davon, ein paar der schwächeren echten Dumps zu verpassen. Jeder
+Lauf loggt jetzt automatisch eine Schwellwert-Vergleichstabelle
+(Out-of-Fold, also ehrlich), die zeigt, wie viele Minen bei welchem
+Schwellwert erkannt werden und wie viele Segmente jeweils als positiv
+markiert werden - damit lässt sich ein Wert auswählen und mit
+`--use-cache` (überspringt die erneute Segmentierung, trainiert/exportiert
+nur neu) erneut laufen lassen, statt zu raten.
 
 ## Tests ausführen
 

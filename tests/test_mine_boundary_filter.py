@@ -3,9 +3,10 @@ includes a 500m buffer of surrounding terrain that can never contain a
 tire dump. Checked against the real dataset: 16.2% of all false positives
 fell outside the real mine boundary, entirely in that buffer zone."""
 import geopandas as gpd
+import pytest
 from shapely.geometry import box
 
-from otr_obia_pipeline import filter_to_mine_boundary
+from otr_obia_pipeline import CONFIG, build_dataset, filter_to_mine_boundary
 
 
 def _segments():
@@ -61,3 +62,20 @@ def test_no_boundary_for_this_mine_is_a_no_op():
 def test_none_boundary_gdf_is_a_no_op():
     result = filter_to_mine_boundary(_segments(), None, "mine_001")
     assert set(result["segment_id"]) == {1, 2, 3}
+
+
+def test_build_dataset_raises_clear_error_for_missing_boundary_file(tmp_path):
+    labels_gdf = gpd.GeoDataFrame({"mine_id": []}, geometry=[], crs="EPSG:32719")
+    labels_path = tmp_path / "labels.gpkg"
+    labels_gdf.to_file(labels_path, driver="GPKG")
+
+    cfg = dict(CONFIG)
+    cfg.update({
+        "imagery_dir": str(tmp_path / "imagery"),  # doesn't need to exist yet
+        "labels_path": str(labels_path),
+        "mine_id_field": "mine_id",
+        "mine_boundary_path": str(tmp_path / "does_not_exist.gpkg"),
+    })
+
+    with pytest.raises(FileNotFoundError, match="mine_boundary_path"):
+        build_dataset(cfg)

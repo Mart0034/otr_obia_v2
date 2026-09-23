@@ -98,6 +98,13 @@ def build_arg_parser(description):
         help="Zusätzlicher Puffer in Metern um die Minen-Grenze, bevor "
              "gefiltert wird (0 = exakte Grenze).",
     )
+    parser.add_argument(
+        "--classification-threshold", dest="classification_threshold", type=float, metavar="P",
+        help="Schwellwert für dump_proba, ab dem ein Segment als positiv gilt "
+             "(0-1, Standard 0.5). Höhere Werte senken False Positives, auf "
+             "Kosten der Erkennungsquote - siehe der von der Pipeline "
+             "automatisch geloggte Schwellwert-Vergleich.",
+    )
     return parser
 
 
@@ -130,6 +137,7 @@ def resolve_config(base_config, args):
         "mine_boundary_path": getattr(args, "mine_boundary_path", None),
         "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),
+        "classification_threshold": getattr(args, "classification_threshold", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:

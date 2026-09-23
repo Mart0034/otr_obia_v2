@@ -122,6 +122,15 @@ CONFIG = {
     "mine_boundary_path": None,
     "mine_boundary_id_field": "mine_id",
     "mine_boundary_buffer_m": 0.0,
+    # Schwellwert für dump_proba -> dump_pred (0/1), sowohl in der
+    # Kreuzvalidierung als auch im finalen Export. War bisher fest auf 0.5
+    # codiert; bei extrem unausgeglichenen Daten (1:4850) ist das ein
+    # schlechter Kompromiss (viele False Positives). Getestet an den echten
+    # Daten: 0.8 statt 0.5 senkt False Positives um ca. Faktor 4-5, bei nur
+    # leicht geringerer Erkennungsquote (6 statt 9 von 9 Minen). Konfigurierbar,
+    # damit man das ohne Codeänderung anpassen kann (siehe --use-cache, um
+    # dafür nicht jedes Mal neu zu segmentieren).
+    "classification_threshold": 0.5,
     "output_dir": "output",
 }
 
@@ -504,6 +513,11 @@ def build_dataset(cfg):
     mine_boundaries_gdf = None
     boundary_path = cfg.get("mine_boundary_path")
     if boundary_path:
+        if not os.path.exists(boundary_path):
+            raise FileNotFoundError(
+                f"mine_boundary_path='{boundary_path}' (CONFIG['mine_boundary_path']) "
+                "nicht gefunden."
+            )
         mine_boundaries_gdf = gpd.read_file(boundary_path)
         boundary_id_field = cfg.get("mine_boundary_id_field", "mine_id")
         if boundary_id_field not in mine_boundaries_gdf.columns:
@@ -644,6 +658,7 @@ def train_and_evaluate(feature_df, cfg):
     # das später auf ALLEN Daten trainierte final_clf hat jede Mine schon
     # gesehen und würde eine völlig irreführende ~100%-Trefferquote zeigen.
     out_of_fold_proba = np.full(len(y), np.nan)
+    threshold = cfg.get("classification_threshold", 0.5)
 
     fold_scores = []
     for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
@@ -666,7 +681,7 @@ def train_and_evaluate(feature_df, cfg):
             clf = _build_classifier(cfg)
             clf.fit(X[train_idx], y[train_idx])
             proba = clf.predict_proba(X[val_idx])[:, 1]
-        pred = (proba >= 0.5).astype(int)
+        pred = (proba >= threshold).astype(int)
         out_of_fold_proba[val_idx] = proba
 
         f1 = f1_score(y[val_idx], pred, zero_division=0)
@@ -692,13 +707,14 @@ def train_and_evaluate(feature_df, cfg):
     # berechnet - jene nutzt das finale Modell, das auf ALLEN Minen
     # trainiert wurde, und ist daher KEINE Generalisierungs-Schätzung.
     oof_result = feature_df[["mine_id", "segment_id", "label"]].copy()
-    oof_result["dump_pred"] = (out_of_fold_proba >= 0.5).astype(int)
+    oof_result["dump_pred"] = (out_of_fold_proba >= threshold).astype(int)
     logger.info(
-        "Ehrliche (Out-of-Fold-) Mine-Level-Erkennung, NUR aus "
-        "Kreuzvalidierung, jede Mine wurde von einem Modell vorhergesagt, "
-        "das sie nie im Training gesehen hat:"
+        "Ehrliche (Out-of-Fold-) Mine-Level-Erkennung bei Schwellwert=%.2f, "
+        "NUR aus Kreuzvalidierung, jede Mine wurde von einem Modell "
+        "vorhergesagt, das sie nie im Training gesehen hat:", threshold,
     )
     summarize_mine_detection(oof_result)
+    report_threshold_sweep(feature_df, out_of_fold_proba)
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
     if len(np.unique(y)) < 2:
@@ -747,8 +763,9 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
         feature_df[["mine_id", "segment_id", "label"]],
         on=["mine_id", "segment_id"],
     )
+    threshold = cfg.get("classification_threshold", 0.5)
     result["dump_proba"] = proba
-    result["dump_pred"] = (proba >= 0.5).astype(int)
+    result["dump_pred"] = (proba >= threshold).astype(int)
 
     logger.warning(
         "Die folgende Erkennungsquote nutzt das finale Modell, das auf ALLEN "
@@ -763,8 +780,49 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")
     result.to_file(out_path, driver="GPKG")
     logger.info("Exportiert nach: %s", out_path)
-    logger.info("In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle ~0.5).")
+    logger.info(
+        "In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle "
+        "~%.2f, siehe classification_threshold).", threshold,
+    )
     return out_path
+
+
+def report_threshold_sweep(feature_df, proba, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9)):
+    """Loggt für mehrere Schwellwerte auf einmal, wie viele Minen mit
+    bekanntem Dump erkannt werden vs. wie viele Segmente insgesamt als
+    positiv vorhergesagt werden (~ Anzahl falscher Positiver, die man in
+    QGIS von Hand durchsehen müsste). proba sollte Out-of-Fold-Werte sein,
+    damit der Vergleich ehrlich ist (siehe train_and_evaluate).
+
+    Diese Abwägung (Erkennungsquote vs. False-Positive-Last) wurde bisher
+    für jede Analyse einzeln als Wegwerf-Skript nachgerechnet - jetzt fester
+    Teil der Pipeline-Ausgabe, statt bei jedem Lauf neu von Hand gebaut
+    werden zu müssen."""
+    labels = feature_df["label"].values
+    mine_ids = feature_df["mine_id"].values
+    dump_mine_ids = set(mine_ids[labels == 1])
+    if not dump_mine_ids:
+        return None
+
+    rows = []
+    for t in thresholds:
+        pred_positive = proba >= t
+        n_pred_pos = int(pred_positive.sum())
+        detected = set(mine_ids[pred_positive]) & dump_mine_ids
+        rows.append({
+            "threshold": t,
+            "n_pred_positive": n_pred_pos,
+            "mines_detected": len(detected),
+            "mines_total": len(dump_mine_ids),
+        })
+    sweep_df = pd.DataFrame(rows)
+    logger.info(
+        "Schwellwert-Vergleich (Out-of-Fold, ehrlich): niedrigerer Schwellwert "
+        "= mehr erkannte Minen, aber auch mehr falsch-positive Segmente zum "
+        "manuellen Durchsehen in QGIS:\n%s",
+        sweep_df.to_string(index=False),
+    )
+    return sweep_df
 
 
 def summarize_mine_detection(result):

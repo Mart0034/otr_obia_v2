@@ -39,3 +39,13 @@ def test_no_overrides_keeps_base_config_unchanged():
     cfg = resolve_config(base, args)
 
     assert cfg == base
+
+
+def test_classification_threshold_flag_overrides_default():
+    parser = build_arg_parser("test")
+    args = parser.parse_args(["--classification-threshold", "0.8"])
+    base = {"classification_threshold": 0.5}
+
+    cfg = resolve_config(base, args)
+
+    assert cfg["classification_threshold"] == 0.8
