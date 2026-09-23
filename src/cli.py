@@ -83,6 +83,21 @@ def build_arg_parser(description):
              "und Merkmalsberechnung neu zu machen - deutlich schneller "
              "zum Ausprobieren neuer Schwellwerte/Modell-Einstellungen.",
     )
+    parser.add_argument(
+        "--mine-boundary-path", dest="mine_boundary_path", metavar="PATH",
+        help="Optional: Datei mit den tatsächlichen Minen-Grenzen (nicht nur "
+             "dem gepufferten Bildausschnitt), um Segmente außerhalb der "
+             "Mine auszuschließen. Ohne diese Option kein Filter.",
+    )
+    parser.add_argument(
+        "--mine-boundary-id-field", dest="mine_boundary_id_field", metavar="SPALTE",
+        help="Spaltenname für die Minen-ID in --mine-boundary-path.",
+    )
+    parser.add_argument(
+        "--mine-boundary-buffer-m", dest="mine_boundary_buffer_m", type=float, metavar="M",
+        help="Zusätzlicher Puffer in Metern um die Minen-Grenze, bevor "
+             "gefiltert wird (0 = exakte Grenze).",
+    )
     return parser
 
 
@@ -112,6 +127,9 @@ def resolve_config(base_config, args):
         "random_state": args.random_state,
         "n_jobs": args.n_jobs,
         "use_cache": args.use_cache,
+        "mine_boundary_path": getattr(args, "mine_boundary_path", None),
+        "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
+        "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:

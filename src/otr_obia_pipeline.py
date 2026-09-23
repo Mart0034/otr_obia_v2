@@ -115,6 +115,13 @@ CONFIG = {
                                                    # Segment-Datensatz aus
                                                    # output_dir wiederverwenden
                                                    # statt neu zu berechnen
+    # Optional: Pfad zu einer Datei mit den tatsächlichen Minen-Grenzen
+    # (z.B. mines_antofagasta.shp), um Segmente außerhalb der Mine
+    # auszuschließen (siehe filter_to_mine_boundary()). None = kein Filter,
+    # exakt das bisherige Verhalten.
+    "mine_boundary_path": None,
+    "mine_boundary_id_field": "mine_id",
+    "mine_boundary_buffer_m": 0.0,
     "output_dir": "output",
 }
 
@@ -374,7 +381,45 @@ def _init_worker_logging():
     )
 
 
-def _process_one_mine(path, cfg, labels_gdf, target_crs):
+def filter_to_mine_boundary(seg_polys, mine_boundary_gdf, mine_id, buffer_m=0.0):
+    """Entfernt Segmente, die außerhalb der tatsächlichen Minen-Grenze liegen.
+
+    Beim Sentinel-2-Export wurde um jede Mine ein 500m-Puffer gelegt (siehe
+    gee/sentinel2_export.js), sodass jedes Bild auch einen erheblichen Teil
+    umliegendes Gelände enthält, das nie eine Reifenhalde enthalten kann -
+    Berge, Wüste, etc. Fälschlicherweise als positiv erkannte Segmente in
+    diesem Randbereich lassen sich damit von vornherein ausschließen, statt
+    im Nachhinein herausgefiltert zu werden.
+
+    Wenn keine Grenze für diese Mine gefunden wird, bleibt seg_polys
+    unverändert (kein Fehler) - die Grenzdatei ist optional."""
+    if mine_boundary_gdf is None or mine_boundary_gdf.empty:
+        return seg_polys
+
+    boundary = mine_boundary_gdf[mine_boundary_gdf["_mine_id_str"] == str(mine_id).strip()]
+    if boundary.empty:
+        return seg_polys
+
+    if boundary.crs != seg_polys.crs:
+        boundary = boundary.to_crs(seg_polys.crs)
+
+    boundary_geom = boundary.geometry.union_all()
+    if buffer_m:
+        boundary_geom = boundary_geom.buffer(buffer_m)
+
+    n_before = len(seg_polys)
+    filtered = seg_polys[seg_polys.intersects(boundary_geom)].copy()
+    n_dropped = n_before - len(filtered)
+    if n_dropped > 0:
+        logger.info(
+            "  %s: %d von %d Segmenten liegen außerhalb der Minen-Grenze "
+            "(+%.0fm Puffer) und werden ausgeschlossen.",
+            mine_id, n_dropped, n_before, buffer_m,
+        )
+    return filtered
+
+
+def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=None):
     """Verarbeitet eine einzelne Mine vollständig (Segmentierung, Merkmale,
     Labeling). Eigene Top-Level-Funktion, damit sie in build_dataset()
     parallel in mehreren Prozessen laufen kann - jede Mine ist unabhängig
@@ -402,6 +447,10 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs):
     )
     seg_polys = segments_to_polygons(segments, transform, crs, mine_id)
     seg_polys = compute_shape_features(seg_polys)
+    seg_polys = filter_to_mine_boundary(
+        seg_polys, mine_boundaries_gdf, mine_id,
+        buffer_m=cfg.get("mine_boundary_buffer_m", 0.0),
+    )
 
     mine_labels = labels_gdf[labels_gdf["_mine_id_str"] == str(mine_id).strip()]
     if not labels_gdf.empty and mine_labels.empty:
@@ -449,6 +498,29 @@ def build_dataset(cfg):
     labels_gdf = labels_gdf.copy()
     labels_gdf["_mine_id_str"] = labels_gdf[cfg["mine_id_field"]].astype(str).str.strip()
 
+    # Minen-Grenzen sind optional: nur gesetzt, wenn mine_boundary_path in
+    # der Config einen Wert hat. Ohne diese Datei läuft die Pipeline exakt
+    # wie zuvor (kein Filtern).
+    mine_boundaries_gdf = None
+    boundary_path = cfg.get("mine_boundary_path")
+    if boundary_path:
+        mine_boundaries_gdf = gpd.read_file(boundary_path)
+        boundary_id_field = cfg.get("mine_boundary_id_field", "mine_id")
+        if boundary_id_field not in mine_boundaries_gdf.columns:
+            raise ValueError(
+                f"Spalte '{boundary_id_field}' (CONFIG['mine_boundary_id_field']) nicht "
+                f"in {boundary_path} gefunden. Vorhandene Spalten: "
+                f"{list(mine_boundaries_gdf.columns)}"
+            )
+        mine_boundaries_gdf = mine_boundaries_gdf.copy()
+        mine_boundaries_gdf["_mine_id_str"] = (
+            mine_boundaries_gdf[boundary_id_field].astype(str).str.strip()
+        )
+        logger.info(
+            "%d Minen-Grenzen aus %s geladen (Puffer: %.0fm).",
+            len(mine_boundaries_gdf), boundary_path, cfg.get("mine_boundary_buffer_m", 0.0),
+        )
+
     imagery_paths = sorted(glob.glob(os.path.join(cfg["imagery_dir"], "*.tif")))
     if not imagery_paths:
         raise FileNotFoundError(f"Keine GeoTIFFs in {cfg['imagery_dir']} gefunden.")
@@ -474,7 +546,9 @@ def build_dataset(cfg):
     if n_jobs <= 1:
         for i, path in enumerate(imagery_paths):
             try:
-                results[i] = _process_one_mine(path, cfg, labels_gdf, target_crs)
+                results[i] = _process_one_mine(
+                    path, cfg, labels_gdf, target_crs, mine_boundaries_gdf
+                )
             except Exception:
                 logger.exception("Mine '%s' fehlgeschlagen, wird übersprungen.", path)
                 failed.append(path)
@@ -485,7 +559,9 @@ def build_dataset(cfg):
         )
         with ProcessPoolExecutor(max_workers=n_jobs, initializer=_init_worker_logging) as executor:
             future_to_idx = {
-                executor.submit(_process_one_mine, path, cfg, labels_gdf, target_crs): i
+                executor.submit(
+                    _process_one_mine, path, cfg, labels_gdf, target_crs, mine_boundaries_gdf
+                ): i
                 for i, path in enumerate(imagery_paths)
             }
             for future in as_completed(future_to_idx):
