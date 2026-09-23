@@ -464,10 +464,20 @@ def build_dataset(cfg):
     n_jobs = cfg.get("n_jobs") or os.cpu_count() or 1
     n_jobs = max(1, min(n_jobs, len(imagery_paths)))
 
+    # Ein Fehler bei EINER Mine (kaputte Datei, Speicherproblem, ...) darf
+    # nicht die Ergebnisse aller anderen, bereits erfolgreich verarbeiteten
+    # Minen wegwerfen - das kann bei 138 Minen sehr teuer werden. Fehler
+    # werden daher pro Mine abgefangen und geloggt, die Verarbeitung läuft
+    # für die übrigen Minen weiter.
     results = [None] * len(imagery_paths)
+    failed = []
     if n_jobs <= 1:
         for i, path in enumerate(imagery_paths):
-            results[i] = _process_one_mine(path, cfg, labels_gdf, target_crs)
+            try:
+                results[i] = _process_one_mine(path, cfg, labels_gdf, target_crs)
+            except Exception:
+                logger.exception("Mine '%s' fehlgeschlagen, wird übersprungen.", path)
+                failed.append(path)
     else:
         logger.info(
             "Verarbeite %d Minen parallel mit %d Prozessen ...",
@@ -479,10 +489,26 @@ def build_dataset(cfg):
                 for i, path in enumerate(imagery_paths)
             }
             for future in as_completed(future_to_idx):
-                results[future_to_idx[future]] = future.result()
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception:
+                    logger.exception(
+                        "Mine '%s' fehlgeschlagen, wird übersprungen.", imagery_paths[idx]
+                    )
+                    failed.append(imagery_paths[idx])
 
-    all_features = [feats for feats, _ in results]
-    all_polygons = [polys for _, polys in results]
+    if failed:
+        logger.warning(
+            "%d von %d Minen fehlgeschlagen und übersprungen: %s",
+            len(failed), len(imagery_paths), [os.path.basename(p) for p in failed],
+        )
+    succeeded = [r for r in results if r is not None]
+    if not succeeded:
+        raise RuntimeError("Alle Minen sind fehlgeschlagen, kein Segment-Datensatz erzeugt.")
+
+    all_features = [feats for feats, _ in succeeded]
+    all_polygons = [polys for _, polys in succeeded]
 
     feature_df = pd.concat(all_features, ignore_index=True)
     polygons_gdf = gpd.GeoDataFrame(pd.concat(all_polygons, ignore_index=True), crs=target_crs)
