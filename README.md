@@ -159,6 +159,27 @@ high-confidence segment with nothing next to it), so a blanket "needs at
 least 2 segments" rule would have deleted that hit. A reasonable starting
 value is `0.6`, the same threshold the sweep table already reports on.
 
+### Requiring a compact cluster shape for medium-confidence detections (optional)
+
+`--require-compact-cluster-below` (default off) drops a positive segment
+whose `dump_proba` is below the given value unless the connected cluster
+of touching positive segments it belongs to is reasonably blob-shaped
+rather than a long thin chain. It's a different check from
+`--require-neighbor-below`, not a replacement: a chain of segments strung
+along a road or a cliff edge all touch each other, so every segment in it
+already has a supporting neighbor and sails straight through that filter.
+What's wrong with a chain isn't isolation, it's shape. Cluster shape is
+measured the same way as `shape_compactness` (4π·area/perimeter²),
+applied to the whole connected cluster rather than one segment, which
+stays accurate for a winding road, unlike a bounding-box aspect-ratio
+test, which a curved chain can dodge by curling back into a squarer
+bounding box. `--min-cluster-compactness` (default `0.15`) sets the
+cutoff; calibrated against the real data, where multi-segment
+false-positive clusters had a median compactness of 0.27 (20% fell below
+0.15) against 0.34 for real multi-segment dump clusters (none fell below
+0.15). Segments at or above the confidence value are never dropped,
+same reasoning as the neighbor filter.
+
 ### Adding Sentinel-1 radar features (optional)
 
 Radar measures surface roughness rather than color: a pile of tires

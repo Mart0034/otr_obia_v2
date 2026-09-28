@@ -175,6 +175,29 @@ hochkonfident erkanntes Segment ohne jeden Nachbarn), ein pauschales
 Ein sinnvoller Startwert ist `0.6`, derselbe Schwellwert, den die
 Vergleichstabelle ohnehin schon ausgibt.
 
+### Kompakte Cluster-Form für Segmente mittlerer Konfidenz verlangen (optional)
+
+`--require-compact-cluster-below` (standardmäßig aus) verwirft ein positiv
+vorhergesagtes Segment mit `dump_proba` unter dem angegebenen Wert, wenn
+das zusammenhängende Cluster berührender positiver Segmente, zu dem es
+gehört, nicht einigermaßen haufenförmig ist, sondern eine lange, dünne
+Kette. Das ist eine andere Prüfung als `--require-neighbor-below`, kein
+Ersatz dafür: eine Kette von Segmenten entlang einer Straße oder
+Klippenkante berührt sich gegenseitig, jedes Segment darin hat also schon
+einen unterstützenden Nachbarn und rutscht unbeschadet durch diesen
+Filter. Das Problem einer Kette ist nicht Isolation, sondern Form. Die
+Cluster-Form wird genauso gemessen wie `shape_compactness`
+(4π·Fläche/Umfang²), nur auf das gesamte zusammenhängende Cluster
+angewendet statt auf ein einzelnes Segment - bleibt dadurch auch bei
+einer kurvigen Straße zuverlässig, anders als ein Seitenverhältnis-Test
+der Bounding Box, dem eine gewundene Kette durch eine eher quadratische
+Bounding Box entgehen kann. `--min-cluster-compactness` (Standard `0.15`)
+legt den Schwellwert fest; an den echten Daten kalibriert, wo
+mehrsegmentige Falsch-Positiv-Cluster eine mediane Kompaktheit von 0,27
+hatten (20% lagen unter 0,15) gegenüber 0,34 bei echten mehrsegmentigen
+Dump-Clustern (0% lagen unter 0,15). Segmente ab dem Konfidenz-Wert
+werden nie verworfen, gleiche Begründung wie beim Nachbarschafts-Filter.
+
 ### Sentinel-1-Radar-Merkmale hinzufügen (optional)
 
 Radar misst die Oberflächenrauheit statt der Farbe: ein Reifenhaufen

@@ -114,6 +114,20 @@ def build_arg_parser(description):
              "Einzelsegmente mittlerer Konfidenz entlang von Fahrstraßen.",
     )
     parser.add_argument(
+        "--require-compact-cluster-below", dest="require_compact_cluster_below", type=float, metavar="P",
+        help="Optional: verwirft ein positiv vorhergesagtes Segment mit "
+             "dump_proba unter diesem Wert, wenn sein zusammenhängendes "
+             "Cluster berührender positiver Segmente eine Kompaktheit unter "
+             "--min-cluster-compactness hat (lang und dünn wie eine Straße "
+             "statt haufenförmig wie ein Dump). Ergänzt "
+             "--require-neighbor-below, statt es zu ersetzen.",
+    )
+    parser.add_argument(
+        "--min-cluster-compactness", dest="min_cluster_compactness", type=float, metavar="P",
+        help="Schwellwert für --require-compact-cluster-below (Standard 0.15, "
+             "an den echten Daten kalibriert).",
+    )
+    parser.add_argument(
         "--s1-dir", dest="s1_dir", metavar="DIR",
         help="Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von "
              "src/fetch_sentinel1.py). Fügt Radar-Merkmale (VV, VH, VH/VV) pro "
@@ -166,6 +180,8 @@ def resolve_config(base_config, args):
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),
         "classification_threshold": getattr(args, "classification_threshold", None),
         "require_neighbor_below": getattr(args, "require_neighbor_below", None),
+        "require_compact_cluster_below": getattr(args, "require_compact_cluster_below", None),
+        "min_cluster_compactness": getattr(args, "min_cluster_compactness", None),
         "s1_dir": getattr(args, "s1_dir", None),
         "dem_dir": getattr(args, "dem_dir", None),
         "s2t_dir": getattr(args, "s2t_dir", None),

@@ -61,6 +61,7 @@ from rasterio.features import shapes as rio_shapes
 from rasterio.warp import transform as warp_transform
 from scipy.ndimage import uniform_filter
 from shapely.geometry import shape as shapely_shape
+from shapely.ops import unary_union
 from skimage.segmentation import slic
 from skimage.feature import graycomatrix, graycoprops
 from sklearn.ensemble import RandomForestClassifier
@@ -143,6 +144,16 @@ CONFIG = {
     # Nachbarn - manche echten Dumps bestehen aus nur einem Segment. None =
     # kein Filter, exakt das bisherige Verhalten.
     "require_neighbor_below": None,
+    # Optional: erfordert für Segmente mit dump_proba UNTER diesem Wert, dass
+    # ihr zusammenhängendes Cluster berührender positiver Segmente in
+    # derselben Mine eine Kompaktheit >= min_cluster_compactness hat (siehe
+    # apply_cluster_shape_filter()). Zielt auf lange, dünne Ketten entlang
+    # von Straßen/Klippenkanten, die den Nachbarschafts-Filter oben unbeschadet
+    # passieren (die Segmente unterstützen sich ja gegenseitig), aber nicht
+    # haufenförmig wie ein echter Dump sind. Segmente mit dump_proba >= diesem
+    # Wert bleiben unangetastet. None = kein Filter.
+    "require_compact_cluster_below": None,
+    "min_cluster_compactness": 0.15,
     # Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von
     # src/fetch_sentinel1.py, gleiche Dateinamen und gleiches Pixelraster wie
     # die Sentinel-2-Bilder). None = keine Radar-Merkmale.
@@ -931,6 +942,8 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
     # berechnet - jene nutzt das finale Modell, das auf ALLEN Minen
     # trainiert wurde, und ist daher KEINE Generalisierungs-Schätzung.
     require_neighbor_below = cfg.get("require_neighbor_below")
+    require_compact_cluster_below = cfg.get("require_compact_cluster_below")
+    min_cluster_compactness = cfg.get("min_cluster_compactness", 0.15)
     oof_result = feature_df[["mine_id", "segment_id", "label"]].copy()
     oof_result["dump_proba"] = out_of_fold_proba
     oof_result = oof_result.merge(
@@ -940,13 +953,22 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
     oof_result["dump_pred"] = (oof_result["dump_proba"] >= threshold).astype(int)
     if require_neighbor_below is not None:
         oof_result = apply_neighbor_filter(oof_result, high_confidence=require_neighbor_below)
+    if require_compact_cluster_below is not None:
+        oof_result = apply_cluster_shape_filter(
+            oof_result, high_confidence=require_compact_cluster_below,
+            min_compactness=min_cluster_compactness,
+        )
     logger.info(
         "Ehrliche (Out-of-Fold-) Mine-Level-Erkennung bei Schwellwert=%.2f, "
         "NUR aus Kreuzvalidierung, jede Mine wurde von einem Modell "
         "vorhergesagt, das sie nie im Training gesehen hat:", threshold,
     )
     summarize_mine_detection(oof_result)
-    report_threshold_sweep(oof_result, require_neighbor_below=require_neighbor_below)
+    report_threshold_sweep(
+        oof_result, require_neighbor_below=require_neighbor_below,
+        require_compact_cluster_below=require_compact_cluster_below,
+        min_cluster_compactness=min_cluster_compactness,
+    )
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
     if len(np.unique(y)) < 2:
@@ -1001,6 +1023,12 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     require_neighbor_below = cfg.get("require_neighbor_below")
     if require_neighbor_below is not None:
         result = apply_neighbor_filter(result, high_confidence=require_neighbor_below)
+    require_compact_cluster_below = cfg.get("require_compact_cluster_below")
+    if require_compact_cluster_below is not None:
+        result = apply_cluster_shape_filter(
+            result, high_confidence=require_compact_cluster_below,
+            min_compactness=cfg.get("min_cluster_compactness", 0.15),
+        )
 
     logger.warning(
         "Die folgende Erkennungsquote nutzt das finale Modell, das auf ALLEN "
@@ -1022,17 +1050,18 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     return out_path
 
 
-def report_threshold_sweep(result, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9), require_neighbor_below=None):
+def report_threshold_sweep(result, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9), require_neighbor_below=None,
+                            require_compact_cluster_below=None, min_cluster_compactness=0.15):
     """Loggt für mehrere Schwellwerte auf einmal, wie viele Minen mit
     bekanntem Dump erkannt werden vs. wie viele Segmente insgesamt als
     positiv vorhergesagt werden (~ Anzahl falscher Positiver, die man in
     QGIS von Hand durchsehen müsste). result["dump_proba"] sollte Out-of-
     Fold-Werte enthalten, damit der Vergleich ehrlich ist (siehe
-    train_and_evaluate). Mit require_neighbor_below wird bei jedem
-    Schwellwert zusätzlich apply_neighbor_filter() angewendet (result
-    braucht dafür eine geometry-Spalte), damit sich der Effekt des
-    Nachbarschafts-Filters direkt gegen den reinen Schwellwert-Effekt
-    vergleichen lässt.
+    train_and_evaluate). Mit require_neighbor_below/require_compact_cluster_below
+    werden bei jedem Schwellwert zusätzlich apply_neighbor_filter() bzw.
+    apply_cluster_shape_filter() angewendet (result braucht dafür eine
+    geometry-Spalte), damit sich deren Effekt direkt gegen den reinen
+    Schwellwert-Effekt vergleichen lässt.
 
     Diese Abwägung (Erkennungsquote vs. False-Positive-Last) wurde bisher
     für jede Analyse einzeln als Wegwerf-Skript nachgerechnet - jetzt fester
@@ -1049,10 +1078,16 @@ def report_threshold_sweep(result, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9), require
         pred_positive = result["dump_proba"].values >= t
         n_pred_pos = int(pred_positive.sum())
         detected_mine_ids = mine_ids[pred_positive]
-        if require_neighbor_below is not None:
+        if require_neighbor_below is not None or require_compact_cluster_below is not None:
             tmp = result.copy()
             tmp["dump_pred"] = pred_positive.astype(int)
-            tmp = apply_neighbor_filter(tmp, high_confidence=require_neighbor_below)
+            if require_neighbor_below is not None:
+                tmp = apply_neighbor_filter(tmp, high_confidence=require_neighbor_below)
+            if require_compact_cluster_below is not None:
+                tmp = apply_cluster_shape_filter(
+                    tmp, high_confidence=require_compact_cluster_below,
+                    min_compactness=min_cluster_compactness,
+                )
             kept = tmp["dump_pred"].values == 1
             n_pred_pos = int(kept.sum())
             detected_mine_ids = mine_ids[kept]
@@ -1116,6 +1151,58 @@ def apply_neighbor_filter(result, high_confidence=0.6):
             joined["orig_index_low"] != joined["orig_index_other"], "orig_index_low"
         ])
         to_downgrade.extend(set(low_conf.index) - supported)
+
+    if to_downgrade:
+        result.loc[to_downgrade, "dump_pred"] = 0
+    return result
+
+
+def apply_cluster_shape_filter(result, high_confidence=0.6, min_compactness=0.15):
+    """Setzt dump_pred für Segmente mit dump_proba < high_confidence auf 0
+    zurück, wenn das zusammenhängende Cluster berührender positiver
+    Segmente in derselben Mine, zu dem sie gehören, eine Kompaktheit
+    (4π·Fläche/Umfang², wie shape_compactness) unter min_compactness hat.
+    Segmente mit dump_proba >= high_confidence bleiben unangetastet,
+    gleiche Begründung wie bei apply_neighbor_filter().
+
+    Ergänzt apply_neighbor_filter(), statt es zu ersetzen: eine lange Kette
+    berührender Segmente entlang einer Straße oder Klippenkante besteht
+    zwar aus lauter gegenseitig unterstützten Nachbarn (würde den
+    Nachbarschafts-Filter also unbeschadet passieren), ist aber lang und
+    dünn statt haufenförmig wie ein echter Dump - genau das misst die
+    Cluster-Kompaktheit. Robust gegenüber gekrümmten/kurvigen Ketten,
+    anders als ein Seitenverhältnis-Test der Bounding Box (der bei
+    kurvigen Straßen versagt - eine gewundene Straße kann trotzdem in eine
+    eher quadratische Bounding Box passen).
+
+    An den echten Daten kalibriert: mehrsegmentige Falsch-Positiv-Cluster
+    haben median Kompaktheit 0.27 (20% liegen unter 0.15), mehrsegmentige
+    echte Dump-Cluster median 0.34 (0% liegen unter 0.15) - der
+    Standardwert 0.15 verwirft damit einen Teil der dünnen Ketten, ohne in
+    den vorliegenden Daten einen einzigen echten mehrsegmentigen Dump zu
+    verlieren.
+
+    Erwartet result mit den Spalten mine_id, dump_proba, dump_pred und
+    geometry (Polygone)."""
+    result = result.copy()
+    result["dump_pred"] = result["dump_pred"].astype(int)
+    positive = result[result["dump_pred"] == 1]
+    if positive.empty:
+        return result
+
+    to_downgrade = []
+    for mine_id, group in positive.groupby("mine_id"):
+        merged = unary_union(group.geometry.tolist())
+        parts = [merged] if merged.geom_type == "Polygon" else list(merged.geoms)
+        for part in parts:
+            if part.area <= 0:
+                continue
+            compactness = 4 * np.pi * part.area / (part.length ** 2 + 1e-9)
+            if compactness >= min_compactness:
+                continue
+            members = group[group.geometry.intersects(part.buffer(0.1))]
+            low_conf_members = members[members["dump_proba"] < high_confidence]
+            to_downgrade.extend(low_conf_members.index)
 
     if to_downgrade:
         result.loc[to_downgrade, "dump_pred"] = 0
