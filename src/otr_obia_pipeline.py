@@ -385,7 +385,14 @@ def compute_segment_features(arr, segments, band_names, texture_band):
     # vorhandenen sichtbaren Bänder. Fehlen alle drei (z.B. in Tests mit
     # einem minimalen Bandsatz), bleibt das Merkmal 0.0 statt abzustürzen.
     brightness_idx = [band_names.index(b) for b in ("blue", "green", "red") if b in band_names]
-    brightness = np.nanmean(arr[..., brightness_idx], axis=-1) if brightness_idx else None
+    if brightness_idx:
+        with np.errstate(invalid="ignore"):
+            # nodata-Bereiche sind über alle Bänder hinweg NaN -> "Mean of
+            # empty slice" ist dort erwartet (wie bei northness/tpi weiter
+            # oben), kein Hinweis auf ein Problem.
+            brightness = np.nanmean(arr[..., brightness_idx], axis=-1)
+    else:
+        brightness = None
 
     tex_idx = band_names.index(texture_band)
     tex_band = arr[..., tex_idx]
