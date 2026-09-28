@@ -9,3 +9,4 @@ numpy
 scipy
 pystac-client
 planetary-computer
+pvlib

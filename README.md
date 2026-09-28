@@ -208,6 +208,16 @@ the flat ground dumps are usually on.
    - `dem_northness`: -1..1, positive on north-facing slopes. In the
      southern hemisphere the sun is to the north, so south-facing slopes
      (negative) are the shaded ones. Flat ground is 0.
+   - `dem_hillshade_dec` / `dem_hillshade_jun`: expected illumination
+     (-1..1, roughly) from the real sun position at local midday on the
+     southern-hemisphere summer and winter solstices, using an actual
+     solar-position calculation rather than a plain north/south proxy.
+     More precise than `dem_northness` in a narrow valley, where a segment
+     can straddle both a sunlit and a shadowed wall and the northness
+     *average* washes out even though half the segment is genuinely dark.
+     It only models a surface's own orientation toward the sun, not
+     shadows cast by neighboring terrain (that would need ray-tracing
+     across the whole DEM).
 
    Absolute elevation is deliberately left out: it ranges from the coast to
    ~4000m between mines and would mostly tell the model which mine it is

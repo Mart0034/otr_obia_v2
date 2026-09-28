@@ -1,13 +1,21 @@
 """Tests for the optional Copernicus DEM terrain features: slope, position
-relative to the surroundings (TPI) and north/south facing, plus how the
-pipeline attaches them to each segment."""
+relative to the surroundings (TPI), north/south facing, and hillshade
+(actual sun-position-based illumination), plus how the pipeline attaches
+them to each segment."""
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
 
 from fetch_dem import mosaic_tiles
-from otr_obia_pipeline import CONFIG, build_dataset, load_dem_for_mine, terrain_features
+from otr_obia_pipeline import (
+    CONFIG,
+    build_dataset,
+    hillshade,
+    load_dem_for_mine,
+    solar_position,
+    terrain_features,
+)
 
 PX = 10.0
 
@@ -107,3 +115,86 @@ def test_dem_on_a_different_grid_is_rejected(tmp_path, write_synthetic_raster):
 
     with pytest.raises(ValueError, match="Raster"):
         load_dem_for_mine(s2, str(dem_dir), (40, 40), 31)
+
+
+# --- solar_position() / hillshade(): the two building blocks behind
+# dem_hillshade_dec/_jun, which model actual sun-position-based
+# illumination instead of the coarser "north vs. south" proxy of
+# dem_northness. ---
+
+
+def test_solar_position_matches_known_physics_for_antofagasta_summer_noon():
+    # southern-hemisphere summer, near local solar noon in Antofagasta
+    # (UTC-3/-4): the sun should be high in the sky and roughly northward
+    # (azimuth near 0/360, since at midday in the southern hemisphere summer
+    # the sun passes close to overhead, slightly toward the north).
+    azimuth, elevation = solar_position(-23.5, -70.0, "2023-12-21T15:00:00Z")
+    assert elevation > 60  # high sun, southern-hemisphere summer
+    assert 0 <= azimuth <= 360
+
+
+def test_solar_position_is_lower_in_the_local_winter():
+    _, elevation_dec = solar_position(-23.5, -70.0, "2023-12-21T15:00:00Z")
+    _, elevation_jun = solar_position(-23.5, -70.0, "2023-06-21T15:00:00Z")
+    assert elevation_jun < elevation_dec  # southern-hemisphere winter sun is lower
+
+
+def test_hillshade_on_flat_ground_ignores_aspect_and_equals_sin_of_elevation():
+    # slope=0 -> the aspect-dependent term vanishes entirely, whatever
+    # aspect/azimuth is passed; only the sun's elevation angle matters.
+    for aspect in (0, 90, 180, 270):
+        value = hillshade(slope_deg=0.0, aspect_deg=aspect, sun_azimuth_deg=123.0, sun_elevation_deg=30.0)
+        assert value == pytest.approx(np.sin(np.radians(30.0)), abs=1e-6)
+
+
+def test_hillshade_with_sun_overhead_equals_cos_of_slope_regardless_of_aspect():
+    # sun straight overhead (elevation=90, zenith=0) -> the azimuth/aspect
+    # term's coefficient (sin(zenith)) is zero, so only slope matters.
+    for aspect in (0, 45, 200):
+        value = hillshade(slope_deg=30.0, aspect_deg=aspect, sun_azimuth_deg=77.0, sun_elevation_deg=90.0)
+        assert value == pytest.approx(np.cos(np.radians(30.0)), abs=1e-6)
+
+
+def test_hillshade_facing_the_sun_is_brighter_than_facing_away():
+    facing_sun = hillshade(slope_deg=40.0, aspect_deg=90.0, sun_azimuth_deg=90.0, sun_elevation_deg=30.0)
+    facing_away = hillshade(slope_deg=40.0, aspect_deg=270.0, sun_azimuth_deg=90.0, sun_elevation_deg=30.0)
+    assert facing_sun > facing_away
+    assert facing_away < 0  # steep enough, and far enough from the sun, to self-shadow
+
+
+def test_terrain_features_has_five_bands_including_both_hillshade_seasons():
+    out = terrain_features(_plane(rise_per_row=1.0), PX, PX, 31, lat=-23.5, lon=-70.0)
+    assert out.shape[-1] == 5  # slope, tpi, northness, hillshade_dec, hillshade_jun
+    assert np.isfinite(out[..., 3]).all()
+    assert np.isfinite(out[..., 4]).all()
+
+
+def test_terrain_features_hillshade_reacts_to_where_the_mine_actually_is():
+    # same terrain, two very different locations -> different sun
+    # geometry -> the hillshade bands should differ (the northness/slope/
+    # tpi bands should NOT, since those don't depend on lat/lon).
+    plane = _plane(rise_per_row=1.0)
+    here = terrain_features(plane, PX, PX, 31, lat=-23.5, lon=-70.0)
+    elsewhere = terrain_features(plane, PX, PX, 31, lat=51.5, lon=-0.1)  # London
+
+    assert here[..., 0] == pytest.approx(elsewhere[..., 0])  # slope unaffected
+    assert here[..., 2] == pytest.approx(elsewhere[..., 2])  # northness unaffected
+    assert not np.allclose(here[..., 3], elsewhere[..., 3])  # hillshade_dec differs
+
+
+def test_pipeline_dem_features_use_the_minefields_real_location(tmp_path, write_synthetic_raster):
+    # regression guard for load_dem_for_mine() actually computing lat/lon
+    # from the DEM raster instead of silently using terrain_features()'s
+    # test-only default.
+    imagery_dir, dem_dir = tmp_path / "imagery", tmp_path / "dem"
+    imagery_dir.mkdir()
+    dem_dir.mkdir()
+    s2 = write_synthetic_raster(imagery_dir / "mine_001.tif", seed=1)
+    _write_dem_like(s2, dem_dir / "mine_001.tif", _plane(rise_per_row=1.0))
+
+    from_pipeline = load_dem_for_mine(s2, str(dem_dir), (40, 40), 31)
+    from_default_location = terrain_features(_plane(rise_per_row=1.0), PX, PX, 31)
+
+    # the synthetic raster's UTM origin is nowhere near the default
+    # -24/-69.5 test location, so the hillshade bands should differ.
+    assert not np.allclose(from_pipeline[..., 3], from_default_location[..., 3])

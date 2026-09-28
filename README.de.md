@@ -226,6 +226,16 @@ unterscheiden.
    - `dem_northness`: -1..1, positiv an nach Norden geneigten Hängen. Auf
      der Südhalbkugel steht die Sonne im Norden, nach Süden geneigte Hänge
      (negativ) liegen also im Schatten. Flaches Gelände = 0.
+   - `dem_hillshade_dec` / `dem_hillshade_jun`: erwartete Beleuchtungsstärke
+     (-1..1, ungefähr) aus dem tatsächlichen Sonnenstand am lokalen Mittag
+     zur Süd-Sommer- bzw. Süd-Wintersonnenwende, berechnet mit einer echten
+     Sonnenpositions-Berechnung statt eines reinen Nord/Süd-Näherungswerts.
+     Genauer als `dem_northness` in einem engen Tal, wo ein Segment sowohl
+     eine besonnte als auch eine beschattete Talwand umfassen kann und der
+     northness-*Mittelwert* sich gegenseitig aufhebt, obwohl die Hälfte des
+     Segments tatsächlich dunkel liegt. Erfasst nur die Ausrichtung einer
+     Fläche zur Sonne, keinen Schattenwurf durch umliegendes Gelände (dafür
+     wäre Raytracing über das gesamte Höhenmodell nötig).
 
    Die absolute Höhe ist bewusst nicht dabei: sie reicht je nach Mine von
    der Küste bis ~4000m und würde vor allem verraten, um welche Mine es

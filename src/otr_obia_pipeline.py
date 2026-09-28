@@ -58,6 +58,7 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio.features import shapes as rio_shapes
+from rasterio.warp import transform as warp_transform
 from scipy.ndimage import uniform_filter
 from shapely.geometry import shape as shapely_shape
 from skimage.segmentation import slic
@@ -66,6 +67,7 @@ from sklearn.ensemble import RandomForestClassifier
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import classification_report, f1_score, roc_auc_score
+import pvlib
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +168,18 @@ S1_BAND_NAMES = ["s1_vv", "s1_vh", "s1_vh_vv"]
 # Aus dem Höhenmodell abgeleitete Merkmale. Die absolute Höhe ist bewusst
 # NICHT dabei: sie reicht je nach Mine von der Küste bis ~4000m und würde vor
 # allem verraten, um welche Mine es sich handelt, statt etwas über Halden.
-DEM_BAND_NAMES = ["dem_slope", "dem_tpi", "dem_northness"]
+# dem_hillshade_dec/_jun: siehe hillshade() weiter unten.
+DEM_BAND_NAMES = ["dem_slope", "dem_tpi", "dem_northness", "dem_hillshade_dec", "dem_hillshade_jun"]
+
+# Repräsentative Sonnenstände für die Hillshade-Merkmale: Süd-Sommer- und
+# Süd-Wintersonnenwende, je nahe dem lokalen Mittag in Antofagasta (UTC-3/-4).
+# Das genaue Jahr ist unerheblich - es geht nur um die zwei Extreme des
+# Sonnenstands übers Jahr (siehe fetch_s2_timeseries.py), nicht um eine
+# bestimmte echte Aufnahme.
+SOLSTICE_DATETIMES = {
+    "dec": "2023-12-21T15:00:00Z",  # Süd-Sommer, hoher Sonnenstand
+    "jun": "2023-06-21T15:00:00Z",  # Süd-Winter, tiefer Sonnenstand
+}
 
 # Zeitreihen-Merkmale: wie stark schwankt die Helligkeit eines Pixels übers
 # Jahr (Variationskoeffizient) und wie dunkel wird es im dunkelsten Moment
@@ -306,16 +319,27 @@ def segments_to_polygons(segments, transform, crs, mine_id):
 # 3) Merkmale pro Segment
 # ------------------------------------------------------------------
 def compute_shape_features(seg_gdf):
-    """Berechnet geometrische Formmerkmale je Segment: Fläche, Umfang und
+    """Berechnet geometrische Formmerkmale je Segment: Fläche, Umfang,
     Kompaktheit (Polsby-Popper-Maß: 1.0 = perfekter Kreis, kleiner = länglich
-    oder verwinkelt). Wird in der Modul-Doku als "Formmerkmale" angekündigt,
-    fehlte aber bisher in der Implementierung."""
+    oder verwinkelt) und Rechteckigkeit (Flächenanteil am eigenen minimalen
+    umschließenden Rechteck: nah an 1.0 = füllt sein Rechteck fast komplett
+    aus wie ein Gebäude/Dach, deutlich darunter = unregelmäßige, organische
+    Form wie ein Reifenhaufen). Gebäude auf dem Minengelände wurden beim
+    manuellen Durchsehen der Ergebnisse als eigene Falsch-Positiv-Kategorie
+    identifiziert - geometrisch klar von Halden unterscheidbar, aber bisher
+    nicht gemessen (shape_compactness erfasst Rundheit, nicht Eckigkeit)."""
     seg_gdf = seg_gdf.copy()
     seg_gdf["shape_area"] = seg_gdf.geometry.area
     seg_gdf["shape_perimeter"] = seg_gdf.geometry.length
     seg_gdf["shape_compactness"] = (
         4 * np.pi * seg_gdf["shape_area"] / (seg_gdf["shape_perimeter"] ** 2 + 1e-9)
     )
+
+    def rectangularity(geom):
+        rect_area = geom.minimum_rotated_rectangle.area
+        return geom.area / rect_area if rect_area > 0 else 0.0
+
+    seg_gdf["shape_rectangularity"] = seg_gdf.geometry.apply(rectangularity)
     return seg_gdf
 
 
@@ -471,9 +495,9 @@ def filter_to_mine_boundary(seg_polys, mine_boundary_gdf, mine_id, buffer_m=0.0)
 def _read_aligned(s2_path, directory, shape, n_bands, what, fetch_script):
     """Liest die Zusatzdatei (gleicher Dateiname wie das Sentinel-2-Bild) aus
     directory und prüft, dass sie exakt dasselbe Pixelraster hat. Rückgabe:
-    (Bänder (n, H, W), Pixelgröße x, Pixelgröße y), oder None mit Warnung,
-    wenn die Datei fehlt - der Aufrufer liefert dann NaN-Bänder, damit alle
-    Minen dieselben Merkmalsspalten haben."""
+    (Bänder (n, H, W), Pixelgröße x, Pixelgröße y, CRS, Transform), oder None
+    mit Warnung, wenn die Datei fehlt - der Aufrufer liefert dann NaN-Bänder,
+    damit alle Minen dieselben Merkmalsspalten haben."""
     path = os.path.join(directory, os.path.basename(s2_path))
     if not os.path.exists(path):
         logger.warning(
@@ -485,13 +509,14 @@ def _read_aligned(s2_path, directory, shape, n_bands, what, fetch_script):
     with rasterio.open(path) as src:
         data = src.read().astype(np.float32)
         px_x, px_y = abs(src.transform.a), abs(src.transform.e)
+        crs, transform = src.crs, src.transform
     if data.shape[0] != n_bands or data.shape[1:] != tuple(shape):
         raise ValueError(
             f"{path}: erwartet {n_bands} Band/Bänder im Raster {tuple(shape)} (wie "
             f"das Sentinel-2-Bild), gefunden {data.shape[0]} im Raster "
             f"{data.shape[1:]}. Datei mit {fetch_script} --overwrite neu erzeugen."
         )
-    return data, px_x, px_y
+    return data, px_x, px_y, crs, transform
 
 
 def load_s1_for_mine(s2_path, s1_dir, shape):
@@ -499,7 +524,8 @@ def load_s1_for_mine(s2_path, s1_dir, shape):
     read = _read_aligned(s2_path, s1_dir, shape, 2, "Sentinel-1", "fetch_sentinel1.py")
     if read is None:
         return np.full((*shape, len(S1_BAND_NAMES)), np.nan, dtype=np.float32)
-    vv, vh = read[0]
+    data, *_ = read
+    vv, vh = data
     return np.stack([vv, vh, vh - vv], axis=-1)
 
 
@@ -510,11 +536,39 @@ def load_s2_temporal_for_mine(s2_path, s2t_dir, shape):
                          "Sentinel-2-Zeitreihen", "fetch_s2_timeseries.py")
     if read is None:
         return np.full((*shape, len(S2T_BAND_NAMES)), np.nan, dtype=np.float32)
-    return np.moveaxis(read[0], 0, -1)
+    data, *_ = read
+    return np.moveaxis(data, 0, -1)
 
 
-def terrain_features(elevation, pixel_size_x, pixel_size_y, tpi_window_px):
-    """Leitet aus der Höhe (H, W) drei Gelände-Merkmale ab, Rückgabe (H, W, 3):
+def solar_position(lat, lon, when):
+    """Sonnenazimut (im Uhrzeigersinn ab Norden, 0-360°) und Sonnenhöhe über
+    dem Horizont (Grad) für einen Ort und Zeitpunkt. when: ISO-Zeitstempel
+    oder Timestamp, UTC. Nutzt pvlib für eine astronomisch korrekte
+    Berechnung (Sonnenposition, nicht nur eine grobe Näherung)."""
+    result = pvlib.solarposition.get_solarposition(pd.DatetimeIndex([when]), lat, lon)
+    return float(result["azimuth"].iloc[0]), float(result["apparent_elevation"].iloc[0])
+
+
+def hillshade(slope_deg, aspect_deg, sun_azimuth_deg, sun_elevation_deg):
+    """Erwartete Beleuchtungsstärke einer geneigten Fläche bei gegebenem
+    Sonnenstand (Standard-Hillshade-Formel, Skalarprodukt aus Flächen-
+    normale und Sonnenrichtung): 1 = Fläche zeigt direkt zur Sonne, 0 =
+    Sonnenstrahlen streifen die Fläche im rechten Winkel, negativ = Fläche
+    zeigt von der Sonne weg (Eigenverschattung). Erfasst NUR die
+    Ausrichtung der Fläche selbst, KEINEN Schattenwurf durch umliegendes,
+    höheres Gelände (dafür wäre Raytracing über das gesamte DEM nötig)."""
+    slope = np.radians(slope_deg)
+    aspect = np.radians(aspect_deg)
+    zenith = np.radians(90.0 - sun_elevation_deg)
+    azimuth = np.radians(sun_azimuth_deg)
+    return (
+        np.cos(zenith) * np.cos(slope)
+        + np.sin(zenith) * np.sin(slope) * np.cos(azimuth - aspect)
+    )
+
+
+def terrain_features(elevation, pixel_size_x, pixel_size_y, tpi_window_px, lat=-24.0, lon=-69.5):
+    """Leitet aus der Höhe (H, W) fünf Gelände-Merkmale ab, Rückgabe (H, W, 5):
 
     - dem_slope: Hangneigung in Grad (0 = flach)
     - dem_tpi: Höhe minus mittlere Höhe der Umgebung (tpi_window_px) in m;
@@ -523,6 +577,17 @@ def terrain_features(elevation, pixel_size_x, pixel_size_y, tpi_window_px):
       nach Norden geneigt. Auf der Südhalbkugel steht die Sonne im Norden,
       nach Süden geneigte Hänge (negativ) liegen also im Schatten. Flaches
       Gelände = 0, egal wohin es minimal geneigt ist.
+    - dem_hillshade_dec / dem_hillshade_jun: siehe hillshade(), ausgewertet
+      am lokalen Mittag zur Süd-Sommer- bzw. Süd-Wintersonnenwende (siehe
+      SOLSTICE_DATETIMES). Genauer als dem_northness, weil es den echten
+      Sonnenstand nutzt statt nur "Nord vs. Süd" - wichtig z.B. in engen
+      Tälern, wo ein Hang je nach Jahreszeit unterschiedlich stark
+      beschattet ist, was dem_northness als Mittelwert über das Segment
+      teils verwässert.
+
+    lat/lon (WGS84) bestimmen den Sonnenstand für die Hillshade-Merkmale und
+    sollten die tatsächliche Lage der Mine sein (siehe load_dem_for_mine());
+    der Standardwert ist nur eine grobe Näherung für Tests.
 
     Erwartet ein nordausgerichtetes Raster (Zeilen laufen nach Süden)."""
     elev = elevation.astype(np.float64)
@@ -541,18 +606,32 @@ def terrain_features(elevation, pixel_size_x, pixel_size_y, tpi_window_px):
         northness = np.where(grad > 0, dz_drow / grad, 0.0) * np.sin(np.arctan(grad))
     tpi = elev - uniform_filter(elev, size=tpi_window_px, mode="nearest")
 
-    out = np.stack([slope, tpi, northness], axis=-1).astype(np.float32)
+    # Hangausrichtung im Uhrzeigersinn ab Norden (0-360°), aus denselben
+    # Gradienten wie dem_northness - siehe deren Vorzeichenerklärung oben.
+    aspect = np.degrees(np.arctan2(-dz_dcol, dz_drow)) % 360
+
+    hillshades = []
+    for season in ("dec", "jun"):
+        sun_azimuth, sun_elevation = solar_position(lat, lon, SOLSTICE_DATETIMES[season])
+        hillshades.append(hillshade(slope, aspect, sun_azimuth, sun_elevation))
+
+    out = np.stack([slope, tpi, northness, *hillshades], axis=-1).astype(np.float32)
     out[missing] = np.nan
     return out
 
 
 def load_dem_for_mine(s2_path, dem_dir, shape, tpi_window_px):
-    """Höhenmodell -> Gelände-Merkmale (H, W, 3), siehe terrain_features()."""
+    """Höhenmodell -> Gelände-Merkmale (H, W, 5), siehe terrain_features().
+    Die Lage der Mine (für den Sonnenstand der Hillshade-Merkmale) wird aus
+    der Bildmitte des Höhenmodell-Rasters bestimmt."""
     read = _read_aligned(s2_path, dem_dir, shape, 1, "Höhenmodell", "fetch_dem.py")
     if read is None:
         return np.full((*shape, len(DEM_BAND_NAMES)), np.nan, dtype=np.float32)
-    data, px_x, px_y = read
-    return terrain_features(data[0], px_x, px_y, tpi_window_px)
+    data, px_x, px_y, crs, transform = read
+    height, width = data.shape[1:]
+    center_x, center_y = transform @ (width / 2.0, height / 2.0)
+    lon, lat = warp_transform(crs, "EPSG:4326", [center_x], [center_y])
+    return terrain_features(data[0], px_x, px_y, tpi_window_px, lat=lat[0], lon=lon[0])
 
 
 def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=None):
