@@ -196,7 +196,17 @@ legt den Schwellwert fest; an den echten Daten kalibriert, wo
 mehrsegmentige Falsch-Positiv-Cluster eine mediane Kompaktheit von 0,27
 hatten (20% lagen unter 0,15) gegenüber 0,34 bei echten mehrsegmentigen
 Dump-Clustern (0% lagen unter 0,15). Segmente ab dem Konfidenz-Wert
-werden nie verworfen, gleiche Begründung wie beim Nachbarschafts-Filter.
+werden nie verworfen, gleiche Begründung wie beim Nachbarschafts-Filter -
+hier aber ein höherer Wert als bei `--require-neighbor-below` sinnvoll:
+dass ein einzelnes hochkonfidentes Segment ein echter Dump ist, ist
+plausibel (mine_012), dass eine ganze Kette aus 20+ Segmenten, bei der
+sich das Modell durchgängig sicher ist, ein echter Dump ist, fast nie -
+echte Dumps sehen unabhängig von der Modell-Konfidenz nicht wie Straßen
+aus. An echten Daten getestet: eine Straßen-Kette in mine_043, bei der
+jedes Segment zwischen 0,60 und 0,71 Konfidenz lag, rutschte bei einem
+Schwellwert von 0,6 unbeschadet durch; mit 0,8 wurde sie erfasst. `0.6`
+für `--require-neighbor-below` und `0.8` für
+`--require-compact-cluster-below` ist ein sinnvoller Startwert.
 
 ### Sentinel-1-Radar-Merkmale hinzufügen (optional)
 

@@ -177,8 +177,16 @@ bounding box. `--min-cluster-compactness` (default `0.15`) sets the
 cutoff; calibrated against the real data, where multi-segment
 false-positive clusters had a median compactness of 0.27 (20% fell below
 0.15) against 0.34 for real multi-segment dump clusters (none fell below
-0.15). Segments at or above the confidence value are never dropped,
-same reasoning as the neighbor filter.
+0.15). Segments at or above the confidence value are never dropped, same
+reasoning as the neighbor filter, but use a higher cutoff here than for
+`--require-neighbor-below`: a single high-confidence segment being a real
+dump is plausible (mine_012), but a whole 20+-segment chain the model is
+uniformly confident about almost never is, real dumps aren't shaped like
+roads no matter how sure the model gets. Tested on real data: a road
+chain in mine_043 where every segment sat at 0.60-0.71 confidence slipped
+straight through a 0.6 cutoff untouched; raising the cutoff to `0.8`
+caught it. `0.6` for `--require-neighbor-below` and `0.8` for
+`--require-compact-cluster-below` is a reasonable starting pair.
 
 ### Adding Sentinel-1 radar features (optional)
 
