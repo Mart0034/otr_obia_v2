@@ -331,6 +331,48 @@ Sentinel-2-Zeitreihen-Merkmal oben, nur Blickwinkel statt Sonnenstand.
    Stichprobe - weder geschadet noch klar geholfen. Sollte an mehr Minen
    noch einmal geprüft werden, bevor man sich darauf verlässt.
 
+### Untersucht: Gebäude von Dumps trennen (nicht so übernommen)
+
+Gebäude (Lagerhallen, Schuppen) sind eine hartnäckige Falsch-Positiv-
+Kategorie - rechteckige Dächer mit scharfer Hell/Schatten-Kante sehen in
+mehreren Merkmalen einem Dump ähnlich. Zwei Ideen wurden an den echten 36
+gelabelten Dump-Segmenten geprüft, bevor entschieden wurde, ob sie sich
+lohnen:
+
+- **`shape_rectangularity` + `brightness_extreme_fraction` stärker
+  gewichten** (z.B. als zusätzlicher Abwertungs-Filter wie
+  `apply_cluster_shape_filter`) - verworfen. An den echten Daten haben
+  echte Dumps und Falsch-Positive fast identische
+  Rechteckigkeits-Verteilungen (Median 0.742 vs. 0.738); SLIC-Segmente
+  sind durch die Segmentierung selbst schon einigermaßen kastenförmig,
+  das Merkmal spiegelt also eher den Segmentierungs-Algorithmus wider als
+  das eigentliche Objekt. Jeder Schwellwert, der stark genug ist, um
+  Falsch-Positive spürbar zu reduzieren, erwischte auch bis zu 14% der
+  echten Dumps (5/36 bei einer lockeren Einstellung); der einzige
+  Schwellwert, der keinen einzigen echten Dump erwischte, entfernte nur
+  1.8% der grenzwertigen Falsch-Positiven. Nicht der Mühe wert.
+- **OSM-Gebäudeumrisse als harten Ausschluss** (`fetch_osm_buildings.py`,
+  Overpass-API, kostenlos/ohne Account) - sicher, aber schwach. Keines
+  der 36 echten Dumps überlappt ein OSM-Gebäude-Polygon, kostet also nie
+  eine echte Erkennung. Aber auch nur ~1.6% der grenzwertigen
+  Falsch-Positiven (proba 0.5-0.8) überlappen eines - die
+  OSM-Gebäudeabdeckung für abgelegene Industrieflächen in der Atacama ist
+  zu lückenhaft, um die meisten davon zu erwischen (ganze
+  Lagerhallenkomplexe ganz ohne `building=*`-Tag sind keine Seltenheit).
+  Abgerufen und getestet, aber angesichts des mageren Nutzens nicht als
+  Filter in die Pipeline eingebaut; das Skript und seine Daten stehen
+  bereit, falls sich diese Abwägung irgendwann mehr lohnt (z.B. bei
+  besserer OSM-Abdeckung oder in Kombination mit anderen Signalen).
+
+  Hinweis für `curl`/`requests`-Nutzer, die diese API aus einer
+  Sandbox-Umgebung ansprechen: `overpass.openstreetmap.fr` liefert an
+  Pythons `requests`-Bibliothek gezielt 403 ("only available to
+  white-listed usages"), selbst bei identischer Anfrage über denselben
+  Proxy, während reines `curl` anstandslos durchgeht - sieht nach
+  TLS-Fingerprint-basierter Bot-Sperre aus, nicht nach einem
+  Netzwerk-Policy- oder Header-Problem. `fetch_osm_buildings.py` ruft
+  deshalb `curl` als Subprozess auf.
+
 ### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
 
 Alle 138 vorhandenen `data/imagery/*.tif`-Kacheln stammen aus "Stage 2"

@@ -308,6 +308,43 @@ angle.
    texture features on that small sample - neither hurt nor obviously
    helped. Worth re-checking on a larger set of mines before relying on it.
 
+### Investigated: separating buildings from dumps (not adopted as-is)
+
+Buildings (warehouses, sheds) are a persistent false-positive category -
+rectangular roofs with a sharp light/shadow edge look similar to a dump in
+several features. Two ideas were checked against the real 36 labeled dump
+segments before deciding whether to act on them:
+
+- **Weighting `shape_rectangularity` + `brightness_extreme_fraction`
+  more heavily** (e.g. as an extra downgrade filter like
+  `apply_cluster_shape_filter`) - rejected. On the real data, real dumps
+  and false positives have almost identical rectangularity distributions
+  (median 0.742 vs 0.738); SLIC segments are inherently somewhat
+  box-shaped by construction, so the feature mostly reflects the
+  segmentation algorithm, not the object. Any threshold strong enough to
+  meaningfully cut false positives also caught up to 14% of real dumps
+  (5/36 at a loose setting); the only threshold that caught zero real
+  dumps only removed 1.8% of borderline false positives. Not worth it.
+- **OSM building footprints as a hard exclusion** (`fetch_osm_buildings.py`,
+  Overpass API, free/no-account) - safe but weak. Zero of the 36 real
+  dumps overlap an OSM building polygon, so it never costs a real
+  detection. But only ~1.6% of borderline false positives (proba 0.5-0.8)
+  overlap one either - OSM building coverage for remote Atacama
+  industrial sites is too sparse to catch most of them (e.g. entire
+  warehouse complexes with no `building=*` tag at all). Fetched and
+  tested, but not wired into the pipeline as a filter given the marginal
+  payoff; the script and its data are there if that trade-off ever looks
+  more worthwhile (e.g. if OSM coverage improves, or combined with other
+  signals).
+
+  Note for `curl`/`requests` users hitting this API from a sandboxed
+  environment: `overpass.openstreetmap.fr` returns 403 ("only available
+  to white-listed usages") to Python's `requests` library specifically,
+  even with an identical query and the same proxy, while plain `curl`
+  succeeds - looks like TLS-fingerprint-based bot blocking rather than a
+  network policy or header issue. `fetch_osm_buildings.py` shells out to
+  `curl` to work around it.
+
 ### Screening a brand-new site (no existing tile)
 
 All 138 existing `data/imagery/*.tif` tiles came from "Stage 2" of the
