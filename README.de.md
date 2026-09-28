@@ -160,6 +160,21 @@ markiert werden - damit lässt sich ein Wert auswählen und mit
 `--use-cache` (überspringt die erneute Segmentierung, trainiert/exportiert
 nur neu) erneut laufen lassen, statt zu raten.
 
+### Nachbarschaft für Segmente mittlerer Konfidenz verlangen (optional)
+
+`--require-neighbor-below` (standardmäßig aus) verwirft ein positiv
+vorhergesagtes Segment mit `dump_proba` unter dem angegebenen Wert, wenn
+kein räumlich angrenzendes Segment derselben Mine ebenfalls positiv
+vorhergesagt wurde. Zielt auf ein wiederkehrendes Muster bei den
+Falsch-Positiven: isolierte Einzelsegmente mittlerer Konfidenz entlang von
+Fahrstraßen und Gruben-Rändern. Segmente ab dem angegebenen Wert werden nie
+verworfen, auch ohne Nachbarn - manche echten Dumps bestehen aus genau
+einem Segment (der einzige bekannte Dump bei mine_012 ist ein einzelnes,
+hochkonfident erkanntes Segment ohne jeden Nachbarn), ein pauschales
+"mindestens 2 Segmente"-Kriterium hätte also genau diesen Treffer gelöscht.
+Ein sinnvoller Startwert ist `0.6`, derselbe Schwellwert, den die
+Vergleichstabelle ohnehin schon ausgibt.
+
 ### Sentinel-1-Radar-Merkmale hinzufügen (optional)
 
 Radar misst die Oberflächenrauheit statt der Farbe: ein Reifenhaufen

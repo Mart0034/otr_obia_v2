@@ -132,6 +132,15 @@ CONFIG = {
     # damit man das ohne Codeänderung anpassen kann (siehe --use-cache, um
     # dafür nicht jedes Mal neu zu segmentieren).
     "classification_threshold": 0.5,
+    # Optional: erfordert für Segmente mit dump_proba UNTER diesem Wert
+    # mindestens ein räumlich angrenzendes, ebenfalls positiv vorhergesagtes
+    # Segment in derselben Mine (siehe apply_neighbor_filter()). Zielt auf
+    # isolierte Einzelsegmente mittlerer Konfidenz entlang von Fahrstraßen/
+    # Gruben-Rändern, die den Großteil der Falsch-Positiven ausmachen.
+    # Segmente mit dump_proba >= diesem Wert bleiben unangetastet, auch ohne
+    # Nachbarn - manche echten Dumps bestehen aus nur einem Segment. None =
+    # kein Filter, exakt das bisherige Verhalten.
+    "require_neighbor_below": None,
     # Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von
     # src/fetch_sentinel1.py, gleiche Dateinamen und gleiches Pixelraster wie
     # die Sentinel-2-Bilder). None = keine Radar-Merkmale.
@@ -766,7 +775,7 @@ def _build_classifier(cfg):
 # ------------------------------------------------------------------
 # 6) Training + räumliche Validierung (Split NACH Mine, wie im Report)
 # ------------------------------------------------------------------
-def train_and_evaluate(feature_df, cfg):
+def train_and_evaluate(feature_df, polygons_gdf, cfg):
     # overlap_area/overlap_ratio werden direkt aus dem Label abgeleitet
     # (Data Leakage) und dürfen daher NICHT als Merkmal verwendet werden.
     # shape_area/shape_perimeter/shape_compactness sind dagegen legitime
@@ -842,15 +851,23 @@ def train_and_evaluate(feature_df, cfg):
     # die predict_and_export() später für das QGIS-Export-GeoPackage
     # berechnet - jene nutzt das finale Modell, das auf ALLEN Minen
     # trainiert wurde, und ist daher KEINE Generalisierungs-Schätzung.
+    require_neighbor_below = cfg.get("require_neighbor_below")
     oof_result = feature_df[["mine_id", "segment_id", "label"]].copy()
-    oof_result["dump_pred"] = (out_of_fold_proba >= threshold).astype(int)
+    oof_result["dump_proba"] = out_of_fold_proba
+    oof_result = oof_result.merge(
+        polygons_gdf[["mine_id", "segment_id", "geometry"]], on=["mine_id", "segment_id"], how="left"
+    )
+    oof_result = gpd.GeoDataFrame(oof_result, geometry="geometry", crs=polygons_gdf.crs)
+    oof_result["dump_pred"] = (oof_result["dump_proba"] >= threshold).astype(int)
+    if require_neighbor_below is not None:
+        oof_result = apply_neighbor_filter(oof_result, high_confidence=require_neighbor_below)
     logger.info(
         "Ehrliche (Out-of-Fold-) Mine-Level-Erkennung bei Schwellwert=%.2f, "
         "NUR aus Kreuzvalidierung, jede Mine wurde von einem Modell "
         "vorhergesagt, das sie nie im Training gesehen hat:", threshold,
     )
     summarize_mine_detection(oof_result)
-    report_threshold_sweep(feature_df, out_of_fold_proba)
+    report_threshold_sweep(oof_result, require_neighbor_below=require_neighbor_below)
 
     # finales Modell auf ALLEN Daten für die spätere Vollprädiktion
     if len(np.unique(y)) < 2:
@@ -902,6 +919,9 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     threshold = cfg.get("classification_threshold", 0.5)
     result["dump_proba"] = proba
     result["dump_pred"] = (proba >= threshold).astype(int)
+    require_neighbor_below = cfg.get("require_neighbor_below")
+    if require_neighbor_below is not None:
+        result = apply_neighbor_filter(result, high_confidence=require_neighbor_below)
 
     logger.warning(
         "Die folgende Erkennungsquote nutzt das finale Modell, das auf ALLEN "
@@ -923,28 +943,41 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     return out_path
 
 
-def report_threshold_sweep(feature_df, proba, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9)):
+def report_threshold_sweep(result, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9), require_neighbor_below=None):
     """Loggt für mehrere Schwellwerte auf einmal, wie viele Minen mit
     bekanntem Dump erkannt werden vs. wie viele Segmente insgesamt als
     positiv vorhergesagt werden (~ Anzahl falscher Positiver, die man in
-    QGIS von Hand durchsehen müsste). proba sollte Out-of-Fold-Werte sein,
-    damit der Vergleich ehrlich ist (siehe train_and_evaluate).
+    QGIS von Hand durchsehen müsste). result["dump_proba"] sollte Out-of-
+    Fold-Werte enthalten, damit der Vergleich ehrlich ist (siehe
+    train_and_evaluate). Mit require_neighbor_below wird bei jedem
+    Schwellwert zusätzlich apply_neighbor_filter() angewendet (result
+    braucht dafür eine geometry-Spalte), damit sich der Effekt des
+    Nachbarschafts-Filters direkt gegen den reinen Schwellwert-Effekt
+    vergleichen lässt.
 
     Diese Abwägung (Erkennungsquote vs. False-Positive-Last) wurde bisher
     für jede Analyse einzeln als Wegwerf-Skript nachgerechnet - jetzt fester
     Teil der Pipeline-Ausgabe, statt bei jedem Lauf neu von Hand gebaut
     werden zu müssen."""
-    labels = feature_df["label"].values
-    mine_ids = feature_df["mine_id"].values
+    labels = result["label"].values
+    mine_ids = result["mine_id"].values
     dump_mine_ids = set(mine_ids[labels == 1])
     if not dump_mine_ids:
         return None
 
     rows = []
     for t in thresholds:
-        pred_positive = proba >= t
+        pred_positive = result["dump_proba"].values >= t
         n_pred_pos = int(pred_positive.sum())
-        detected = set(mine_ids[pred_positive]) & dump_mine_ids
+        detected_mine_ids = mine_ids[pred_positive]
+        if require_neighbor_below is not None:
+            tmp = result.copy()
+            tmp["dump_pred"] = pred_positive.astype(int)
+            tmp = apply_neighbor_filter(tmp, high_confidence=require_neighbor_below)
+            kept = tmp["dump_pred"].values == 1
+            n_pred_pos = int(kept.sum())
+            detected_mine_ids = mine_ids[kept]
+        detected = set(detected_mine_ids) & dump_mine_ids
         rows.append({
             "threshold": t,
             "n_pred_positive": n_pred_pos,
@@ -959,6 +992,55 @@ def report_threshold_sweep(feature_df, proba, thresholds=(0.5, 0.6, 0.7, 0.8, 0.
         sweep_df.to_string(index=False),
     )
     return sweep_df
+
+
+def apply_neighbor_filter(result, high_confidence=0.6):
+    """Setzt dump_pred für Segmente mit dump_proba < high_confidence auf 0
+    zurück, wenn kein räumlich angrenzendes Segment in derselben Mine
+    ebenfalls positiv vorhergesagt wurde. Segmente mit dump_proba >=
+    high_confidence bleiben unangetastet, auch ohne Nachbarn.
+
+    Grund für die Konfidenz-Schwelle statt eines pauschalen Cluster-Filters:
+    manche echten Dumps bestehen aus nur einem Segment (z.B. mine_012 - der
+    einzige bekannte Dump dort ist ein einzelnes, hochkonfident erkanntes
+    Segment). Ein pauschaler "mindestens 2 Segmente"-Filter hätte genau
+    diesen Treffer gelöscht. Isolierte EINZELNE Segmente mit nur mittlerer
+    Konfidenz entlang von Fahrstraßen/Gruben-Rändern sind dagegen ein
+    wiederkehrendes Muster bei den Falsch-Positiven (siehe Analyse) - für
+    die gilt der Filter.
+
+    Erwartet result mit den Spalten mine_id, dump_proba, dump_pred und
+    geometry (Polygone)."""
+    result = result.copy()
+    result["dump_pred"] = result["dump_pred"].astype(int)
+    positive = result[result["dump_pred"] == 1]
+    if positive.empty:
+        return result
+
+    to_downgrade = []
+    for mine_id, group in positive.groupby("mine_id"):
+        low_conf = group[group["dump_proba"] < high_confidence]
+        if low_conf.empty:
+            continue
+        # Kleiner Puffer gegen Fließkomma-Ungenauigkeiten an Segmentgrenzen
+        # (z.B. nach einer Reprojektion), damit tatsächlich angrenzende
+        # Segmente nicht knapp als "nicht berührend" durchrutschen.
+        low_gdf = gpd.GeoDataFrame(
+            {"orig_index": low_conf.index}, geometry=low_conf.geometry.buffer(0.1),
+            crs=group.crs,
+        )
+        others = gpd.GeoDataFrame(
+            {"orig_index": group.index}, geometry=group.geometry, crs=group.crs,
+        )
+        joined = gpd.sjoin(low_gdf, others, predicate="intersects", lsuffix="low", rsuffix="other")
+        supported = set(joined.loc[
+            joined["orig_index_low"] != joined["orig_index_other"], "orig_index_low"
+        ])
+        to_downgrade.extend(set(low_conf.index) - supported)
+
+    if to_downgrade:
+        result.loc[to_downgrade, "dump_pred"] = 0
+    return result
 
 
 def summarize_mine_detection(result):
@@ -1054,7 +1136,7 @@ def main(cfg=CONFIG):
     )
 
     logger.info("2) Training + räumliche Kreuzvalidierung (GroupKFold nach Mine) ...")
-    clf, feature_cols, scores_df = train_and_evaluate(feature_df, cfg)
+    clf, feature_cols, scores_df = train_and_evaluate(feature_df, polygons_gdf, cfg)
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)

@@ -106,6 +106,14 @@ def build_arg_parser(description):
              "automatisch geloggte Schwellwert-Vergleich.",
     )
     parser.add_argument(
+        "--require-neighbor-below", dest="require_neighbor_below", type=float, metavar="P",
+        help="Optional: verwirft ein positiv vorhergesagtes Segment mit "
+             "dump_proba unter diesem Wert, wenn kein angrenzendes Segment in "
+             "derselben Mine ebenfalls positiv ist. Segmente ab diesem Wert "
+             "bleiben unangetastet, auch ohne Nachbarn. Zielt auf isolierte "
+             "Einzelsegmente mittlerer Konfidenz entlang von Fahrstraßen.",
+    )
+    parser.add_argument(
         "--s1-dir", dest="s1_dir", metavar="DIR",
         help="Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von "
              "src/fetch_sentinel1.py). Fügt Radar-Merkmale (VV, VH, VH/VV) pro "
@@ -157,6 +165,7 @@ def resolve_config(base_config, args):
         "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),
         "classification_threshold": getattr(args, "classification_threshold", None),
+        "require_neighbor_below": getattr(args, "require_neighbor_below", None),
         "s1_dir": getattr(args, "s1_dir", None),
         "dem_dir": getattr(args, "dem_dir", None),
         "s2t_dir": getattr(args, "s2t_dir", None),

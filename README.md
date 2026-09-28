@@ -146,6 +146,19 @@ at several thresholds, so you can pick a value and re-run with
 `--use-cache` (skips re-segmenting, only retrains/re-exports) instead of
 guessing.
 
+### Requiring a neighboring segment for medium-confidence detections (optional)
+
+`--require-neighbor-below` (default off) drops a positive segment whose
+`dump_proba` is below the given value unless a spatially adjacent segment
+in the same mine was also predicted positive. It targets a specific,
+recurring pattern in the false positives: isolated single segments of
+middling confidence strung along roads and pit edges. Segments at or above
+the given value are never dropped, even with no neighbor, some real dumps
+are exactly one segment (mine_012's only known dump is a single
+high-confidence segment with nothing next to it), so a blanket "needs at
+least 2 segments" rule would have deleted that hit. A reasonable starting
+value is `0.6`, the same threshold the sweep table already reports on.
+
 ### Adding Sentinel-1 radar features (optional)
 
 Radar measures surface roughness rather than color: a pile of tires
