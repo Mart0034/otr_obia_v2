@@ -331,6 +331,51 @@ Sentinel-2-Zeitreihen-Merkmal oben, nur Blickwinkel statt Sonnenstand.
    Stichprobe - weder geschadet noch klar geholfen. Sollte an mehr Minen
    noch einmal geprüft werden, bevor man sich darauf verlässt.
 
+### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
+
+Alle 138 vorhandenen `data/imagery/*.tif`-Kacheln stammen aus "Stage 2"
+der früheren Machbarkeitsstudie, nicht aus diesem Repository (siehe oben)
+- bisher gab es also keine Möglichkeit, die Pipeline auf eine Stelle
+anzusetzen, die diesen Prozess noch nicht durchlaufen hat.
+`fetch_s2_base_imagery.py` baut denselben 10-Band-Stack von Grund auf für
+einen beliebigen Mittelpunkt + Radius:
+
+```bash
+python src/fetch_s2_base_imagery.py --center-x 365950.1 --center-y 7367190.3 \
+  --radius-m 1500 --mine-id new_001 --out-dir data/new_sites/imagery
+```
+
+`blue/green/red/nir/swir1/swir2` sind normale Sentinel-2-L2A-Reflektanz,
+und `ndvi`/`ndwi`/`bsi` wurden anhand der echten `data/imagery`-Kacheln
+exakt zurückgerechnet (Fehler < 1e-7):
+
+```
+ndvi = (nir - red) / (nir + red)
+ndwi = (green - swir1) / (green + swir1)          # ein modifiziertes NDWI, nicht die übliche (green-nir)-Version
+bsi  = ((swir1+red) - (nir+blue)) / ((swir1+red) + (nir+blue))
+```
+
+**`dsi` ließ sich NICHT zurückrechnen.** Es ist das für die Pipeline
+festgelegte `texture_band` und eines der wichtigeren technischen Merkmale,
+aber keine Standard-Formel (NDBI, DBSI, jede einfache normalisierte
+Differenz der 6 Rohbänder) traf die echten Werte auch nur annähernd - es
+ist vermutlich eine eigens für Stage 2 entwickelte Formel, die nirgends in
+diesem Repository dokumentiert ist. Statt zu raten, füllt das Skript das
+`dsi`-Band mit dem `bsi`-Wert (klar gekennzeichnet in der
+Bandbeschreibung und als Warnung im Log beim Abruf), damit die Pipeline
+lauffähig bleibt - aber die `dsi_mean`/`dsi_std`/GLCM-Textur-Merkmale
+einer neuen Stelle sind dadurch **nicht** direkt mit den 138 bekannten
+Minen vergleichbar. Falls sich die echte DSI-Formel von wem auch immer
+Stage 2 durchgeführt hat erfragen lässt, wäre das die saubere Lösung.
+
+Um eine neue Stelle tatsächlich zu prüfen: `--s1-dir`/`--dem-dir`/`--s2t-dir`
+wie gewohnt für die neue Kachel abrufen, dann die Pipeline mit deren
+Bildordner zusammen mit den 138 bekannten Minen laufen lassen (damit das
+Modell weiterhin an echten, gelabelten Dumps trainiert und nur die
+ungelabelten Segmente der neuen Stelle zusätzlich bewertet) statt allein -
+eine einzelne ungelabelte Kachel liefert keine Trainingsdaten für einen
+Klassifikator.
+
 ## Tests ausführen
 
 ```bash

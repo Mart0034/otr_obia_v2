@@ -308,6 +308,48 @@ angle.
    texture features on that small sample - neither hurt nor obviously
    helped. Worth re-checking on a larger set of mines before relying on it.
 
+### Screening a brand-new site (no existing tile)
+
+All 138 existing `data/imagery/*.tif` tiles came from "Stage 2" of the
+earlier feasibility study, not from this repository (see above) - so
+there was previously no way to point the pipeline at a location that
+hasn't already been through that process. `fetch_s2_base_imagery.py`
+builds the same 10-band stack from scratch for any center point + radius:
+
+```bash
+python src/fetch_s2_base_imagery.py --center-x 365950.1 --center-y 7367190.3 \
+  --radius-m 1500 --mine-id new_001 --out-dir data/new_sites/imagery
+```
+
+`blue/green/red/nir/swir1/swir2` are normal Sentinel-2 L2A reflectance,
+and `ndvi`/`ndwi`/`bsi` were reverse-engineered against the real
+`data/imagery` tiles and match exactly (error < 1e-7):
+
+```
+ndvi = (nir - red) / (nir + red)
+ndwi = (green - swir1) / (green + swir1)          # a modified NDWI, not the textbook (green-nir) version
+bsi  = ((swir1+red) - (nir+blue)) / ((swir1+red) + (nir+blue))
+```
+
+**`dsi` could not be recovered.** It's the pipeline's designated
+`texture_band` and one of the more important engineered features, but no
+standard index (NDBI, DBSI, any simple normalized difference of the 6 raw
+bands) matched the real values even approximately - it's almost certainly
+a bespoke formula from Stage 2 that isn't documented anywhere in this
+repository. Rather than guess, the script fills the `dsi` band with the
+`bsi` value instead (clearly marked in the band description and logged as
+a warning at fetch time), so the pipeline stays runnable but the
+`dsi_mean`/`dsi_std`/GLCM-texture features for a new site are **not**
+directly comparable to the 138 known mines. If you can get the real DSI
+formula from whoever ran Stage 2, that's the clean fix.
+
+To actually screen a new site: fetch its `--s1-dir`/`--dem-dir`/`--s2t-dir`
+layers the normal way (pointing at the new tile), then run the pipeline
+with its imagery folder merged alongside the 138 known mines (so the
+model still trains on real, labeled dumps and just scores the new site's
+unlabeled segments too) rather than on its own - a lone unlabeled tile has
+nothing to train a classifier from.
+
 ## Running the tests
 
 ```bash
