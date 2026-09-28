@@ -6,3 +6,6 @@ scikit-learn
 imbalanced-learn
 pandas
 numpy
+scipy
+pystac-client
+planetary-computer

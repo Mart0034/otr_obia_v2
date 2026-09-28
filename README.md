@@ -146,6 +146,86 @@ at several thresholds, so you can pick a value and re-run with
 `--use-cache` (skips re-segmenting, only retrains/re-exports) instead of
 guessing.
 
+### Adding Sentinel-1 radar features (optional)
+
+Radar measures surface roughness rather than color: a pile of tires
+scatters the signal strongly, a graded haul road hardly at all. That is
+the confusion behind most optical false positives. It also isn't affected
+by cloud cover.
+
+1. Download radar data matching each mine image (free, no account, from
+   Microsoft Planetary Computer):
+
+   ```bash
+   python src/fetch_sentinel1.py --imagery-dir data/imagery --out-dir data/sentinel1 \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+   For each mine this takes the median of up to 12 radar scenes from the
+   period (`--max-scenes`), which suppresses radar noise ("speckle"), and
+   resamples it onto exactly the same pixel grid as that mine's Sentinel-2
+   image. Already downloaded mines are skipped, so an interrupted run can
+   simply be restarted. Pick the same period as the Sentinel-2 composite if
+   you know it.
+
+2. Run the pipeline with `--s1-dir data/sentinel1`. Segmentation still uses
+   only Sentinel-2; radar adds six features per segment (mean and variation
+   of VV, VH and the VH/VV ratio). A mine without a radar file gets a
+   warning and empty radar features. If `--use-cache` finds an old cache
+   without radar features, the pipeline rebuilds it.
+
+### Adding terrain features from the Copernicus DEM (optional)
+
+Shadowed mountainsides look dark and patchy in the optical bands, much like
+a tire dump. Terrain features let the model tell a steep, shaded slope from
+the flat ground dumps are usually on.
+
+1. Download the elevation model (Copernicus GLO-30, 30m, free, no account)
+   onto each mine's pixel grid:
+
+   ```bash
+   python src/fetch_dem.py --imagery-dir data/imagery --out-dir data/dem
+   ```
+
+2. Run the pipeline with `--dem-dir data/dem` (combines with `--s1-dir`).
+   Per segment this adds the mean and variation of:
+   - `dem_slope`: slope in degrees
+   - `dem_tpi`: elevation minus the average of the surrounding ~300m
+     (`dem_tpi_window_px`); positive on ridges, negative in valleys
+   - `dem_northness`: -1..1, positive on north-facing slopes. In the
+     southern hemisphere the sun is to the north, so south-facing slopes
+     (negative) are the shaded ones. Flat ground is 0.
+
+   Absolute elevation is deliberately left out: it ranges from the coast to
+   ~4000m between mines and would mostly tell the model which mine it is
+   looking at.
+
+### Adding multi-date Sentinel-2 features (optional)
+
+Shadows move with the sun, tire dumps don't. Over Antofagasta the sun is
+~23° from vertical at the Sentinel-2 overpass in December and ~56° in June,
+so a slope or pit edge that's in shadow in winter is sunlit in summer, while
+a dump stays about equally dark all year.
+
+1. Compute per-pixel brightness statistics from up to 8 low-cloud Sentinel-2
+   scenes spread over a year (free, no account):
+
+   ```bash
+   python src/fetch_s2_timeseries.py --imagery-dir data/imagery --out-dir data/s2_temporal \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+   Clouds and cloud shadows are masked out using the scene classification
+   layer; terrain shadow is deliberately kept. Use a full year so both the
+   summer and winter sun positions are included.
+
+2. Run the pipeline with `--s2t-dir data/s2_temporal` (combines with
+   `--s1-dir` and `--dem-dir`). Per segment this adds the mean and
+   variation of:
+   - `s2t_bright_cv`: how much brightness varies over the year (0 = constant)
+   - `s2t_bright_min_ratio`: darkest scene divided by the typical (median)
+     brightness; low means the spot is sometimes heavily shadowed
+
 ## Running the tests
 
 ```bash

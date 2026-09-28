@@ -160,6 +160,89 @@ markiert werden - damit lässt sich ein Wert auswählen und mit
 `--use-cache` (überspringt die erneute Segmentierung, trainiert/exportiert
 nur neu) erneut laufen lassen, statt zu raten.
 
+### Sentinel-1-Radar-Merkmale hinzufügen (optional)
+
+Radar misst die Oberflächenrauheit statt der Farbe: ein Reifenhaufen
+streut das Signal stark, eine planierte Fahrstraße kaum. Genau diese
+Verwechslung steckt hinter den meisten optischen Falsch-Positiven. Außerdem
+spielen Wolken keine Rolle.
+
+1. Passende Radardaten zu jedem Minenbild herunterladen (kostenlos, ohne
+   Account, von Microsoft Planetary Computer):
+
+   ```bash
+   python src/fetch_sentinel1.py --imagery-dir data/imagery --out-dir data/sentinel1 \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+   Pro Mine wird der Median aus bis zu 12 Radaraufnahmen des Zeitraums
+   gebildet (`--max-scenes`), was das Radar-Rauschen ("Speckle") unterdrückt,
+   und exakt auf das Pixelraster des Sentinel-2-Bilds der Mine gebracht.
+   Bereits geladene Minen werden übersprungen, ein abgebrochener Lauf lässt
+   sich also einfach neu starten. Wenn bekannt, denselben Zeitraum wie das
+   Sentinel-2-Komposit wählen.
+
+2. Pipeline mit `--s1-dir data/sentinel1` starten. Die Segmentierung nutzt
+   weiterhin nur Sentinel-2; Radar liefert sechs zusätzliche Merkmale pro
+   Segment (Mittelwert und Streuung von VV, VH und dem VH/VV-Verhältnis).
+   Eine Mine ohne Radardatei bekommt eine Warnung und leere Radar-Merkmale.
+   Findet `--use-cache` einen alten Zwischenspeicher ohne Radar-Merkmale,
+   wird er neu berechnet.
+
+### Gelände-Merkmale aus dem Copernicus-Höhenmodell hinzufügen (optional)
+
+Beschattete Berghänge sehen im optischen Bild dunkel und unruhig aus, ähnlich
+wie eine Reifenhalde. Gelände-Merkmale helfen dem Modell, einen steilen,
+beschatteten Hang von dem meist flachen Untergrund einer Halde zu
+unterscheiden.
+
+1. Höhenmodell herunterladen (Copernicus GLO-30, 30m, kostenlos, ohne
+   Account), direkt auf das Pixelraster jeder Mine gebracht:
+
+   ```bash
+   python src/fetch_dem.py --imagery-dir data/imagery --out-dir data/dem
+   ```
+
+2. Pipeline mit `--dem-dir data/dem` starten (kombinierbar mit `--s1-dir`).
+   Pro Segment kommen Mittelwert und Streuung dieser Werte hinzu:
+   - `dem_slope`: Hangneigung in Grad
+   - `dem_tpi`: Höhe minus Mittel der Umgebung (~300m,
+     `dem_tpi_window_px`); positiv auf Graten, negativ in Tälern
+   - `dem_northness`: -1..1, positiv an nach Norden geneigten Hängen. Auf
+     der Südhalbkugel steht die Sonne im Norden, nach Süden geneigte Hänge
+     (negativ) liegen also im Schatten. Flaches Gelände = 0.
+
+   Die absolute Höhe ist bewusst nicht dabei: sie reicht je nach Mine von
+   der Küste bis ~4000m und würde vor allem verraten, um welche Mine es
+   sich handelt.
+
+### Sentinel-2-Zeitreihen-Merkmale hinzufügen (optional)
+
+Schatten wandern mit der Sonne, Reifenhalden nicht. Über Antofagasta steht
+die Sonne beim Sentinel-2-Überflug im Dezember ~23° vom Zenit, im Juni ~56°.
+Ein Hang oder eine Grubenkante, die im Winter im Schatten liegt, ist im
+Sommer besonnt, während eine Halde das ganze Jahr ungefähr gleich dunkel
+bleibt.
+
+1. Helligkeits-Statistik pro Pixel aus bis zu 8 wolkenarmen
+   Sentinel-2-Aufnahmen übers Jahr berechnen (kostenlos, ohne Account):
+
+   ```bash
+   python src/fetch_s2_timeseries.py --imagery-dir data/imagery --out-dir data/s2_temporal \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+   Wolken und Wolkenschatten werden über die Szenenklassifikation
+   ausmaskiert, Geländeschatten bleibt bewusst drin. Ein ganzes Jahr wählen,
+   damit Sommer- und Wintersonnenstand dabei sind.
+
+2. Pipeline mit `--s2t-dir data/s2_temporal` starten (kombinierbar mit
+   `--s1-dir` und `--dem-dir`). Pro Segment kommen Mittelwert und Streuung
+   dieser Werte hinzu:
+   - `s2t_bright_cv`: wie stark die Helligkeit übers Jahr schwankt (0 = konstant)
+   - `s2t_bright_min_ratio`: dunkelste Aufnahme geteilt durch die typische
+     (Median-)Helligkeit; klein = die Stelle liegt zeitweise stark im Schatten
+
 ## Tests ausführen
 
 ```bash

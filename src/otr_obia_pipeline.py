@@ -58,6 +58,7 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio.features import shapes as rio_shapes
+from scipy.ndimage import uniform_filter
 from shapely.geometry import shape as shapely_shape
 from skimage.segmentation import slic
 from skimage.feature import graycomatrix, graycoprops
@@ -131,8 +132,38 @@ CONFIG = {
     # damit man das ohne Codeänderung anpassen kann (siehe --use-cache, um
     # dafür nicht jedes Mal neu zu segmentieren).
     "classification_threshold": 0.5,
+    # Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von
+    # src/fetch_sentinel1.py, gleiche Dateinamen und gleiches Pixelraster wie
+    # die Sentinel-2-Bilder). None = keine Radar-Merkmale.
+    "s1_dir": None,
+    # Optional: Ordner mit dem Höhenmodell pro Mine (erzeugt von
+    # src/fetch_dem.py, gleiches Pixelraster wie Sentinel-2). None = keine
+    # Gelände-Merkmale.
+    "dem_dir": None,
+    # Fenstergröße (Pixel) für die Lage relativ zur Umgebung (dem_tpi):
+    # 31 px = ~300m bei 10m-Pixeln.
+    "dem_tpi_window_px": 31,
+    # Optional: Ordner mit Zeitreihen-Merkmalen aus mehreren Sentinel-2-
+    # Aufnahmen übers Jahr (erzeugt von src/fetch_s2_timeseries.py). None =
+    # keine Zeitreihen-Merkmale.
+    "s2t_dir": None,
     "output_dir": "output",
 }
+
+# Bänder in den Sentinel-1-Dateien (dB) plus das beim Laden berechnete
+# VH/VV-Verhältnis (in dB eine Differenz).
+S1_BAND_NAMES = ["s1_vv", "s1_vh", "s1_vh_vv"]
+
+# Aus dem Höhenmodell abgeleitete Merkmale. Die absolute Höhe ist bewusst
+# NICHT dabei: sie reicht je nach Mine von der Küste bis ~4000m und würde vor
+# allem verraten, um welche Mine es sich handelt, statt etwas über Halden.
+DEM_BAND_NAMES = ["dem_slope", "dem_tpi", "dem_northness"]
+
+# Zeitreihen-Merkmale: wie stark schwankt die Helligkeit eines Pixels übers
+# Jahr (Variationskoeffizient) und wie dunkel wird es im dunkelsten Moment
+# im Verhältnis zu seinem Normalwert (Minimum / Median). Schatten wandern mit
+# dem Sonnenstand, Reifen nicht.
+S2T_BAND_NAMES = ["s2t_bright_cv", "s2t_bright_min_ratio"]
 
 
 # ------------------------------------------------------------------
@@ -428,6 +459,93 @@ def filter_to_mine_boundary(seg_polys, mine_boundary_gdf, mine_id, buffer_m=0.0)
     return filtered
 
 
+def _read_aligned(s2_path, directory, shape, n_bands, what, fetch_script):
+    """Liest die Zusatzdatei (gleicher Dateiname wie das Sentinel-2-Bild) aus
+    directory und prüft, dass sie exakt dasselbe Pixelraster hat. Rückgabe:
+    (Bänder (n, H, W), Pixelgröße x, Pixelgröße y), oder None mit Warnung,
+    wenn die Datei fehlt - der Aufrufer liefert dann NaN-Bänder, damit alle
+    Minen dieselben Merkmalsspalten haben."""
+    path = os.path.join(directory, os.path.basename(s2_path))
+    if not os.path.exists(path):
+        logger.warning(
+            "Keine %s-Datei für %s in %s gefunden -> diese Merkmale sind für die "
+            "Mine leer. Mit src/%s nachladen.",
+            what, os.path.basename(s2_path), directory, fetch_script,
+        )
+        return None
+    with rasterio.open(path) as src:
+        data = src.read().astype(np.float32)
+        px_x, px_y = abs(src.transform.a), abs(src.transform.e)
+    if data.shape[0] != n_bands or data.shape[1:] != tuple(shape):
+        raise ValueError(
+            f"{path}: erwartet {n_bands} Band/Bänder im Raster {tuple(shape)} (wie "
+            f"das Sentinel-2-Bild), gefunden {data.shape[0]} im Raster "
+            f"{data.shape[1:]}. Datei mit {fetch_script} --overwrite neu erzeugen."
+        )
+    return data, px_x, px_y
+
+
+def load_s1_for_mine(s2_path, s1_dir, shape):
+    """Sentinel-1 als (H, W, 3): VV, VH und VH-VV (alles dB)."""
+    read = _read_aligned(s2_path, s1_dir, shape, 2, "Sentinel-1", "fetch_sentinel1.py")
+    if read is None:
+        return np.full((*shape, len(S1_BAND_NAMES)), np.nan, dtype=np.float32)
+    vv, vh = read[0]
+    return np.stack([vv, vh, vh - vv], axis=-1)
+
+
+def load_s2_temporal_for_mine(s2_path, s2t_dir, shape):
+    """Zeitreihen-Merkmale aus mehreren Sentinel-2-Aufnahmen als (H, W, 2),
+    siehe fetch_s2_timeseries.py."""
+    read = _read_aligned(s2_path, s2t_dir, shape, len(S2T_BAND_NAMES),
+                         "Sentinel-2-Zeitreihen", "fetch_s2_timeseries.py")
+    if read is None:
+        return np.full((*shape, len(S2T_BAND_NAMES)), np.nan, dtype=np.float32)
+    return np.moveaxis(read[0], 0, -1)
+
+
+def terrain_features(elevation, pixel_size_x, pixel_size_y, tpi_window_px):
+    """Leitet aus der Höhe (H, W) drei Gelände-Merkmale ab, Rückgabe (H, W, 3):
+
+    - dem_slope: Hangneigung in Grad (0 = flach)
+    - dem_tpi: Höhe minus mittlere Höhe der Umgebung (tpi_window_px) in m;
+      positiv = Kuppe/Grat, negativ = Senke/Tal
+    - dem_northness: cos(Hangausrichtung) * sin(Neigung), -1..1. Positiv =
+      nach Norden geneigt. Auf der Südhalbkugel steht die Sonne im Norden,
+      nach Süden geneigte Hänge (negativ) liegen also im Schatten. Flaches
+      Gelände = 0, egal wohin es minimal geneigt ist.
+
+    Erwartet ein nordausgerichtetes Raster (Zeilen laufen nach Süden)."""
+    elev = elevation.astype(np.float64)
+    missing = ~np.isfinite(elev)
+    if missing.all():
+        return np.full((*elev.shape, len(DEM_BAND_NAMES)), np.nan, dtype=np.float32)
+    if missing.any():
+        elev = np.where(missing, np.nanmean(elev), elev)
+
+    dz_drow, dz_dcol = np.gradient(elev, pixel_size_y, pixel_size_x)
+    grad = np.hypot(dz_drow, dz_dcol)
+    slope = np.degrees(np.arctan(grad))
+    # Zeilen laufen nach Süden: dz_drow > 0 heißt, das Gelände fällt nach
+    # Norden ab -> Hang zeigt nach Norden.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        northness = np.where(grad > 0, dz_drow / grad, 0.0) * np.sin(np.arctan(grad))
+    tpi = elev - uniform_filter(elev, size=tpi_window_px, mode="nearest")
+
+    out = np.stack([slope, tpi, northness], axis=-1).astype(np.float32)
+    out[missing] = np.nan
+    return out
+
+
+def load_dem_for_mine(s2_path, dem_dir, shape, tpi_window_px):
+    """Höhenmodell -> Gelände-Merkmale (H, W, 3), siehe terrain_features()."""
+    read = _read_aligned(s2_path, dem_dir, shape, 1, "Höhenmodell", "fetch_dem.py")
+    if read is None:
+        return np.full((*shape, len(DEM_BAND_NAMES)), np.nan, dtype=np.float32)
+    data, px_x, px_y = read
+    return terrain_features(data[0], px_x, px_y, tpi_window_px)
+
+
 def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=None):
     """Verarbeitet eine einzelne Mine vollständig (Segmentierung, Merkmale,
     Labeling). Eigene Top-Level-Funktion, damit sie in build_dataset()
@@ -477,7 +595,25 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=Non
     if crs != target_crs:
         seg_polys = seg_polys.to_crs(target_crs)
 
-    feats = compute_segment_features(arr, segments, cfg["band_names"], cfg["texture_band"])
+    # Zusatzquellen erst NACH der Segmentierung anhängen: die Segmente kommen
+    # weiter nur aus dem Sentinel-2-Bild, die übrigen Quellen liefern nur
+    # zusätzliche Merkmale.
+    extra_arrays, feat_band_names = [], list(cfg["band_names"])
+    shape = arr.shape[:2]
+    if cfg.get("s1_dir"):
+        extra_arrays.append(load_s1_for_mine(path, cfg["s1_dir"], shape))
+        feat_band_names += S1_BAND_NAMES
+    if cfg.get("dem_dir"):
+        extra_arrays.append(load_dem_for_mine(
+            path, cfg["dem_dir"], shape, cfg.get("dem_tpi_window_px", 31)
+        ))
+        feat_band_names += DEM_BAND_NAMES
+    if cfg.get("s2t_dir"):
+        extra_arrays.append(load_s2_temporal_for_mine(path, cfg["s2t_dir"], shape))
+        feat_band_names += S2T_BAND_NAMES
+    feat_arr = np.concatenate([arr, *extra_arrays], axis=-1) if extra_arrays else arr
+
+    feats = compute_segment_features(feat_arr, segments, feat_band_names, cfg["texture_band"])
     merged = seg_polys.merge(feats, on="segment_id", how="inner")
 
     n_pos = int(merged["label"].sum())
@@ -880,6 +1016,7 @@ def main(cfg=CONFIG):
     cache_features = os.path.join(cfg["output_dir"], "feature_cache.pkl")
     cache_polygons = os.path.join(cfg["output_dir"], "polygons_cache.gpkg")
 
+    feature_df = None
     if cfg.get("use_cache") and os.path.exists(cache_features) and os.path.exists(cache_polygons):
         # Das Segmentieren + Merkmale-Berechnen ist der mit Abstand teuerste
         # Schritt (bei den echten Daten ca. 25 Minuten). Für schnelles
@@ -888,7 +1025,18 @@ def main(cfg=CONFIG):
         logger.info("1) Lade zwischengespeicherten Segment-Datensatz aus %s ...", cfg["output_dir"])
         feature_df = pd.read_pickle(cache_features)
         polygons_gdf = gpd.read_file(cache_polygons)
-    else:
+        for key, names, label in (("s1_dir", S1_BAND_NAMES, "Sentinel-1"),
+                                  ("dem_dir", DEM_BAND_NAMES, "Gelände"),
+                                  ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen")):
+            if cfg.get(key) and f"{names[0]}_mean" not in feature_df.columns:
+                logger.warning(
+                    "Zwischenspeicher enthält keine %s-Merkmale, %s ist aber "
+                    "gesetzt -> Segment-Datensatz wird neu berechnet.", label, key,
+                )
+                feature_df = None
+                break
+
+    if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
         feature_df, polygons_gdf = build_dataset(cfg)
         os.makedirs(cfg["output_dir"], exist_ok=True)

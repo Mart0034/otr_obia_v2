@@ -105,6 +105,25 @@ def build_arg_parser(description):
              "Kosten der Erkennungsquote - siehe der von der Pipeline "
              "automatisch geloggte Schwellwert-Vergleich.",
     )
+    parser.add_argument(
+        "--s1-dir", dest="s1_dir", metavar="DIR",
+        help="Optional: Ordner mit Sentinel-1-Radardaten pro Mine (erzeugt von "
+             "src/fetch_sentinel1.py). Fügt Radar-Merkmale (VV, VH, VH/VV) pro "
+             "Segment hinzu. Ohne diese Option keine Radar-Merkmale.",
+    )
+    parser.add_argument(
+        "--dem-dir", dest="dem_dir", metavar="DIR",
+        help="Optional: Ordner mit dem Höhenmodell pro Mine (erzeugt von "
+             "src/fetch_dem.py). Fügt Hangneigung, Lage relativ zur Umgebung und "
+             "Hangausrichtung pro Segment hinzu.",
+    )
+    parser.add_argument(
+        "--s2t-dir", dest="s2t_dir", metavar="DIR",
+        help="Optional: Ordner mit Zeitreihen-Merkmalen aus mehreren "
+             "Sentinel-2-Aufnahmen (erzeugt von src/fetch_s2_timeseries.py). "
+             "Fügt hinzu, wie stark die Helligkeit übers Jahr schwankt - "
+             "Schatten wandern mit dem Sonnenstand, Reifen nicht.",
+    )
     return parser
 
 
@@ -138,6 +157,9 @@ def resolve_config(base_config, args):
         "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),
         "classification_threshold": getattr(args, "classification_threshold", None),
+        "s1_dir": getattr(args, "s1_dir", None),
+        "dem_dir": getattr(args, "dem_dir", None),
+        "s2t_dir": getattr(args, "s2t_dir", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:
