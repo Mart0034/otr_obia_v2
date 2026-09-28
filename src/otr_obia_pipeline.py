@@ -354,11 +354,38 @@ def compute_shape_features(seg_gdf):
     return seg_gdf
 
 
+def brightness_extreme_fraction(vals):
+    """Anteil der Pixel, die im UNTEREN oder OBEREN Drittel der eigenen
+    (min-max-normierten) Spanne des Segments liegen - hoch, wenn ein
+    Segment scharf zweigeteilt ist (z. B. helles Blechdach direkt neben
+    dunklem Schatten/Wasser, wie bei überdachten Lagerhallen oder
+    ausgekleideten Absetzbecken), niedrig bei einer breiten, gleichmäßig
+    verteilten Textur (wie bei einer Reifenhalde). Anders als tex_contrast
+    (GLCM, misst lokale Nachbarschaftsunterschiede im Mittel) erfasst das
+    gezielt eine BIMODALE Verteilung, unabhängig davon, wie die beiden
+    Bereiche räumlich angeordnet sind."""
+    vals = vals[np.isfinite(vals)]
+    if vals.size < 4:
+        return 0.0
+    lo, hi = vals.min(), vals.max()
+    if hi - lo < 1e-6:
+        return 0.0
+    norm = (vals - lo) / (hi - lo)
+    return float(((norm <= 1 / 3) | (norm >= 2 / 3)).mean())
+
+
 def compute_segment_features(arr, segments, band_names, texture_band):
-    """Berechnet je Segment: Mittelwert & Std pro Band + GLCM-Textur
-    auf dem gewählten Band (z. B. Dark Surface Index)."""
+    """Berechnet je Segment: Mittelwert & Std pro Band, Helligkeits-
+    Bimodalität (siehe brightness_extreme_fraction()) und GLCM-Textur auf
+    dem gewählten Band (z. B. Dark Surface Index)."""
     seg_ids = np.unique(segments)
     seg_ids = seg_ids[seg_ids > 0]
+
+    # Helligkeit für brightness_extreme_fraction: Mittel über die im Bild
+    # vorhandenen sichtbaren Bänder. Fehlen alle drei (z.B. in Tests mit
+    # einem minimalen Bandsatz), bleibt das Merkmal 0.0 statt abzustürzen.
+    brightness_idx = [band_names.index(b) for b in ("blue", "green", "red") if b in band_names]
+    brightness = np.nanmean(arr[..., brightness_idx], axis=-1) if brightness_idx else None
 
     tex_idx = band_names.index(texture_band)
     tex_band = arr[..., tex_idx]
@@ -390,6 +417,10 @@ def compute_segment_features(arr, segments, band_names, texture_band):
             vals = arr[..., b][m]
             row[f"{name}_mean"] = float(np.nanmean(vals))
             row[f"{name}_std"] = float(np.nanstd(vals))
+
+        row["brightness_extreme_fraction"] = (
+            brightness_extreme_fraction(brightness[m]) if brightness is not None else 0.0
+        )
 
         # GLCM-Textur auf der Bounding Box des Segments (einfache,
         # robuste Näherung statt exakter Segmentgeometrie)
