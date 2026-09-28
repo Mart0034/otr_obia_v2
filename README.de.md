@@ -301,6 +301,36 @@ bleibt.
    - `s2t_bright_min_ratio`: dunkelste Aufnahme geteilt durch die typische
      (Median-)Helligkeit; klein = die Stelle liegt zeitweise stark im Schatten
 
+### Sentinel-1-Zeitreihen-Merkmale hinzufügen (optional)
+
+Radar-Rückstreuung hängt stark vom Blickwinkel ab. Eine geometrisch klare
+Fläche (Straße, Gebäudekante, Grubenwand) streut je nach Blickrichtung
+unterschiedlich stark zurück, ihre Rückstreuung schwankt also zwischen
+Aufnahmen. Ein ungeordneter Reifenhaufen streut diffus in die meisten
+Richtungen und bleibt vergleichsweise konstant. Dieselbe Idee wie beim
+Sentinel-2-Zeitreihen-Merkmal oben, nur Blickwinkel statt Sonnenstand.
+
+1. Zeitliche Schwankung pro Pixel aus bis zu 12 Sentinel-1-RTC-Aufnahmen
+   übers Jahr berechnen (kostenlos, kein Account nötig):
+
+   ```bash
+   python src/fetch_sentinel1_timeseries.py --imagery-dir data/imagery --out-dir data/s1_temporal \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+2. Pipeline mit `--s1t-dir data/s1_temporal` starten (kombinierbar mit
+   `--s1-dir`, `--dem-dir`, `--s2t-dir`). Pro Segment kommen Mittelwert und
+   Streuung dieser Werte hinzu:
+   - `s1t_vv_cv` / `s1t_vh_cv`: Standardabweichung / Mittelwert der linearen
+     Rückstreuung über alle Aufnahmen (0 = bei jeder Aufnahme exakt gleiche
+     Rückstreuung, hoch = starke blickwinkelabhängige Schwankung)
+
+   Stichprobenartig an 3 Minen getestet (Escondida/`mine_019`, `mine_043`,
+   `mine_079`): keine klare Verbesserung gegenüber den bereits vorhandenen
+   räumlichen Textur-Merkmalen `s1_vv_std`/`s1_vh_std` bei dieser kleinen
+   Stichprobe - weder geschadet noch klar geholfen. Sollte an mehr Minen
+   noch einmal geprüft werden, bevor man sich darauf verlässt.
+
 ## Tests ausführen
 
 ```bash

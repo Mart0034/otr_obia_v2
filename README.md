@@ -278,6 +278,36 @@ a dump stays about equally dark all year.
    - `s2t_bright_min_ratio`: darkest scene divided by the typical (median)
      brightness; low means the spot is sometimes heavily shadowed
 
+### Adding multi-date Sentinel-1 features (optional)
+
+Radar backscatter depends heavily on viewing geometry. A geometrically
+well-defined surface (a road, a building edge, a pit wall) scatters
+differently depending on look angle, so its backscatter swings between
+acquisitions; a disordered pile of tires scatters diffusely in most
+directions and stays comparatively constant. Same idea as the multi-date
+Sentinel-2 shadow feature above, but for radar look-angle instead of sun
+angle.
+
+1. Compute the per-pixel temporal variation from up to 12 Sentinel-1 RTC
+   scenes spread over a year (free, no account):
+
+   ```bash
+   python src/fetch_sentinel1_timeseries.py --imagery-dir data/imagery --out-dir data/s1_temporal \
+     --start 2023-01-01 --end 2023-12-31
+   ```
+
+2. Run the pipeline with `--s1t-dir data/s1_temporal` (combines with
+   `--s1-dir`, `--dem-dir`, `--s2t-dir`). Per segment this adds the mean
+   and variation of:
+   - `s1t_vv_cv` / `s1t_vh_cv`: standard deviation / mean of linear
+     backscatter across all scenes (0 = identical backscatter every
+     acquisition, high = strong look-angle-dependent swing)
+
+   Spot-checked on 3 mines (Escondida/`mine_019`, `mine_043`, `mine_079`):
+   no clear improvement over the existing `s1_vv_std`/`s1_vh_std` spatial
+   texture features on that small sample - neither hurt nor obviously
+   helped. Worth re-checking on a larger set of mines before relying on it.
+
 ## Running the tests
 
 ```bash

@@ -169,6 +169,10 @@ CONFIG = {
     # Aufnahmen übers Jahr (erzeugt von src/fetch_s2_timeseries.py). None =
     # keine Zeitreihen-Merkmale.
     "s2t_dir": None,
+    # Optional: Ordner mit Rückstreu-Zeitreihen-Merkmalen aus mehreren
+    # Sentinel-1-Aufnahmen (erzeugt von src/fetch_sentinel1_timeseries.py).
+    # None = keine Radar-Zeitreihen-Merkmale.
+    "s1t_dir": None,
     "output_dir": "output",
 }
 
@@ -197,6 +201,13 @@ SOLSTICE_DATETIMES = {
 # im Verhältnis zu seinem Normalwert (Minimum / Median). Schatten wandern mit
 # dem Sonnenstand, Reifen nicht.
 S2T_BAND_NAMES = ["s2t_bright_cv", "s2t_bright_min_ratio"]
+
+# Radar-Zeitreihen-Merkmal: wie stark schwankt die Rückstreuung eines Pixels
+# über mehrere Aufnahmen (Variationskoeffizient). Geometrisch klare Flächen
+# (Straßen, Kanten) sind blickwinkelabhängig und schwanken stark, ein
+# ungeordneter Reifenhaufen streut diffus und bleibt vergleichsweise
+# konstant. Siehe fetch_sentinel1_timeseries.py.
+S1T_BAND_NAMES = ["s1t_vv_cv", "s1t_vh_cv"]
 
 
 # ------------------------------------------------------------------
@@ -589,6 +600,17 @@ def load_s2_temporal_for_mine(s2_path, s2t_dir, shape):
     return np.moveaxis(data, 0, -1)
 
 
+def load_s1_temporal_for_mine(s2_path, s1t_dir, shape):
+    """Radar-Zeitreihen-Merkmale aus mehreren Sentinel-1-Aufnahmen als
+    (H, W, 2), siehe fetch_sentinel1_timeseries.py."""
+    read = _read_aligned(s2_path, s1t_dir, shape, len(S1T_BAND_NAMES),
+                         "Sentinel-1-Zeitreihen", "fetch_sentinel1_timeseries.py")
+    if read is None:
+        return np.full((*shape, len(S1T_BAND_NAMES)), np.nan, dtype=np.float32)
+    data, *_ = read
+    return np.moveaxis(data, 0, -1)
+
+
 def solar_position(lat, lon, when):
     """Sonnenazimut (im Uhrzeigersinn ab Norden, 0-360°) und Sonnenhöhe über
     dem Horizont (Grad) für einen Ort und Zeitpunkt. when: ISO-Zeitstempel
@@ -748,6 +770,9 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=Non
     if cfg.get("s2t_dir"):
         extra_arrays.append(load_s2_temporal_for_mine(path, cfg["s2t_dir"], shape))
         feat_band_names += S2T_BAND_NAMES
+    if cfg.get("s1t_dir"):
+        extra_arrays.append(load_s1_temporal_for_mine(path, cfg["s1t_dir"], shape))
+        feat_band_names += S1T_BAND_NAMES
     feat_arr = np.concatenate([arr, *extra_arrays], axis=-1) if extra_arrays else arr
 
     feats = compute_segment_features(feat_arr, segments, feat_band_names, cfg["texture_band"])
@@ -1313,7 +1338,8 @@ def main(cfg=CONFIG):
         polygons_gdf = gpd.read_file(cache_polygons)
         for key, names, label in (("s1_dir", S1_BAND_NAMES, "Sentinel-1"),
                                   ("dem_dir", DEM_BAND_NAMES, "Gelände"),
-                                  ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen")):
+                                  ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen"),
+                                  ("s1t_dir", S1T_BAND_NAMES, "Radar-Zeitreihen")):
             if cfg.get(key) and f"{names[0]}_mean" not in feature_df.columns:
                 logger.warning(
                     "Zwischenspeicher enthält keine %s-Merkmale, %s ist aber "

@@ -146,6 +146,14 @@ def build_arg_parser(description):
              "Fügt hinzu, wie stark die Helligkeit übers Jahr schwankt - "
              "Schatten wandern mit dem Sonnenstand, Reifen nicht.",
     )
+    parser.add_argument(
+        "--s1t-dir", dest="s1t_dir", metavar="DIR",
+        help="Optional: Ordner mit Radar-Zeitreihen-Merkmalen aus mehreren "
+             "Sentinel-1-Aufnahmen (erzeugt von "
+             "src/fetch_sentinel1_timeseries.py). Fügt hinzu, wie stark die "
+             "Rückstreuung über mehrere Aufnahmen schwankt - geometrisch klare "
+             "Flächen sind blickwinkelabhängig, ein Reifenhaufen streut diffus.",
+    )
     return parser
 
 
@@ -185,6 +193,7 @@ def resolve_config(base_config, args):
         "s1_dir": getattr(args, "s1_dir", None),
         "dem_dir": getattr(args, "dem_dir", None),
         "s2t_dir": getattr(args, "s2t_dir", None),
+        "s1t_dir": getattr(args, "s1t_dir", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:
