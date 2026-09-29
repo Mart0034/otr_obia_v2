@@ -833,7 +833,18 @@ def build_dataset(cfg):
             len(mine_boundaries_gdf), boundary_path, cfg.get("mine_boundary_buffer_m", 0.0),
         )
 
-    imagery_paths = sorted(glob.glob(os.path.join(cfg["imagery_dir"], "*.tif")))
+    # Größte Dateien zuerst: Dateigröße korreliert stark mit Verarbeitungszeit
+    # (mehr Pixel -> mehr Segmentierung/Merkmalsberechnung), und jede Mine
+    # läuft einzeln single-threaded (siehe Modul-Docstring). Fängt man mit den
+    # größten Minen an, laufen sie von Anfang an auf eigenen Prozessen, statt
+    # erst spät in der Warteschlange zu starten und die Gesamtlaufzeit ganz
+    # am Ende in die Länge zu ziehen ("Longest Processing Time first", ein
+    # Standard-Scheduling-Trick für Jobs mit stark unterschiedlicher Größe
+    # bei fester Anzahl Worker).
+    imagery_paths = sorted(
+        glob.glob(os.path.join(cfg["imagery_dir"], "*.tif")),
+        key=os.path.getsize, reverse=True,
+    )
     if not imagery_paths:
         raise FileNotFoundError(f"Keine GeoTIFFs in {cfg['imagery_dir']} gefunden.")
     logger.info("%d GeoTIFFs in %s gefunden.", len(imagery_paths), cfg["imagery_dir"])
