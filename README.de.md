@@ -384,14 +384,19 @@ lohnen:
   "Segmente markieren, die ein OSM-Gebäude überlappen (optional)" weiter
   unten.
 
-  Hinweis für `curl`/`requests`-Nutzer, die diese API aus einer
-  Sandbox-Umgebung ansprechen: `overpass.openstreetmap.fr` liefert an
+  Hinweis zum Overpass-Mirror: `overpass.openstreetmap.fr` liefert an
   Pythons `requests`-Bibliothek gezielt 403 ("only available to
   white-listed usages"), selbst bei identischer Anfrage über denselben
-  Proxy, während reines `curl` anstandslos durchgeht - sieht nach
-  TLS-Fingerprint-basierter Bot-Sperre aus, nicht nach einem
-  Netzwerk-Policy- oder Header-Problem. `fetch_osm_buildings.py` ruft
-  deshalb `curl` als Subprozess auf.
+  Proxy, während reines `curl` gegen denselben Mirror anstandslos
+  durchgeht - sieht nach TLS-Fingerprint-basierter Bot-Sperre aus, nicht
+  nach einem Netzwerk-Policy- oder Header-Problem. Auf einem minimalen
+  Runtime-Container ohne installiertes `curl` (z.B. dieses Projekts
+  VPS-Deployment, wo per apt installierte Pakete aus dem Install-Schritt
+  nicht in den laufenden Container übernommen werden) ist `curl` als
+  Workaround aber auch keine Option. `fetch_osm_buildings.py`/
+  `fetch_osm_roads.py` nutzen deshalb `overpass-api.de` (die offizielle
+  Hauptinstanz) mit reinem `requests` und explizitem `User-Agent`-Header
+  - dort gibt es kein 403.
 
 - **OSM-`landuse=industrial`/`quarry`-Polygone als harter Ausschluss** -
   schlimmer als nutzlos, klar verworfen. Jede Mine ist selbst als

@@ -373,13 +373,17 @@ segments before deciding whether to act on them:
   one - see "PRISMA hyperspectral imagery" under Future work below for
   the one untested option that's actually suited to that.
 
-  Note for `curl`/`requests` users hitting this API from a sandboxed
-  environment: `overpass.openstreetmap.fr` returns 403 ("only available
-  to white-listed usages") to Python's `requests` library specifically,
-  even with an identical query and the same proxy, while plain `curl`
-  succeeds - looks like TLS-fingerprint-based bot blocking rather than a
-  network policy or header issue. `fetch_osm_buildings.py` shells out to
-  `curl` to work around it.
+  Note on the Overpass mirror: `overpass.openstreetmap.fr` returns 403
+  ("only available to white-listed usages") to Python's `requests`
+  library specifically, even with an identical query and the same proxy,
+  while plain `curl` succeeds against it - looks like TLS-fingerprint-
+  based bot blocking rather than a network policy or header issue. On a
+  minimal runtime container without `curl` installed (e.g. this project's
+  VPS deployment, where apt-installed packages from the install step
+  don't survive into the running container), shelling out to `curl` isn't
+  an option either. `fetch_osm_buildings.py`/`fetch_osm_roads.py` use
+  `overpass-api.de` (the official main instance) instead, plain
+  `requests` with an explicit `User-Agent` header - no 403 there.
 
 ### Flagging segments that overlap an OSM building (optional)
 

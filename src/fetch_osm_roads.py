@@ -21,22 +21,22 @@ Nutzung:
 
 import argparse
 import glob
-import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import geopandas as gpd
 import rasterio
+import requests
 from rasterio.warp import transform_bounds
 from shapely.geometry import LineString
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass.openstreetmap.fr/api/interpreter"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+USER_AGENT = "otr-obia-pipeline/1.0 (research script)"
 
 
 def _element_to_line(el):
@@ -53,9 +53,9 @@ def query_overpass(bbox_wgs84, timeout=60, retries=3):
     """bbox_wgs84: (south, west, north, east). Gibt eine Liste von Shapely-
     LineStrings zurück (leer, wenn keine Straßen gefunden wurden).
 
-    Nutzt curl per subprocess, nicht die requests-Bibliothek - siehe
-    fetch_osm_buildings.py für den Grund (403 gegen requests/urllib3 auf
-    diesem Mirror, curl über denselben Proxy funktioniert)."""
+    Nutzt requests mit explizitem User-Agent - siehe fetch_osm_buildings.py
+    für den Grund (403 gegen requests/urllib3 auf overpass.openstreetmap.fr,
+    overpass-api.de mit User-Agent funktioniert)."""
     south, west, north, east = bbox_wgs84
     query = (
         f"[out:json][timeout:{timeout}];"
@@ -65,11 +65,12 @@ def query_overpass(bbox_wgs84, timeout=60, retries=3):
     last_exc = None
     for attempt in range(retries):
         try:
-            result = subprocess.run(
-                ["curl", "-sS", "-X", "POST", OVERPASS_URL, "-d", f"data={query}"],
-                capture_output=True, text=True, timeout=timeout + 10, check=True,
+            r = requests.post(
+                OVERPASS_URL, data={"data": query},
+                headers={"User-Agent": USER_AGENT}, timeout=timeout + 10,
             )
-            data = json.loads(result.stdout)
+            r.raise_for_status()
+            data = r.json()
             elements = data.get("elements", [])
             lines = [ln for ln in (_element_to_line(e) for e in elements) if ln is not None]
             return lines

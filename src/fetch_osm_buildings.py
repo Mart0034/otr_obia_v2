@@ -25,22 +25,22 @@ Nutzung:
 
 import argparse
 import glob
-import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import geopandas as gpd
 import rasterio
+import requests
 from rasterio.warp import transform_bounds
 from shapely.geometry import Polygon
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass.openstreetmap.fr/api/interpreter"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+USER_AGENT = "otr-obia-pipeline/1.0 (research script)"
 
 
 def _element_to_polygon(el):
@@ -67,12 +67,11 @@ def query_overpass(bbox_wgs84, timeout=60, retries=3):
     """bbox_wgs84: (south, west, north, east). Gibt eine Liste von Shapely-
     Polygonen zurück (leer, wenn keine Gebäude gefunden wurden).
 
-    Nutzt curl per subprocess statt der requests-Bibliothek: dieser
-    Overpass-Mirror lehnt requests/urllib3-Anfragen mit 403 ("only
-    available to white-listed usages") ab, obwohl exakt dieselbe Anfrage
-    über curl anstandslos durchgeht (vermutlich TLS-Fingerprinting gegen
-    Bot-Clients, kein Problem mit Headern oder dem Sandbox-Netzwerk-Proxy -
-    beide Wege laufen über denselben Proxy-Tunnel)."""
+    Nutzt requests mit explizitem User-Agent: der overpass.openstreetmap.fr-
+    Mirror lehnt requests/urllib3-Anfragen mit 403 ("only available to
+    white-listed usages") ab (vermutlich TLS-Fingerprinting gegen Bot-
+    Clients), deshalb overpass-api.de (offizielle Hauptinstanz) statt-
+    dessen - dort reicht ein gesetzter User-Agent."""
     south, west, north, east = bbox_wgs84
     query = (
         f"[out:json][timeout:{timeout}];"
@@ -83,11 +82,12 @@ def query_overpass(bbox_wgs84, timeout=60, retries=3):
     last_exc = None
     for attempt in range(retries):
         try:
-            result = subprocess.run(
-                ["curl", "-sS", "-X", "POST", OVERPASS_URL, "-d", f"data={query}"],
-                capture_output=True, text=True, timeout=timeout + 10, check=True,
+            r = requests.post(
+                OVERPASS_URL, data={"data": query},
+                headers={"User-Agent": USER_AGENT}, timeout=timeout + 10,
             )
-            data = json.loads(result.stdout)
+            r.raise_for_status()
+            data = r.json()
             elements = data.get("elements", [])
             polys = [p for p in (_element_to_polygon(e) for e in elements) if p is not None]
             return polys
