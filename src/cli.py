@@ -154,6 +154,13 @@ def build_arg_parser(description):
              "Rückstreuung über mehrere Aufnahmen schwankt - geometrisch klare "
              "Flächen sind blickwinkelabhängig, ein Reifenhaufen streut diffus.",
     )
+    parser.add_argument(
+        "--osm-buildings-dir", dest="osm_buildings_dir", metavar="DIR",
+        help="Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von "
+             "src/fetch_osm_buildings.py). Fügt der exportierten Karte eine "
+             "rein informative is_building-Spalte hinzu (kein Filter, ändert "
+             "dump_pred nicht) zum selbst Ein-/Ausblenden in QGIS.",
+    )
     return parser
 
 
@@ -194,6 +201,7 @@ def resolve_config(base_config, args):
         "dem_dir": getattr(args, "dem_dir", None),
         "s2t_dir": getattr(args, "s2t_dir", None),
         "s1t_dir": getattr(args, "s1t_dir", None),
+        "osm_buildings_dir": getattr(args, "osm_buildings_dir", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:

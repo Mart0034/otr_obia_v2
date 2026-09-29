@@ -325,23 +325,20 @@ segments before deciding whether to act on them:
   meaningfully cut false positives also caught up to 14% of real dumps
   (5/36 at a loose setting); the only threshold that caught zero real
   dumps only removed 1.8% of borderline false positives. Not worth it.
-- **OSM building footprints as a hard exclusion** (`fetch_osm_buildings.py`,
-  Overpass API, free/no-account) - safe but weak. Zero of the 36 real
-  dumps overlap an OSM building polygon, so it never costs a real
-  detection. But only ~1.6% of borderline false positives (proba 0.5-0.8)
-  overlap one either - OSM building coverage for remote Atacama
-  industrial sites is too sparse to catch most of them (e.g. entire
-  warehouse complexes with no `building=*` tag at all). Fetched and
-  tested, but not wired into the pipeline as a filter given the marginal
-  payoff; the script and its data are there if that trade-off ever looks
-  more worthwhile (e.g. if OSM coverage improves, or combined with other
-  signals). Also tried propagating the flag to segments touching a
-  building-overlap segment (same idea as `apply_neighbor_filter`) in
-  case sparse point coverage could "spread" further - no improvement
-  (still 1.6% of borderline false positives, identical to plain overlap;
-  only 267 of 70,317 segments touch a building at all, so there's too
-  little seed data for propagation to matter). The bottleneck is upstream
-  OSM coverage, not the propagation logic.
+- **OSM building footprints as a hard exclusion filter** - rejected in
+  that specific form, safe but weak *on average*. Zero of the 36 real
+  dumps overlap an OSM building polygon (even with a neighbor-
+  propagation extension, tried on the idea that sparse point coverage
+  might "spread" further - only 3 extra segments out of 70,317, so no
+  real effect either way), so a filter would never cost a real
+  detection. But only ~1.6% of borderline false positives (proba
+  0.5-0.8) overlap one, averaged across all 138 mines - OSM building
+  coverage for remote Atacama industrial sites is wildly uneven, from
+  zero at most mines to ~20-30% of false positives at a handful of
+  well-mapped ones (e.g. the "Minera Mechilla" processing plant,
+  `mine_043`). Shipped instead as an informational `is_building` column
+  rather than a filter - see "Flagging segments that overlap an OSM
+  building (optional)" below.
 - **OSM `landuse=industrial`/`quarry` polygons as a hard exclusion** -
   worse than useless, rejected outright. Every mine is itself tagged
   industrial or quarry land in OSM, and every known dump sits on mine
@@ -367,6 +364,30 @@ segments before deciding whether to act on them:
   succeeds - looks like TLS-fingerprint-based bot blocking rather than a
   network policy or header issue. `fetch_osm_buildings.py` shells out to
   `curl` to work around it.
+
+### Flagging segments that overlap an OSM building (optional)
+
+1. Fetch building footprints per mine (free, no account - see the
+   investigation above for why this stays informational rather than a
+   filter: OSM coverage is too uneven to trust everywhere at once):
+
+   ```bash
+   python src/fetch_osm_buildings.py --imagery-dir data/imagery --out-dir data/osm_buildings
+   ```
+
+2. Run the pipeline with `--osm-buildings-dir data/osm_buildings`. The
+   exported map gets one extra column:
+   - `is_building`: `True` for a segment that overlaps a mapped OSM
+     building, or touches another segment that does; `False` otherwise
+     (including every mine with no `<mine_id>.gpkg` fetched, or an empty
+     one - never an error).
+
+   This **never changes `dump_pred` or `dump_proba`** - it's there so
+   you can hide these segments yourself in QGIS (right-click layer →
+   Filter, or Properties → Source → Query Builder: `"is_building" = 0`,
+   optionally combined with `"dump_pred" = 1`) at the mines where you
+   judge OSM's coverage is good enough to trust, without the pipeline
+   silently deciding that for every mine at once.
 
 ### Screening a brand-new site (no existing tile)
 

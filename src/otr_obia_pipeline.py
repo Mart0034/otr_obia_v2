@@ -173,6 +173,11 @@ CONFIG = {
     # Sentinel-1-Aufnahmen (erzeugt von src/fetch_sentinel1_timeseries.py).
     # None = keine Radar-Zeitreihen-Merkmale.
     "s1t_dir": None,
+    # Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von
+    # src/fetch_osm_buildings.py). Fügt der exportierten Karte eine rein
+    # informative is_building-Spalte hinzu (kein Filter, ändert dump_pred
+    # nicht - siehe compute_is_building()). None = keine is_building-Spalte.
+    "osm_buildings_dir": None,
     "output_dir": "output",
 }
 
@@ -1067,6 +1072,65 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
     return final_clf, feature_cols, scores_df
 
 
+def compute_is_building(result, osm_buildings_dir):
+    """Fügt eine rein informative is_building-Spalte hinzu (True/False):
+    Segmente, die ein OSM-Gebäude-Polygon (building=*, siehe
+    fetch_osm_buildings.py) überlappen, ODER ein solches Segment berühren.
+
+    Ändert dump_pred/dump_proba NICHT - anders als apply_neighbor_filter()
+    und apply_cluster_shape_filter() ist das kein Filter, sondern eine
+    zusätzliche Spalte zum selbst Ein-/Ausblenden in QGIS (Filter/Query
+    Builder auf "is_building" = 0), weil die OSM-Gebäudeabdeckung je nach
+    Mine stark unterschiedlich vollständig ist.
+
+    An den echten Daten validiert (siehe README, "Investigated: separating
+    buildings from dumps"): betrifft 0 von 36 bekannten Dumps (auch nicht
+    über die Nachbarschafts-Ausweitung), fängt aber im Schnitt nur ~1.6%
+    der grenzwertigen Falsch-Positiven ab - an gut kartierten Standorten
+    (einzelne Minen-Anlagen) deutlich mehr (~20-30%), an den meisten
+    anderen praktisch nichts, weil dort kaum OSM-Gebäude erfasst sind.
+
+    Erwartet result mit den Spalten mine_id und geometry. Für Minen ohne
+    passende <mine_id>.gpkg in osm_buildings_dir bleibt is_building=False
+    (kein Fehler - die OSM-Daten sind optional)."""
+    result = result.copy()
+    result["is_building"] = False
+    if not osm_buildings_dir:
+        return result
+
+    for mine_id, group in result.groupby("mine_id"):
+        building_path = os.path.join(osm_buildings_dir, f"{mine_id}.gpkg")
+        if not os.path.exists(building_path):
+            continue
+        buildings = gpd.read_file(building_path)
+        if buildings.empty:
+            continue
+        if buildings.crs != group.crs:
+            buildings = buildings.to_crs(group.crs)
+        building_union = buildings.geometry.union_all()
+
+        direct_idx = group.index[group.geometry.intersects(building_union)]
+        if len(direct_idx) == 0:
+            continue
+
+        # Auch berührende Segmente markieren (kostenlos, siehe README -
+        # bei der lückenhaften OSM-Abdeckung dieser Region kaum
+        # zusätzlicher Effekt, aber betrifft nie einen echten Dump mehr).
+        direct_gdf = gpd.GeoDataFrame(
+            {"orig_index": direct_idx}, geometry=group.loc[direct_idx].geometry.buffer(0.1),
+            crs=group.crs,
+        )
+        others = gpd.GeoDataFrame({"orig_index": group.index}, geometry=group.geometry, crs=group.crs)
+        joined = gpd.sjoin(others, direct_gdf, predicate="intersects", lsuffix="self", rsuffix="building")
+        result.loc[list(set(joined["orig_index_self"])), "is_building"] = True
+
+    logger.info(
+        "is_building: %d von %d Segmenten als Gebäude markiert (nur informativ, "
+        "beeinflusst dump_pred nicht).", int(result["is_building"].sum()), len(result),
+    )
+    return result
+
+
 # ------------------------------------------------------------------
 # 7) Vollprädiktion + Export für QGIS
 # ------------------------------------------------------------------
@@ -1112,6 +1176,10 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
         "'Ehrliche (Out-of-Fold-) Mine-Level-Erkennung'."
     )
     summarize_mine_detection(result)
+
+    osm_buildings_dir = cfg.get("osm_buildings_dir")
+    if osm_buildings_dir:
+        result = compute_is_building(result, osm_buildings_dir)
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")

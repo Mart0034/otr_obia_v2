@@ -351,26 +351,22 @@ lohnen:
   echten Dumps (5/36 bei einer lockeren Einstellung); der einzige
   Schwellwert, der keinen einzigen echten Dump erwischte, entfernte nur
   1.8% der grenzwertigen Falsch-Positiven. Nicht der Mühe wert.
-- **OSM-Gebäudeumrisse als harten Ausschluss** (`fetch_osm_buildings.py`,
-  Overpass-API, kostenlos/ohne Account) - sicher, aber schwach. Keines
-  der 36 echten Dumps überlappt ein OSM-Gebäude-Polygon, kostet also nie
-  eine echte Erkennung. Aber auch nur ~1.6% der grenzwertigen
-  Falsch-Positiven (proba 0.5-0.8) überlappen eines - die
-  OSM-Gebäudeabdeckung für abgelegene Industrieflächen in der Atacama ist
-  zu lückenhaft, um die meisten davon zu erwischen (ganze
-  Lagerhallenkomplexe ganz ohne `building=*`-Tag sind keine Seltenheit).
-  Abgerufen und getestet, aber angesichts des mageren Nutzens nicht als
-  Filter in die Pipeline eingebaut; das Skript und seine Daten stehen
-  bereit, falls sich diese Abwägung irgendwann mehr lohnt (z.B. bei
-  besserer OSM-Abdeckung oder in Kombination mit anderen Signalen). Auch
-  versucht: das Flag auf Segmente ausweiten, die ein Gebäude-Überlapp-
-  Segment berühren (dieselbe Idee wie `apply_neighbor_filter`), falls
-  sich die lückenhafte Punktabdeckung so "ausbreiten" ließe - keine
-  Verbesserung (weiterhin 1.6% der grenzwertigen Falsch-Positiven,
-  identisch zur reinen Überlappung; nur 267 von 70.317 Segmenten
-  berühren überhaupt ein Gebäude, also gibt es zu wenig Ausgangsdaten,
-  damit Ausbreitung etwas bringt). Der Flaschenhals ist die
-  OSM-Abdeckung selbst, nicht die Ausbreitungslogik.
+- **OSM-Gebäudeumrisse als harter Ausschluss-Filter** - in dieser Form
+  verworfen, sicher aber im Schnitt schwach. Keines der 36 echten Dumps
+  überlappt ein OSM-Gebäude-Polygon (auch nicht mit einer
+  Nachbarschafts-Ausweitung, versucht nach der Idee, dass sich die
+  lückenhafte Punktabdeckung so "ausbreiten" ließe - nur 3 zusätzliche
+  Segmente von 70.317, also kein wirklicher Effekt in beide Richtungen),
+  ein Filter würde also nie eine echte Erkennung kosten. Aber auch nur
+  ~1.6% der grenzwertigen Falsch-Positiven (proba 0.5-0.8) überlappen
+  eines, gemittelt über alle 138 Minen - die OSM-Gebäudeabdeckung für
+  abgelegene Industrieflächen in der Atacama ist extrem ungleichmäßig,
+  von null bei den meisten Minen bis ~20-30% der Falsch-Positiven bei
+  einer Handvoll gut kartierter Standorte (z.B. der
+  "Minera Mechilla"-Aufbereitungsanlage, `mine_043`). Stattdessen als
+  informative `is_building`-Spalte statt als Filter umgesetzt - siehe
+  "Segmente markieren, die ein OSM-Gebäude überlappen (optional)" weiter
+  unten.
 
   Hinweis für `curl`/`requests`-Nutzer, die diese API aus einer
   Sandbox-Umgebung ansprechen: `overpass.openstreetmap.fr` liefert an
@@ -380,6 +376,7 @@ lohnen:
   TLS-Fingerprint-basierter Bot-Sperre aus, nicht nach einem
   Netzwerk-Policy- oder Header-Problem. `fetch_osm_buildings.py` ruft
   deshalb `curl` als Subprozess auf.
+
 - **OSM-`landuse=industrial`/`quarry`-Polygone als harter Ausschluss** -
   schlimmer als nutzlos, klar verworfen. Jede Mine ist selbst als
   Industrie- oder Abbaufläche in OSM getaggt, und jeder bekannte Dump
@@ -400,6 +397,31 @@ lohnen:
   Kontext-Problem - siehe "PRISMA-Hyperspektraldaten" unter Zukünftige
   Arbeit weiter unten für die eine noch nicht getestete Option, die dafür
   tatsächlich geeignet wäre.
+
+### Segmente markieren, die ein OSM-Gebäude überlappen (optional)
+
+1. Gebäudeumrisse pro Mine abrufen (kostenlos, kein Account - siehe die
+   Untersuchung oben, warum das informativ bleibt statt ein Filter zu
+   werden: die OSM-Abdeckung ist zu ungleichmäßig, um ihr überall
+   gleichermaßen zu trauen):
+
+   ```bash
+   python src/fetch_osm_buildings.py --imagery-dir data/imagery --out-dir data/osm_buildings
+   ```
+
+2. Pipeline mit `--osm-buildings-dir data/osm_buildings` starten. Die
+   exportierte Karte bekommt eine zusätzliche Spalte:
+   - `is_building`: `True` für ein Segment, das ein kartiertes
+     OSM-Gebäude überlappt oder ein solches Segment berührt; sonst
+     `False` (auch für jede Mine ohne abgerufene `<mine_id>.gpkg` oder
+     mit einer leeren - nie ein Fehler).
+
+   Das ändert **niemals `dump_pred` oder `dump_proba`** - die Spalte ist
+   dafür da, diese Segmente selbst in QGIS auszublenden (Rechtsklick auf
+   Layer → Filter, oder Eigenschaften → Quelle → Abfrage-Editor:
+   `"is_building" = 0`, optional kombiniert mit `"dump_pred" = 1`) an den
+   Minen, wo die OSM-Abdeckung gut genug ist, statt dass die Pipeline das
+   für alle Minen auf einmal entscheidet.
 
 ### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
 
