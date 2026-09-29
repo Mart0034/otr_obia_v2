@@ -336,6 +336,23 @@ segments before deciding whether to act on them:
   payoff; the script and its data are there if that trade-off ever looks
   more worthwhile (e.g. if OSM coverage improves, or combined with other
   signals).
+- **OSM `landuse=industrial`/`quarry` polygons as a hard exclusion** -
+  worse than useless, rejected outright. Every mine is itself tagged
+  industrial or quarry land in OSM, and every known dump sits on mine
+  property, so **all 36 real dumps also overlap one of these polygons at
+  100%** (while it does catch ~92% of borderline false positives, e.g.
+  the "Mina Michilla" processing plant complex). This signal only
+  separates "inside a mine" from "outside one," not "dump" from
+  "building" within a mine - never test at the mine-property level again,
+  it's the wrong scale entirely.
+
+  Net conclusion after three rejected ideas (rectangularity/bimodality
+  reweighting, OSM buildings, OSM landuse): small buildings sub-segment-
+  scale relative to Sentinel-2 (10m) don't separate from dumps on shape,
+  texture, or any free auxiliary vector layer tried so far. This looks
+  like a genuine material-identity problem rather than a shape/context
+  one - see "PRISMA hyperspectral imagery" under Future work below for
+  the one untested option that's actually suited to that.
 
   Note for `curl`/`requests` users hitting this API from a sandboxed
   environment: `overpass.openstreetmap.fr` returns 403 ("only available
@@ -411,3 +428,25 @@ Actions (`.github/workflows/tests.yml`).
   class present. The pipeline handles this without crashing, but the
   resulting fold score isn't very informative. Check the logged
   warnings for which mines this affected.
+- Small buildings (smaller than a segment, i.e. finer than ~10m) remain
+  a persistent false-positive source that nothing currently in the
+  pipeline reliably separates from real dumps - see "Investigated:
+  separating buildings from dumps" above for what's been tried and
+  ruled out.
+
+## Future work
+
+- **PRISMA hyperspectral imagery** (ASI, ~200+ narrow spectral bands,
+  30m resolution, free with registration, confirmed coverage over
+  Chile) is the most promising untested option for the small-buildings-
+  vs-dumps problem above. Every idea tried so far (shape, texture, OSM
+  buildings, OSM landuse) operates on coarse Sentinel-2 spectral bands
+  or auxiliary vector data, neither of which can tell rubber from roofing
+  material/rock at a chemical level. PRISMA's fine spectral resolution
+  is built for exactly that kind of material identification and hasn't
+  been tried yet.
+- **ALOS PALSAR** (JAXA L-band SAR, free, 25m, available via AWS/GEE) as
+  an additional radar source alongside the existing Sentinel-1 C-band -
+  lower priority than PRISMA since Sentinel-1 already engages the
+  "does this scatter like a rough diffuse pile" question; L-band would
+  be a variation on a signal already in use rather than a new axis.

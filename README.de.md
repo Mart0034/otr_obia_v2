@@ -372,6 +372,26 @@ lohnen:
   TLS-Fingerprint-basierter Bot-Sperre aus, nicht nach einem
   Netzwerk-Policy- oder Header-Problem. `fetch_osm_buildings.py` ruft
   deshalb `curl` als Subprozess auf.
+- **OSM-`landuse=industrial`/`quarry`-Polygone als harter Ausschluss** -
+  schlimmer als nutzlos, klar verworfen. Jede Mine ist selbst als
+  Industrie- oder Abbaufläche in OSM getaggt, und jeder bekannte Dump
+  liegt auf Minen-Gelände, also überlappen **auch alle 36 echten Dumps
+  eines dieser Polygone, zu 100%** (während es tatsächlich ~92% der
+  grenzwertigen Falsch-Positiven erwischt, z.B. den
+  "Mina Michilla"-Aufbereitungskomplex). Dieses Signal trennt nur
+  "innerhalb einer Mine" von "außerhalb einer Mine", nicht "Dump" von
+  "Gebäude" innerhalb einer Mine - nie wieder auf Minen-Grundstücks-Ebene
+  testen, das ist der völlig falsche Maßstab.
+
+  Fazit nach drei verworfenen Ideen (Rechteckigkeit/Bimodalität stärker
+  gewichten, OSM-Gebäude, OSM-Landuse): kleine Gebäude, die kleiner als
+  ein Segment sind (feiner als ~10m gegenüber Sentinel-2), lassen sich
+  weder über Form, Textur noch über irgendeine bisher getestete
+  kostenlose Zusatz-Vektorebene von Dumps trennen. Das sieht nach einem
+  echten Material-Identitäts-Problem aus, nicht nach einem Form-/
+  Kontext-Problem - siehe "PRISMA-Hyperspektraldaten" unter Zukünftige
+  Arbeit weiter unten für die eine noch nicht getestete Option, die dafür
+  tatsächlich geeignet wäre.
 
 ### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
 
@@ -443,3 +463,26 @@ jedem Push über GitHub Actions (`.github/workflows/tests.yml`).
   dann nicht ab, aber der resultierende Fold-Score ist wenig
   aussagekräftig. In den geloggten Warnungen steht, welche Minen davon
   betroffen waren.
+- Kleine Gebäude (kleiner als ein Segment, also feiner als ~10m) bleiben
+  eine hartnäckige Falsch-Positiv-Quelle, die aktuell nichts in der
+  Pipeline zuverlässig von echten Dumps trennt - siehe "Untersucht:
+  Gebäude von Dumps trennen" oben für das, was ausprobiert und verworfen
+  wurde.
+
+## Zukünftige Arbeit
+
+- **PRISMA-Hyperspektraldaten** (ASI, ~200+ schmale Spektralbänder, 30m
+  Auflösung, kostenlos mit Registrierung, bestätigte Abdeckung über
+  Chile) ist die vielversprechendste noch nicht getestete Option für das
+  Problem "kleine Gebäude vs. Dumps" oben. Jede bisher getestete Idee
+  (Form, Textur, OSM-Gebäude, OSM-Landuse) arbeitet mit groben
+  Sentinel-2-Spektralbändern oder Zusatz-Vektordaten, keines davon kann
+  Gummi von Dach-/Baumaterial oder Gestein auf chemischer Ebene
+  unterscheiden. PRISMAs feine Spektralauflösung ist genau für diese Art
+  Materialerkennung gebaut und wurde noch nicht ausprobiert.
+- **ALOS PALSAR** (JAXA L-Band-SAR, kostenlos, 25m, verfügbar über
+  AWS/GEE) als zusätzliche Radarquelle neben dem bereits vorhandenen
+  Sentinel-1-C-Band - niedrigere Priorität als PRISMA, da Sentinel-1
+  bereits die Frage "streut das wie ein ungeordneter, diffuser Haufen"
+  bedient; L-Band wäre eine Variation eines bereits genutzten Signals,
+  keine neue Achse.
