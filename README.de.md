@@ -362,7 +362,15 @@ lohnen:
   Abgerufen und getestet, aber angesichts des mageren Nutzens nicht als
   Filter in die Pipeline eingebaut; das Skript und seine Daten stehen
   bereit, falls sich diese Abwägung irgendwann mehr lohnt (z.B. bei
-  besserer OSM-Abdeckung oder in Kombination mit anderen Signalen).
+  besserer OSM-Abdeckung oder in Kombination mit anderen Signalen). Auch
+  versucht: das Flag auf Segmente ausweiten, die ein Gebäude-Überlapp-
+  Segment berühren (dieselbe Idee wie `apply_neighbor_filter`), falls
+  sich die lückenhafte Punktabdeckung so "ausbreiten" ließe - keine
+  Verbesserung (weiterhin 1.6% der grenzwertigen Falsch-Positiven,
+  identisch zur reinen Überlappung; nur 267 von 70.317 Segmenten
+  berühren überhaupt ein Gebäude, also gibt es zu wenig Ausgangsdaten,
+  damit Ausbreitung etwas bringt). Der Flaschenhals ist die
+  OSM-Abdeckung selbst, nicht die Ausbreitungslogik.
 
   Hinweis für `curl`/`requests`-Nutzer, die diese API aus einer
   Sandbox-Umgebung ansprechen: `overpass.openstreetmap.fr` liefert an

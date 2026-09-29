@@ -335,7 +335,13 @@ segments before deciding whether to act on them:
   tested, but not wired into the pipeline as a filter given the marginal
   payoff; the script and its data are there if that trade-off ever looks
   more worthwhile (e.g. if OSM coverage improves, or combined with other
-  signals).
+  signals). Also tried propagating the flag to segments touching a
+  building-overlap segment (same idea as `apply_neighbor_filter`) in
+  case sparse point coverage could "spread" further - no improvement
+  (still 1.6% of borderline false positives, identical to plain overlap;
+  only 267 of 70,317 segments touch a building at all, so there's too
+  little seed data for propagation to matter). The bottleneck is upstream
+  OSM coverage, not the propagation logic.
 - **OSM `landuse=industrial`/`quarry` polygons as a hard exclusion** -
   worse than useless, rejected outright. Every mine is itself tagged
   industrial or quarry land in OSM, and every known dump sits on mine
