@@ -4,7 +4,7 @@
         "version": "PTDL_v2",
         "update_url": null
     },
-    "exported_at": "2026-09-28T00:00:00+00:00",
+    "exported_at": "2026-09-29T00:00:00+00:00",
     "name": "OTR-OBIA Pipeline",
     "author": "martin.weiner.aguilera@gmail.com",
     "description": "Processing environment for the otr_obia_v2 tire-dump detection pipeline (Sentinel-1/2, Copernicus DEM, ESA WorldCover, Random Forest classifier). The install script clones the project repo and builds a Python venv with the full geospatial/ML stack (rasterio, geopandas, scikit-learn, imbalanced-learn, pvlib, pystac-client, planetary-computer, ...). The server itself is a persistent shell on the console, ready to run 'python3 src/otr_obia_pipeline.py ...' or 'python3 src/cli.py ...' on demand via the Pterodactyl API/console - it is not a long-running service.",
@@ -23,7 +23,7 @@
     },
     "scripts": {
         "installation": {
-            "script": "#!/bin/bash\n# OTR-OBIA pipeline - installation script\n# Server Files: /mnt/server\n\napt update\napt install -y --no-install-recommends \\\n    git curl ca-certificates \\\n    build-essential python3-dev \\\n    gdal-bin libgdal-dev libgeos-dev libproj-dev\n\nmkdir -p /mnt/server\ncd /mnt/server\n\nif [ -z \"${GIT_BRANCH}\" ]; then\n    GIT_BRANCH=\"main\"\nfi\n\nif [ -d .git ]; then\n    echo \"Repo already present, pulling latest ${GIT_BRANCH}\"\n    git fetch origin \"${GIT_BRANCH}\"\n    git checkout \"${GIT_BRANCH}\"\n    git pull origin \"${GIT_BRANCH}\"\nelse\n    echo \"Cloning ${GIT_REPOSITORY} (${GIT_BRANCH})\"\n    git clone --single-branch --branch \"${GIT_BRANCH}\" \"${GIT_REPOSITORY}\" .\nfi\n\nexport HOME=/mnt/server\n\necho \"Creating virtual environment\"\npython3 -m venv venv\n. venv/bin/activate\n\npip install --upgrade pip\nif [ -f \"${REQUIREMENTS_FILE}\" ]; then\n    pip install -r \"${REQUIREMENTS_FILE}\"\nfi\n\necho \"Install complete.\"\nexit 0\n",
+            "script": "#!/bin/bash\n# OTR-OBIA pipeline - installation script\n# Server Files: /mnt/server\nset -e\n\n# Avoid an apt/debconf prompt (e.g. tzdata) hanging forever with no TTY to answer it.\nexport DEBIAN_FRONTEND=noninteractive\nexport TZ=Etc/UTC\n\napt update -y\napt install -y --no-install-recommends \\\n    git curl ca-certificates \\\n    build-essential python3-dev \\\n    gdal-bin libgdal-dev libgeos-dev libproj-dev\n\nmkdir -p /mnt/server\ncd /mnt/server\n\nif [ -z \"${GIT_BRANCH}\" ]; then\n    GIT_BRANCH=\"main\"\nfi\n\nif [ -d .git ]; then\n    echo \"Repo already present, pulling latest ${GIT_BRANCH}\"\n    git fetch origin \"${GIT_BRANCH}\"\n    git checkout \"${GIT_BRANCH}\"\n    git pull origin \"${GIT_BRANCH}\"\nelse\n    echo \"Cloning ${GIT_REPOSITORY} (${GIT_BRANCH})\"\n    git clone --single-branch --branch \"${GIT_BRANCH}\" \"${GIT_REPOSITORY}\" .\nfi\n\nexport HOME=/mnt/server\n\necho \"Creating virtual environment\"\npython3 -m venv venv\n. venv/bin/activate\n\npip install --upgrade pip\nif [ -f \"${REQUIREMENTS_FILE}\" ]; then\n    pip install -r \"${REQUIREMENTS_FILE}\"\nfi\n\necho \"Install complete.\"\nexit 0\n",
             "container": "python:3.11-slim-bookworm",
             "entrypoint": "bash"
         }
