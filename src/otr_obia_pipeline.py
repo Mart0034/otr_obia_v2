@@ -453,10 +453,39 @@ def compute_segment_features(arr, segments, band_names, texture_band):
             brightness_extreme_fraction(brightness[m]) if brightness is not None else 0.0
         )
 
-        # GLCM-Textur auf der Bounding Box des Segments (einfache,
-        # robuste Näherung statt exakter Segmentgeometrie)
+        # Bounding Box des Segments (einfache, robuste Näherung statt
+        # exakter Segmentgeometrie - auch für die GLCM-Textur unten
+        # verwendet).
         ys, xs = np.where(m)
         y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+
+        # Räumlicher Helligkeits-Split: max(|links-rechts|, |oben-unten|)
+        # über die Bounding Box. Anders als brightness_extreme_fraction
+        # (zählt nur den ANTEIL extrem heller/dunkler Pixel, egal wo sie
+        # liegen) erfasst das gezielt einen SAUBEREN räumlichen Übergang
+        # quer durchs Segment - die Signatur einer Grubenkante/eines
+        # Hangs im Schlagschatten (eine Bildhälfte hell, die andere
+        # dunkel), nicht die eines gleichmäßig verteilten Reifenhaufens.
+        # An den echten Daten kalibriert (siehe README): bei >= 0.10
+        # betrifft das 0 von 36 bekannten Dumps, fängt aber ~7% der
+        # Hang-Falsch-Positiven (dem_slope_mean >= 5) ab.
+        if brightness is not None:
+            b_patch = brightness[y0:y1, x0:x1]
+            bh, bw = b_patch.shape
+            with np.errstate(invalid="ignore"):
+                left, right = b_patch[:, : bw // 2], b_patch[:, bw // 2 :]
+                top, bottom = b_patch[: bh // 2, :], b_patch[bh // 2 :, :]
+                diffs = [
+                    abs(np.nanmean(left) - np.nanmean(right)),
+                    abs(np.nanmean(top) - np.nanmean(bottom)),
+                ]
+            row["spatial_split_contrast"] = (
+                float(np.nanmax(diffs)) if not np.all(np.isnan(diffs)) else 0.0
+            )
+        else:
+            row["spatial_split_contrast"] = 0.0
+
+        # GLCM-Textur auf derselben Bounding Box
         patch = tex_band_q[y0:y1, x0:x1]
         if patch.shape[0] >= 2 and patch.shape[1] >= 2:
             glcm = graycomatrix(

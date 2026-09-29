@@ -331,6 +331,22 @@ Sentinel-2-Zeitreihen-Merkmal oben, nur Blickwinkel statt Sonnenstand.
    Stichprobe - weder geschadet noch klar geholfen. Sollte an mehr Minen
    noch einmal geprüft werden, bevor man sich darauf verlässt.
 
+### Übernommen: räumlicher Helligkeits-Split (Hang-/Schatten-Falsch-Positive)
+
+`spatial_split_contrast` (automatisch berechnet, kein Flag nötig - ein
+echtes Modell-Merkmal wie `tex_contrast`, keine optionale OSM-Spalte)
+misst die größte Helligkeitsdifferenz zwischen den zwei Hälften der
+Bounding Box eines Segments (links/rechts oder oben/unten, je nachdem
+was größer ist). Anders als `brightness_extreme_fraction` (zählt nur,
+WIE VIEL eines Segments extrem ist, egal WO) erfasst das gezielt einen
+sauberen räumlichen Schnitt quer durchs Segment - die Signatur eines
+beschatteten Hangs oder einer Grubenkante (eine Seite hell, die andere
+dunkel), nicht eines diffus beleuchteten Dumps. Vor der Übernahme an den
+echten Daten validiert: `>= 0.10` betrifft 0 von 36 echten Dumps und
+fängt ~7% einer Hang-Falsch-Positiv-Stichprobe ab (`dem_slope_mean >= 5`
+- dieselbe Klasse, die sonst nichts trennen konnte: Form, DSI-Textur,
+Gelände, SAR, NIR/SWIR-Bandverhältnisse, NIR-Band-Textur).
+
 ### Untersucht: Gebäude von Dumps trennen (nicht so übernommen)
 
 Gebäude (Lagerhallen, Schuppen) sind eine hartnäckige Falsch-Positiv-

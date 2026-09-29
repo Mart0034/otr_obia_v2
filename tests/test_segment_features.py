@@ -115,6 +115,44 @@ def test_compute_segment_features_adds_brightness_extreme_fraction():
     assert feats.loc[0, "brightness_extreme_fraction"] == pytest.approx(1.0)
 
 
+def test_spatial_split_contrast_detects_a_clean_left_right_split():
+    # left half dark, right half bright - a sharp, spatially clean split,
+    # the signature of a shadowed slope/pit edge, not a dump
+    band_names = ["blue", "green", "red", "dsi"]
+    H, W = 10, 10
+    arr = np.zeros((H, W, 4), dtype=np.float32)
+    arr[:, :5, 0:3] = 0.0
+    arr[:, 5:, 0:3] = 1.0
+    segments = np.ones((H, W), dtype=np.int32)
+
+    feats = compute_segment_features(arr, segments, band_names, texture_band="dsi")
+
+    assert feats.loc[0, "spatial_split_contrast"] == pytest.approx(1.0)
+
+
+def test_spatial_split_contrast_is_low_for_uniform_brightness():
+    band_names = ["blue", "green", "red", "dsi"]
+    H, W = 10, 10
+    arr = np.full((H, W, 4), 0.5, dtype=np.float32)
+    segments = np.ones((H, W), dtype=np.int32)
+
+    feats = compute_segment_features(arr, segments, band_names, texture_band="dsi")
+
+    assert feats.loc[0, "spatial_split_contrast"] == pytest.approx(0.0)
+
+
+def test_spatial_split_contrast_defaults_to_zero_without_color_bands():
+    band_names = ["dsi"]
+    H, W = 10, 10
+    arr = np.tile(np.arange(W, dtype=np.float32), (H, 1))[..., np.newaxis]
+    segments = np.zeros((H, W), dtype=np.int32)
+    segments[:, :] = 1
+
+    feats = compute_segment_features(arr, segments, band_names, texture_band="dsi")
+
+    assert feats.loc[0, "spatial_split_contrast"] == 0.0
+
+
 def test_compute_segment_features_without_color_bands_defaults_to_zero():
     # a minimal band set with no blue/green/red present at all (as used by
     # some other tests in this file) must not crash

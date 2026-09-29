@@ -308,6 +308,22 @@ angle.
    texture features on that small sample - neither hurt nor obviously
    helped. Worth re-checking on a larger set of mines before relying on it.
 
+### Adopted: spatial brightness split (slope/shadow false positives)
+
+`spatial_split_contrast` (computed automatically, no flag needed - it's
+a genuine model feature like `tex_contrast`, not an OSM-sourced optional
+column) measures the strongest brightness difference between the two
+halves of a segment's bounding box (left/right or top/bottom, whichever
+is larger). Different from `brightness_extreme_fraction`, which only
+counts *how much* of a segment is extreme regardless of *where* -  this
+targets a clean spatial cut straight across the segment, the signature
+of a shadowed slope or pit edge (bright side / dark side), not a
+diffusely-lit dump. Validated against the real data before adopting:
+`>= 0.10` affects 0 of 36 real dumps while catching ~7% of a
+slope-associated false-positive sample (`dem_slope_mean >= 5` - the same
+class that nothing else tried could separate: shape, DSI texture,
+terrain, SAR, NIR/SWIR band ratios, NIR-band texture).
+
 ### Investigated: separating buildings from dumps (not adopted as-is)
 
 Buildings (warehouses, sheds) are a persistent false-positive category -
