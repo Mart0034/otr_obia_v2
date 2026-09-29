@@ -161,6 +161,23 @@ def build_arg_parser(description):
              "rein informative is_building-Spalte hinzu (kein Filter, ändert "
              "dump_pred nicht) zum selbst Ein-/Ausblenden in QGIS.",
     )
+    parser.add_argument(
+        "--osm-roads-dir", dest="osm_roads_dir", metavar="DIR",
+        help="Optional: Ordner mit OSM-Straßen pro Mine (erzeugt von "
+             "src/fetch_osm_roads.py). Fügt der exportierten Karte die rein "
+             "informativen Spalten road_density_150m/is_road_grid hinzu (kein "
+             "Filter, ändert dump_pred nicht) zum selbst Ein-/Ausblenden in QGIS.",
+    )
+    parser.add_argument(
+        "--road-density-radius-m", dest="road_density_radius_m", type=float, metavar="M",
+        help="Radius (Meter) um jeden Segment-Mittelpunkt für road_density_150m "
+             "(Standard 150).",
+    )
+    parser.add_argument(
+        "--road-grid-threshold-m", dest="road_grid_threshold_m", type=float, metavar="M",
+        help="Schwellwert für is_road_grid (Standard 500m, an den echten Daten "
+             "kalibriert: betrifft 0 von 36 bekannten Dumps).",
+    )
     return parser
 
 
@@ -202,6 +219,9 @@ def resolve_config(base_config, args):
         "s2t_dir": getattr(args, "s2t_dir", None),
         "s1t_dir": getattr(args, "s1t_dir", None),
         "osm_buildings_dir": getattr(args, "osm_buildings_dir", None),
+        "osm_roads_dir": getattr(args, "osm_roads_dir", None),
+        "road_density_radius_m": getattr(args, "road_density_radius_m", None),
+        "road_grid_threshold_m": getattr(args, "road_grid_threshold_m", None),
     }
     for key, value in cli_overrides.items():
         if value is not None:

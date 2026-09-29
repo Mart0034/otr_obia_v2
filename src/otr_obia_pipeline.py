@@ -178,6 +178,14 @@ CONFIG = {
     # informative is_building-Spalte hinzu (kein Filter, ändert dump_pred
     # nicht - siehe compute_is_building()). None = keine is_building-Spalte.
     "osm_buildings_dir": None,
+    # Optional: Ordner mit OSM-Straßen pro Mine (erzeugt von
+    # src/fetch_osm_roads.py). Fügt der exportierten Karte die rein
+    # informativen Spalten road_density_150m/is_road_grid hinzu (kein
+    # Filter, ändert dump_pred nicht - siehe compute_road_density()).
+    # None = keine dieser Spalten.
+    "osm_roads_dir": None,
+    "road_density_radius_m": 150,
+    "road_grid_threshold_m": 500,
     "output_dir": "output",
 }
 
@@ -1131,6 +1139,68 @@ def compute_is_building(result, osm_buildings_dir):
     return result
 
 
+def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=500):
+    """Fügt zwei rein informative Spalten hinzu:
+
+    - road_density_150m: Gesamtlänge (Meter) aller OSM-Straßen (siehe
+      fetch_osm_roads.py) innerhalb radius_m um den Segment-Mittelpunkt.
+    - is_road_grid: road_density_150m >= grid_threshold_m.
+
+    Ändert dump_pred/dump_proba NICHT, wie compute_is_building() - eine
+    zusätzliche Spalte zum selbst Ein-/Ausblenden in QGIS.
+
+    Idee: bloße Nähe zu IRGENDEINER Straße trennt kaum (an den echten
+    Daten: 11% der 36 bekannten Dumps liegen selbst in 12m Abstand zu
+    einer Straße - ein einzelner Zufahrtsweg zu einer echten Halde ist
+    normal). Ein dichtes GITTER aus vielen, meist kurzen/parallelen
+    Straßen ist dagegen die Signatur eines Parkplatz-/Fahrzeugbereichs
+    einer Industrieanlage, nicht einer einzelnen Halde. An den echten
+    Daten kalibriert (siehe README): bei grid_threshold_m=500 (Standard)
+    betrifft das 0 von 36 bekannten Dumps, fängt aber 6.5% der
+    grenzwertigen Falsch-Positiven (proba 0.5-0.8) - deutlich mehr als
+    die einfache Gebäude-Überlappung (1.6%).
+
+    Erwartet result mit den Spalten mine_id und geometry. Für Minen ohne
+    passende <mine_id>.gpkg in osm_roads_dir bleiben beide Spalten bei
+    0.0/False (kein Fehler - die OSM-Daten sind optional)."""
+    result = result.copy()
+    result["road_density_150m"] = 0.0
+    if not osm_roads_dir:
+        result["is_road_grid"] = False
+        return result
+
+    for mine_id, group in result.groupby("mine_id"):
+        roads_path = os.path.join(osm_roads_dir, f"{mine_id}.gpkg")
+        if not os.path.exists(roads_path):
+            continue
+        roads = gpd.read_file(roads_path)
+        if roads.empty:
+            continue
+        if roads.crs != group.crs:
+            roads = roads.to_crs(group.crs)
+
+        sindex = roads.sindex
+        densities = []
+        for centroid in group.geometry.centroid:
+            buf = centroid.buffer(radius_m)
+            candidate_idx = list(sindex.intersection(buf.bounds))
+            if not candidate_idx:
+                densities.append(0.0)
+                continue
+            candidates = roads.iloc[candidate_idx]
+            nearby = candidates[candidates.geometry.intersects(buf)]
+            densities.append(nearby.geometry.intersection(buf).length.sum())
+        result.loc[group.index, "road_density_150m"] = densities
+
+    result["is_road_grid"] = result["road_density_150m"] >= grid_threshold_m
+    logger.info(
+        "road_density_150m berechnet: %d von %d Segmenten als Straßen-Gitter "
+        "markiert (is_road_grid, Schwelle %.0fm, nur informativ).",
+        int(result["is_road_grid"].sum()), len(result), grid_threshold_m,
+    )
+    return result
+
+
 # ------------------------------------------------------------------
 # 7) Vollprädiktion + Export für QGIS
 # ------------------------------------------------------------------
@@ -1180,6 +1250,13 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     osm_buildings_dir = cfg.get("osm_buildings_dir")
     if osm_buildings_dir:
         result = compute_is_building(result, osm_buildings_dir)
+    osm_roads_dir = cfg.get("osm_roads_dir")
+    if osm_roads_dir:
+        result = compute_road_density(
+            result, osm_roads_dir,
+            radius_m=cfg.get("road_density_radius_m", 150),
+            grid_threshold_m=cfg.get("road_grid_threshold_m", 500),
+        )
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")

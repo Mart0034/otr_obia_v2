@@ -389,6 +389,37 @@ segments before deciding whether to act on them:
    judge OSM's coverage is good enough to trust, without the pipeline
    silently deciding that for every mine at once.
 
+### Flagging segments inside a dense road grid (optional)
+
+Bare proximity to a road barely separates real dumps from false
+positives - 11% of the 36 real dumps sit within 12m of a mapped road,
+since a single vehicle access track to a real dump is completely normal.
+But a *dense grid* of many, mostly short/parallel/perpendicular roads is
+the signature of a facility's parking or vehicle area, not a single
+dump - validated at `road_density_150m >= 500` (total mapped road length
+within 150m of a segment): 0 of 36 real dumps affected, ~6.5% of
+borderline false positives (proba 0.5-0.8) caught, better than the
+building-overlap signal above.
+
+1. Fetch roads per mine (free, no account):
+
+   ```bash
+   python src/fetch_osm_roads.py --imagery-dir data/imagery --out-dir data/osm_roads
+   ```
+
+2. Run the pipeline with `--osm-roads-dir data/osm_roads`. The exported
+   map gets two extra columns:
+   - `road_density_150m`: total length (meters) of mapped OSM roads
+     within 150m of the segment's centroid (`--road-density-radius-m` to
+     change the radius)
+   - `is_road_grid`: `road_density_150m >= 500` (`--road-grid-threshold-m`
+     to change the cutoff - lower values catch more false positives but
+     start costing real dumps past ~300m, see the investigation above)
+
+   Same as `is_building`, this **never changes `dump_pred`/`dump_proba`**
+   - filter it out yourself in QGIS (`"is_road_grid" = 0`) where you
+     judge it applies.
+
 ### Screening a brand-new site (no existing tile)
 
 All 138 existing `data/imagery/*.tif` tiles came from "Stage 2" of the

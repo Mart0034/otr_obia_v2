@@ -423,6 +423,38 @@ lohnen:
    Minen, wo die OSM-Abdeckung gut genug ist, statt dass die Pipeline das
    für alle Minen auf einmal entscheidet.
 
+### Segmente in einem dichten Straßen-Gitter markieren (optional)
+
+Bloße Nähe zu einer Straße trennt kaum echte Dumps von Falsch-Positiven -
+11% der 36 echten Dumps liegen innerhalb von 12m einer kartierten Straße,
+da ein einzelner Fahrzeug-Zufahrtsweg zu einem echten Dump völlig normal
+ist. Ein *dichtes Gitter* aus vielen, meist kurzen/parallelen/
+rechtwinkligen Straßen ist dagegen die Signatur eines Parkplatz- oder
+Fahrzeugbereichs einer Industrieanlage, nicht eines einzelnen Dumps -
+kalibriert bei `road_density_150m >= 500` (Gesamtlänge kartierter
+Straßen innerhalb 150m eines Segments): 0 von 36 echten Dumps betroffen,
+~6.5% der grenzwertigen Falsch-Positiven (proba 0.5-0.8) erfasst, besser
+als das Gebäude-Überlappungs-Signal oben.
+
+1. Straßen pro Mine abrufen (kostenlos, kein Account):
+
+   ```bash
+   python src/fetch_osm_roads.py --imagery-dir data/imagery --out-dir data/osm_roads
+   ```
+
+2. Pipeline mit `--osm-roads-dir data/osm_roads` starten. Die exportierte
+   Karte bekommt zwei zusätzliche Spalten:
+   - `road_density_150m`: Gesamtlänge (Meter) kartierter OSM-Straßen
+     innerhalb 150m um den Segment-Mittelpunkt (`--road-density-radius-m`
+     ändert den Radius)
+   - `is_road_grid`: `road_density_150m >= 500`
+     (`--road-grid-threshold-m` ändert den Schwellwert - niedrigere Werte
+     erfassen mehr Falsch-Positive, kosten aber ab ~300m echte Dumps,
+     siehe die Untersuchung oben)
+
+   Wie bei `is_building` ändert das **niemals `dump_pred`/`dump_proba`**
+   - selbst in QGIS ausblenden (`"is_road_grid" = 0`), wo es passt.
+
 ### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
 
 Alle 138 vorhandenen `data/imagery/*.tif`-Kacheln stammen aus "Stage 2"
