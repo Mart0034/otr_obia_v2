@@ -90,3 +90,18 @@ def test_touching_edges_do_not_count_as_overlap():
     g = _gdf([_utm_box(400000, 7400000, 100), _utm_box(401200, 7400000, 100)])
     plan = plan_sites(g, buffer_m=500, merge_overlaps=True)  # tiles just touch at x=400600/401200
     assert len(plan) == 2
+
+
+def test_buffer_scales_with_quarry_size_within_limits():
+    small = _utm_box(400000, 7400000, 50)      # 100 m quarry
+    mid = _utm_box(410000, 7400000, 1000)      # 2 km quarry
+    big = _utm_box(430000, 7400000, 8000)      # 16 km quarry
+    plan = plan_sites(_gdf([small, mid, big]), buffer_scale=0.5, buffer_min_m=250,
+                      buffer_max_m=3000, min_radius_m=100, max_tile_m=100000)
+    assert plan["buffer_m"].tolist() == [250.0, 1000.0, 3000.0]
+    assert plan["radius_m"].is_monotonic_increasing
+
+
+def test_fixed_buffer_is_used_without_buffer_scale():
+    plan = plan_sites(_gdf([_utm_box(400000, 7400000, 50)]), buffer_m=700)
+    assert plan.loc[0, "buffer_m"] == 700

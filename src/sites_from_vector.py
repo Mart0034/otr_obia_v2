@@ -101,10 +101,15 @@ def _merge_overlapping(plan, prefix, max_tile_m):
 
 def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
                max_tile_m=10000.0, min_radius_m=500.0, prefix="q", work_crs=WORK_CRS,
-               merge_overlaps=False):
+               merge_overlaps=False, buffer_scale=None, buffer_min_m=250.0,
+               buffer_max_m=3000.0):
     """Gibt ein DataFrame mit einer Zeile pro Objekt zurück: site_id, center_x,
     center_y (in work_crs), radius_m (halbe Kantenlänge, auf 10 m gerundet),
-    area_m2 und status ("ok" oder der Grund, warum es übersprungen wird)."""
+    area_m2 und status ("ok" oder der Grund, warum es übersprungen wird).
+
+    Puffer: fest buffer_m - oder, mit buffer_scale, proportional zur Größe des
+    Objekts: buffer_scale * längere Seite, begrenzt auf buffer_min_m..buffer_max_m
+    (kleine Steinbrüche bekommen wenig Umgebung, große mehr)."""
     if gdf.crs is None:
         raise ValueError("Die Eingabedatei hat kein Koordinatensystem (CRS).")
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
@@ -120,7 +125,11 @@ def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
             status = "nördlich des Breitengrad-Filters"
         elif geom.area < min_area_m2:
             status = "unter Mindestfläche"
-        minx, miny, maxx, maxy = geom.buffer(buffer_m).bounds
+        buf = buffer_m
+        if buffer_scale is not None:
+            gx0, gy0, gx1, gy1 = geom.bounds
+            buf = min(max(buffer_scale * max(gx1 - gx0, gy1 - gy0), buffer_min_m), buffer_max_m)
+        minx, miny, maxx, maxy = geom.buffer(buf).bounds
         side = max(maxx - minx, maxy - miny, 2 * min_radius_m)
         radius = math.ceil(side / 2 / PIXEL_M) * PIXEL_M
         if status == "ok" and 2 * radius > max_tile_m:
@@ -129,7 +138,7 @@ def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
             "site_id": _site_id(row, pos, prefix),
             "center_x": (minx + maxx) / 2, "center_y": (miny + maxy) / 2,
             "radius_m": radius, "area_m2": geom.area, "status": status,
-            "members": "",
+            "buffer_m": buf, "members": "",
         })
     plan = pd.DataFrame(rows)
     if not plan.empty and plan["site_id"].duplicated().any():
@@ -146,6 +155,11 @@ def main(argv=None):
     p.add_argument("--out-dir", default="data/sites", metavar="DIR",
                    help="Zielordner; darin imagery/, sentinel1/, dem/ und sites.csv.")
     p.add_argument("--buffer-m", type=float, default=0.0, help="Erweiterung jedes Objekts in Metern.")
+    p.add_argument("--buffer-scale", type=float,
+                   help="Statt fester Erweiterung: Anteil der längeren Objektseite (z.B. 0.5), "
+                        "begrenzt durch --buffer-min-m/--buffer-max-m. Überschreibt --buffer-m.")
+    p.add_argument("--buffer-min-m", type=float, default=250.0, help="Kleinste Erweiterung bei --buffer-scale.")
+    p.add_argument("--buffer-max-m", type=float, default=3000.0, help="Größte Erweiterung bei --buffer-scale.")
     p.add_argument("--south", type=float, help="Südgrenze (Breitengrad, z.B. -26).")
     p.add_argument("--north", type=float, help="Nordgrenze (Breitengrad, z.B. -21).")
     p.add_argument("--min-area-m2", type=float, default=0.0, help="Kleinere Objekte überspringen.")
@@ -170,7 +184,8 @@ def main(argv=None):
         gdf, buffer_m=args.buffer_m, south=args.south, north=args.north,
         min_area_m2=args.min_area_m2, max_tile_m=args.max_tile_m,
         min_radius_m=args.min_radius_m, prefix=args.prefix,
-        merge_overlaps=args.merge_overlaps,
+        merge_overlaps=args.merge_overlaps, buffer_scale=args.buffer_scale,
+        buffer_min_m=args.buffer_min_m, buffer_max_m=args.buffer_max_m,
     )
     os.makedirs(args.out_dir, exist_ok=True)
     plan.to_csv(os.path.join(args.out_dir, "sites.csv"), index=False)
