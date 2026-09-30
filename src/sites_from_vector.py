@@ -226,8 +226,9 @@ def main(argv=None):
                 failed.append(futures[fut])
     import fetch_dem
     import fetch_sentinel1
-    fetch_sentinel1.main(["--imagery-dir", imagery, "--out-dir", s1])
-    fetch_dem.main(["--imagery-dir", imagery, "--out-dir", dem])
+    workers = str(args.n_workers)
+    fetch_sentinel1.main(["--imagery-dir", imagery, "--out-dir", s1, "--n-workers", workers])
+    fetch_dem.main(["--imagery-dir", imagery, "--out-dir", dem, "--n-workers", workers])
     if args.with_osm:
         import fetch_osm_buildings
         import fetch_osm_poi
