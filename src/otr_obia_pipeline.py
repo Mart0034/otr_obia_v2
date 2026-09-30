@@ -252,7 +252,16 @@ def extract_mine_id(filename, pattern=r"(mine[_\-]?\d+|\d+)"):
     Bei Bedarf an das tatsächliche Namensschema anpassen."""
     base = os.path.splitext(os.path.basename(filename))[0]
     m = re.search(pattern, base, flags=re.IGNORECASE)
+    if pattern == r"(mine[_\-]?\d+|\d+)":
+        # Ein "mine_NNN" irgendwo im Namen hat Vorrang vor beliebigen Ziffern
+        # davor (z.B. das "2" in "S2_mine_012_2023").
+        m = re.search(r"mine[_\-]?\d+", base, flags=re.IGNORECASE) or m
     mine_id = m.group(0) if m else base
+    # Reine Ziffern aus einem längeren Namen (new_002, q_way_1111) sind keine
+    # Mine-ID: sie würden zu "002"/"1111" und nicht zur passenden OSM-Datei
+    # <Name>.gpkg passen bzw. bei gleichen Ziffern kollidieren.
+    if m is not None and mine_id.isdigit() and mine_id != base:
+        mine_id = base
     if m is None:
         logger.warning(
             "Konnte keine mine_id aus Dateiname '%s' extrahieren, verwende den "

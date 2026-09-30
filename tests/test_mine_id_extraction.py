@@ -16,3 +16,13 @@ def test_falls_back_to_full_filename_and_logs_a_warning(caplog):
         mine_id = extract_mine_id("data/imagery/site-without-digits.tif")
     assert mine_id == "site-without-digits"
     assert "Konnte keine mine_id" in caplog.text
+
+
+def test_new_site_names_keep_their_full_name():
+    # new_002 must not collapse to "002": the OSM files are looked up by mine_id
+    assert extract_mine_id("data/new_only/imagery/new_002.tif") == "new_002"
+    assert extract_mine_id("q_way_1111.tif") == "q_way_1111"
+
+
+def test_mine_prefixed_id_inside_a_longer_name_is_still_extracted():
+    assert extract_mine_id("S2_mine_012_2023.tif") == "mine_012"
