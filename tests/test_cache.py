@@ -47,3 +47,28 @@ def test_second_run_reuses_cache_instead_of_rebuilding(tmp_path, write_synthetic
 
         main(cfg)
         assert spy.call_count == 1  # second run: cache exists, must NOT rebuild
+
+
+def test_extra_imagery_dir_scores_only_the_new_tile(tmp_path, write_synthetic_raster):
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    main(cfg)  # builds the cache from the two known mines
+
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    write_synthetic_raster(extra / "3.tif", seed=3)
+    cfg2 = dict(cfg, extra_imagery_dir=str(extra))
+    main(cfg2)
+
+    out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    assert set(out["mine_id"].astype(str)) == {"3"}
+    assert len(out) > 0
+
+
+def test_extra_imagery_dir_without_cache_is_an_error(tmp_path, write_synthetic_raster):
+    import pytest
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    write_synthetic_raster(extra / "3.tif", seed=3)
+    with pytest.raises(ValueError, match="Zwischenspeicher"):
+        main(dict(cfg, extra_imagery_dir=str(extra)))

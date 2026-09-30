@@ -155,6 +155,13 @@ def build_arg_parser(description):
              "Flächen sind blickwinkelabhängig, ein Reifenhaufen streut diffus.",
     )
     parser.add_argument(
+        "--extra-imagery-dir", dest="extra_imagery_dir", metavar="DIR",
+        help="Nur mit --use-cache: Ordner mit zusätzlichen Kacheln (z.B. einer "
+             "neuen Stelle). Diese werden segmentiert, an den Zwischenspeicher "
+             "angehängt (Training läuft weiter auf allen Minen) und NUR sie "
+             "werden exportiert.",
+    )
+    parser.add_argument(
         "--osm-buildings-dir", dest="osm_buildings_dir", metavar="DIR",
         help="Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von "
              "src/fetch_osm_buildings.py). Fügt der exportierten Karte eine "
@@ -207,6 +214,7 @@ def resolve_config(base_config, args):
         "random_state": args.random_state,
         "n_jobs": args.n_jobs,
         "use_cache": args.use_cache,
+        "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
         "mine_boundary_path": getattr(args, "mine_boundary_path", None),
         "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),

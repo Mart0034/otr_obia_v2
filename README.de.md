@@ -521,6 +521,19 @@ ungelabelten Segmente der neuen Stelle zusätzlich bewertet) statt allein -
 eine einzelne ungelabelte Kachel liefert keine Trainingsdaten für einen
 Klassifikator.
 
+Um *nur* die neue Kachel zu bewerten, ohne die 138 Minen neu zu segmentieren,
+lässt sich der Zwischenspeicher eines früheren Volllaufs wiederverwenden:
+Ausgabeordner kopieren, die neue(n) Kachel(n) in einen eigenen Bilderordner
+legen und `--use-cache --extra-imagery-dir <Ordner>` angeben. Die Kachel wird
+segmentiert und an die zwischengespeicherten Daten angehängt (trainiert wird
+weiter auf allen Minen), exportiert werden nur ihre Segmente:
+
+```bash
+cp -r output_full_138 output_new_002
+python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
+  --extra-imagery-dir data/new_only/imagery
+```
+
 ## Tests ausführen
 
 ```bash

@@ -482,6 +482,18 @@ model still trains on real, labeled dumps and just scores the new site's
 unlabeled segments too) rather than on its own - a lone unlabeled tile has
 nothing to train a classifier from.
 
+To score *only* the new tile without re-segmenting the 138 mines, reuse a
+previous full run's cache: copy its output folder, put the new tile(s) in
+their own imagery folder, and pass `--use-cache --extra-imagery-dir <dir>`.
+The tile is segmented, appended to the cached data (training still uses all
+mines), and only the tile's segments are exported:
+
+```bash
+cp -r output_full_138 output_new_002
+python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
+  --extra-imagery-dir data/new_only/imagery
+```
+
 ## Running the tests
 
 ```bash

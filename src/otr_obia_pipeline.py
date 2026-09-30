@@ -184,6 +184,7 @@ CONFIG = {
     # Filter, ändert dump_pred nicht - siehe compute_road_density()).
     # None = keine dieser Spalten.
     "osm_roads_dir": None,
+    "extra_imagery_dir": None,
     "road_density_radius_m": 150,
     "road_grid_threshold_m": 500,
     "output_dir": "output",
@@ -1278,6 +1279,10 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     )
     summarize_mine_detection(result)
 
+    export_mines = cfg.get("export_mines")
+    if export_mines:
+        result = result[result["mine_id"].isin(export_mines)].copy()
+        logger.info("Export beschränkt auf: %s (%d Segmente).", export_mines, len(result))
     osm_buildings_dir = cfg.get("osm_buildings_dir")
     if osm_buildings_dir:
         result = compute_is_building(result, osm_buildings_dir)
@@ -1534,6 +1539,26 @@ def main(cfg=CONFIG):
                 )
                 feature_df = None
                 break
+
+    extra_dir = cfg.get("extra_imagery_dir")
+    if extra_dir:
+        if feature_df is None:
+            raise ValueError(
+                "extra_imagery_dir braucht einen vorhandenen Zwischenspeicher: "
+                "mit --use-cache und einem output_dir starten, das feature_cache.pkl "
+                "und polygons_cache.gpkg eines früheren Volllaufs enthält."
+            )
+        logger.info("1b) Segmentiere zusätzliche Kacheln aus %s und hänge sie an ...", extra_dir)
+        extra_feat, extra_poly = build_dataset({**cfg, "imagery_dir": extra_dir})
+        extra_ids = sorted(extra_feat["mine_id"].unique())
+        keep = ~feature_df["mine_id"].isin(extra_ids)
+        feature_df = pd.concat([feature_df[keep], extra_feat], ignore_index=True)
+        polygons_gdf = gpd.GeoDataFrame(
+            pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(extra_ids)], extra_poly],
+                      ignore_index=True),
+            crs=polygons_gdf.crs,
+        )
+        cfg = {**cfg, "export_mines": extra_ids}
 
     if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
