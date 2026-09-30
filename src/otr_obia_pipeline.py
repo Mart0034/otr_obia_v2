@@ -1154,10 +1154,11 @@ def compute_is_building(result, osm_buildings_dir):
         # bei der lückenhaften OSM-Abdeckung dieser Region kaum
         # zusätzlicher Effekt, aber betrifft nie einen echten Dump mehr).
         direct_gdf = gpd.GeoDataFrame(
-            {"orig_index": direct_idx}, geometry=group.loc[direct_idx].geometry.buffer(0.1),
+            {"orig_index": direct_idx},
+            geometry=group.loc[direct_idx].geometry.buffer(0.1).values,
             crs=group.crs,
         )
-        others = gpd.GeoDataFrame({"orig_index": group.index}, geometry=group.geometry, crs=group.crs)
+        others = gpd.GeoDataFrame({"orig_index": group.index}, geometry=group.geometry.values, crs=group.crs)
         joined = gpd.sjoin(others, direct_gdf, predicate="intersects", lsuffix="self", rsuffix="building")
         result.loc[list(set(joined["orig_index_self"])), "is_building"] = True
 
@@ -1389,11 +1390,11 @@ def apply_neighbor_filter(result, high_confidence=0.6):
         # (z.B. nach einer Reprojektion), damit tatsächlich angrenzende
         # Segmente nicht knapp als "nicht berührend" durchrutschen.
         low_gdf = gpd.GeoDataFrame(
-            {"orig_index": low_conf.index}, geometry=low_conf.geometry.buffer(0.1),
+            {"orig_index": low_conf.index}, geometry=low_conf.geometry.buffer(0.1).values,
             crs=group.crs,
         )
         others = gpd.GeoDataFrame(
-            {"orig_index": group.index}, geometry=group.geometry, crs=group.crs,
+            {"orig_index": group.index}, geometry=group.geometry.values, crs=group.crs,
         )
         joined = gpd.sjoin(low_gdf, others, predicate="intersects", lsuffix="low", rsuffix="other")
         supported = set(joined.loc[

@@ -91,3 +91,16 @@ def test_never_modifies_dump_pred_or_proba(tmp_path):
     assert out["dump_pred"].tolist() == [1]
     assert out["dump_proba"].tolist() == [0.9]
     assert out["is_building"].tolist() == [True]
+
+
+def test_flagging_works_when_segment_index_is_not_zero_based(tmp_path):
+    # Regression: the flagged segment sat at a high index label, so its
+    # geometry was misaligned against a fresh 0..n index and nothing matched.
+    result = _result([("mine_1",)] * 5, [box(i * 20, 0, i * 20 + 10, 10) for i in range(5)])
+    result.index = [100, 101, 102, 103, 104]
+    _write_buildings(tmp_path / "mine_1.gpkg", [box(82, 2, 84, 4)])
+
+    out = compute_is_building(result, str(tmp_path))
+
+    assert out.loc[104, "is_building"]
+    assert not out.loc[103, "is_building"]
