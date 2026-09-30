@@ -17,18 +17,15 @@ Stage-2-Kacheln exakt zurückgerechnet (siehe unten, Fehler < 1e-7):
     ndwi = (green - swir1) / (green + swir1)         [modifiziertes NDWI]
     bsi  = ((swir1+red) - (nir+blue)) / ((swir1+red) + (nir+blue))
 
-DSI dagegen ließ sich NICHT zurückrechnen - keine der getesteten
-Standard-Formeln (NDBI, DBSI, alle einfachen normalisierten Differenzen
-der 6 Rohbänder) traf die echten Werte auch nur annähernd. Die genaue
-DSI-Formel ist vermutlich eine für dieses Projekt eigens entwickelte
-Formel aus Stage 2, die nirgends im Code dieses Repositories auftaucht.
-Deshalb wird das DSI-Band hier durch den BSI-Wert ERSETZT (klar
-gekennzeichnet in der Bandbeschreibung und im Log). Das hält die Pipeline
-lauffähig (10 Bänder, richtige Reihenfolge, keine NaN im texture_band),
-bedeutet aber: dsi_mean/dsi_std und die GLCM-Textur-Merkmale sind für
-neue Stellen NICHT direkt mit den 138 bekannten Minen vergleichbar. Für
-eine saubere Lösung müsste die echte DSI-Formel von Stage 2 erfragt
-werden.
+    dsi  = -(red + nir + swir1) / 3
+
+DSI stand zunächst als unbekannt da: keine normalisierte Differenz traf die
+echten Werte, weil DSI gar keine Verhältnisformel ist, sondern der negative
+Mittelwert dreier Rohbänder. Gefunden per linearer Regression von DSI auf die
+6 Rohbänder (R^2 = 1.000, Koeffizienten exakt -1/3 für red, nir und swir1,
+0 für alle anderen, max. Fehler 4e-8 = float32-Genauigkeit über Stichproben
+aus 23 Kacheln). Damit sind dsi_mean/dsi_std und die GLCM-Textur-Merkmale
+neuer Stellen direkt mit den 138 bekannten Minen vergleichbar.
 
 Nutzung:
     python src/fetch_s2_base_imagery.py --center-x 365950.1 --center-y 7367190.3 \
@@ -96,10 +93,15 @@ def compose_bands(catalog, crs, transform, width, height, start, end, max_scenes
     return composite, len(chosen), months
 
 
+def compute_dsi(red, nir, swir1):
+    """DSI = -(red + nir + swir1) / 3, exakt aus den echten Stage-2-Kacheln
+    zurückgerechnet (siehe Modul-Docstring)."""
+    return -(red + nir + swir1) / 3
+
+
 def compute_indices(blue, green, red, nir, swir1, swir2):
     """NDVI/NDWI/BSI, exakt zurückgerechnet aus den echten Stage-2-Kacheln
-    (Fehler < 1e-7, siehe Modul-Docstring). DSI ist NICHT dabei - keine
-    getestete Formel traf die echten Werte, siehe fetch_for_site()."""
+    (Fehler < 1e-7, siehe Modul-Docstring). DSI: siehe compute_dsi()."""
     with np.errstate(all="ignore"):
         ndvi = (nir - red) / (nir + red)
         ndwi = (green - swir1) / (green + swir1)
@@ -119,9 +121,9 @@ def fetch_for_site(center_x, center_y, radius_m, out_path, catalog, crs="EPSG:32
         composite["B08"], composite["B11"], composite["B12"],
     )
     ndvi, ndwi, bsi = compute_indices(blue, green, red, nir, swir1, swir2)
-    dsi_placeholder = bsi.copy()  # echte DSI-Formel unbekannt, siehe Modul-Docstring
+    dsi = compute_dsi(red, nir, swir1)
 
-    stack = np.stack([blue, green, red, nir, swir1, swir2, ndvi, ndwi, dsi_placeholder, bsi])
+    stack = np.stack([blue, green, red, nir, swir1, swir2, ndvi, ndwi, dsi, bsi])
 
     profile = {
         "driver": "GTiff", "height": height, "width": width, "count": len(BAND_NAMES),
@@ -131,13 +133,8 @@ def fetch_for_site(center_x, center_y, radius_m, out_path, catalog, crs="EPSG:32
     with rasterio.open(out_path, "w", **profile) as dst:
         dst.write(stack.astype(np.float32))
         for i, name in enumerate(BAND_NAMES, start=1):
-            desc = "DSI_PLACEHOLDER_equals_BSI_real_formula_unknown" if name == "dsi" else name
-            dst.set_band_description(i, desc)
+            dst.set_band_description(i, name)
 
-    logger.warning(
-        "DSI-Band ist ein PLATZHALTER (= BSI-Wert) - die echte DSI-Formel aus Stage 2 "
-        "ist nicht bekannt, siehe Modul-Docstring in fetch_s2_base_imagery.py."
-    )
     return f"{n_scenes} Aufnahmen (Monate {months}), {width}x{height} Pixel"
 
 

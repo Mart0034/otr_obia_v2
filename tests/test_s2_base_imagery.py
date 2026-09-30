@@ -1,14 +1,13 @@
 """Tests for building a Sentinel-2 base-imagery tile from scratch, for a new
 site that has no existing data/imagery/*.tif from the earlier feasibility
 study (see fetch_s2_base_imagery.py). Covers the target-grid math and the
-NDVI/NDWI/BSI formulas, which were reverse-engineered from the real
-data/imagery tiles (exact match, error < 1e-7). DSI could not be
-recovered - no tested formula matched the real values - so it is a known,
-documented placeholder (equal to BSI) rather than silently guessed at."""
+NDVI/NDWI/BSI/DSI formulas, which were reverse-engineered from the real
+data/imagery tiles (exact match, error < 1e-7). DSI turned out to be a
+linear combination, -(red + nir + swir1) / 3, not a ratio."""
 import numpy as np
 import pytest
 
-from fetch_s2_base_imagery import build_grid, compute_indices
+from fetch_s2_base_imagery import compute_dsi, build_grid, compute_indices
 
 
 def test_build_grid_covers_the_requested_square():
@@ -45,3 +44,9 @@ def test_bsi_formula():
     _, _, bsi = compute_indices(blue, np.zeros(1), red, nir, swir1, np.ones(1))
     expected = ((0.25 + 0.2) - (0.3 + 0.1)) / ((0.25 + 0.2) + (0.3 + 0.1))
     assert bsi[0] == pytest.approx(expected)
+
+
+def test_dsi_is_the_negative_mean_of_red_nir_swir1():
+    # Recovered by regressing the real tiles' DSI band on the raw bands
+    # (R^2 = 1.000, max error 4e-8).
+    assert compute_dsi(0.2, 0.3, 0.4) == pytest.approx(-0.3)

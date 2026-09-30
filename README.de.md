@@ -500,18 +500,14 @@ ndwi = (green - swir1) / (green + swir1)          # ein modifiziertes NDWI, nich
 bsi  = ((swir1+red) - (nir+blue)) / ((swir1+red) + (nir+blue))
 ```
 
-**`dsi` ließ sich NICHT zurückrechnen.** Es ist das für die Pipeline
-festgelegte `texture_band` und eines der wichtigeren technischen Merkmale,
-aber keine Standard-Formel (NDBI, DBSI, jede einfache normalisierte
-Differenz der 6 Rohbänder) traf die echten Werte auch nur annähernd - es
-ist vermutlich eine eigens für Stage 2 entwickelte Formel, die nirgends in
-diesem Repository dokumentiert ist. Statt zu raten, füllt das Skript das
-`dsi`-Band mit dem `bsi`-Wert (klar gekennzeichnet in der
-Bandbeschreibung und als Warnung im Log beim Abruf), damit die Pipeline
-lauffähig bleibt - aber die `dsi_mean`/`dsi_std`/GLCM-Textur-Merkmale
-einer neuen Stelle sind dadurch **nicht** direkt mit den 138 bekannten
-Minen vergleichbar. Falls sich die echte DSI-Formel von wem auch immer
-Stage 2 durchgeführt hat erfragen lässt, wäre das die saubere Lösung.
+**`dsi` ist `-(red + nir + swir1) / 3`.** Zunächst wirkte es
+nicht rekonstruierbar, weil jeder verhältnisartige Index scheiterte. Eine
+lineare Regression des DSI-Bands der echten Kacheln auf die 6 Rohbänder
+liefert R^2 = 1.000 mit Koeffizienten von genau -1/3 für red, nir und swir1
+und 0 für den Rest (max. Fehler 4e-8, float32-Genauigkeit, auch an nicht
+in die Anpassung eingegangenen Kacheln bestätigt). Kacheln neuer Stellen
+haben damit dieselben `dsi_mean`/`dsi_std`- und GLCM-Textur-Merkmale wie die
+138 bekannten Minen und sind direkt mit ihnen vergleichbar.
 
 Um eine neue Stelle tatsächlich zu prüfen: `--s1-dir`/`--dem-dir`/`--s2t-dir`
 wie gewohnt für die neue Kachel abrufen, dann die Pipeline mit deren

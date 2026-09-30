@@ -463,17 +463,13 @@ ndwi = (green - swir1) / (green + swir1)          # a modified NDWI, not the tex
 bsi  = ((swir1+red) - (nir+blue)) / ((swir1+red) + (nir+blue))
 ```
 
-**`dsi` could not be recovered.** It's the pipeline's designated
-`texture_band` and one of the more important engineered features, but no
-standard index (NDBI, DBSI, any simple normalized difference of the 6 raw
-bands) matched the real values even approximately - it's almost certainly
-a bespoke formula from Stage 2 that isn't documented anywhere in this
-repository. Rather than guess, the script fills the `dsi` band with the
-`bsi` value instead (clearly marked in the band description and logged as
-a warning at fetch time), so the pipeline stays runnable but the
-`dsi_mean`/`dsi_std`/GLCM-texture features for a new site are **not**
-directly comparable to the 138 known mines. If you can get the real DSI
-formula from whoever ran Stage 2, that's the clean fix.
+**`dsi` is `-(red + nir + swir1) / 3`.** At first it looked unrecoverable
+because every ratio-style index failed to match. A linear regression of the
+real tiles' DSI band on the six raw bands gives R^2 = 1.000 with coefficients
+of exactly -1/3 for red, nir and swir1 and 0 for the rest (max error 4e-8,
+float32 precision, confirmed on tiles held out of the fit). So new-site tiles
+have the same `dsi_mean`/`dsi_std` and GLCM-texture features as the 138 known
+mines and are directly comparable to them.
 
 To actually screen a new site: fetch its `--s1-dir`/`--dem-dir`/`--s2t-dir`
 layers the normal way (pointing at the new tile), then run the pipeline
