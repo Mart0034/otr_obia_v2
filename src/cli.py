@@ -169,6 +169,13 @@ def build_arg_parser(description):
              "dump_pred nicht) zum selbst Ein-/Ausblenden in QGIS.",
     )
     parser.add_argument(
+        "--osm-poi-dir", dest="osm_poi_dir", metavar="DIR",
+        help="Optional: Ordner mit OSM-Punkten/Gewerbeflächen pro Mine (erzeugt "
+             "von src/fetch_osm_poi.py). Fügt der exportierten Karte eine rein "
+             "informative is_poi-Spalte hinzu (kein Filter, ändert dump_pred "
+             "nicht) zum selbst Ein-/Ausblenden in QGIS.",
+    )
+    parser.add_argument(
         "--osm-roads-dir", dest="osm_roads_dir", metavar="DIR",
         help="Optional: Ordner mit OSM-Straßen pro Mine (erzeugt von "
              "src/fetch_osm_roads.py). Fügt der exportierten Karte die rein "
@@ -227,6 +234,7 @@ def resolve_config(base_config, args):
         "s2t_dir": getattr(args, "s2t_dir", None),
         "s1t_dir": getattr(args, "s1t_dir", None),
         "osm_buildings_dir": getattr(args, "osm_buildings_dir", None),
+        "osm_poi_dir": getattr(args, "osm_poi_dir", None),
         "osm_roads_dir": getattr(args, "osm_roads_dir", None),
         "road_density_radius_m": getattr(args, "road_density_radius_m", None),
         "road_grid_threshold_m": getattr(args, "road_grid_threshold_m", None),

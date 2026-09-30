@@ -178,6 +178,8 @@ CONFIG = {
     # informative is_building-Spalte hinzu (kein Filter, ändert dump_pred
     # nicht - siehe compute_is_building()). None = keine is_building-Spalte.
     "osm_buildings_dir": None,
+    "osm_poi_dir": None,
+    "poi_buffer_m": 20,
     # Optional: Ordner mit OSM-Straßen pro Mine (erzeugt von
     # src/fetch_osm_roads.py). Fügt der exportierten Karte die rein
     # informativen Spalten road_density_150m/is_road_grid hinzu (kein
@@ -1170,6 +1172,45 @@ def compute_is_building(result, osm_buildings_dir):
     return result
 
 
+def compute_is_poi(result, osm_poi_dir, buffer_m=20):
+    """Fügt eine rein informative is_poi-Spalte hinzu (True/False): Segmente
+    innerhalb von buffer_m Metern eines OSM-Punktes (amenity/shop/tourism -
+    z.B. ein als Punkt kartiertes Restaurant, dessen Gebäude nicht als
+    building=* eingezeichnet ist) oder innerhalb eines landuse=retail/
+    commercial-Polygons (siehe fetch_osm_poi.py).
+
+    Ergänzt is_building für Orte, an denen OSM nur einen Punkt/eine Fläche
+    statt eines Gebäudeumrisses hat. Ändert dump_pred/dump_proba NICHT.
+    Validiert an den echten Daten: betrifft 0 von 36 bekannten Dumps, fängt
+    aber nur ~0.3% der grenzwertigen Falsch-Positiven ab (OSM hat in den
+    Minenkacheln kaum solche Einträge) - relevanter an Ortsrändern wie
+    La Negra. Für Minen ohne <mine_id>.gpkg bleibt is_poi=False."""
+    result = result.copy()
+    result["is_poi"] = False
+    if not osm_poi_dir:
+        return result
+
+    for mine_id, group in result.groupby("mine_id"):
+        poi_path = os.path.join(osm_poi_dir, f"{mine_id}.gpkg")
+        if not os.path.exists(poi_path):
+            continue
+        poi = gpd.read_file(poi_path)
+        if poi.empty:
+            continue
+        if poi.crs != group.crs:
+            poi = poi.to_crs(group.crs)
+        poi_union = poi.geometry.buffer(buffer_m).union_all()
+        hit = group.geometry.intersects(poi_union).values
+        result.loc[group.index[hit], "is_poi"] = True
+
+    logger.info(
+        "is_poi: %d von %d Segmenten nahe einem OSM-Punkt/Gewerbegebiet markiert "
+        "(nur informativ, beeinflusst dump_pred nicht).",
+        int(result["is_poi"].sum()), len(result),
+    )
+    return result
+
+
 def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=500):
     """Fügt zwei rein informative Spalten hinzu:
 
@@ -1286,6 +1327,9 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     osm_buildings_dir = cfg.get("osm_buildings_dir")
     if osm_buildings_dir:
         result = compute_is_building(result, osm_buildings_dir)
+    osm_poi_dir = cfg.get("osm_poi_dir")
+    if osm_poi_dir:
+        result = compute_is_poi(result, osm_poi_dir, buffer_m=cfg.get("poi_buffer_m", 20))
     osm_roads_dir = cfg.get("osm_roads_dir")
     if osm_roads_dir:
         result = compute_road_density(

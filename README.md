@@ -440,6 +440,27 @@ building-overlap signal above.
    - filter it out yourself in QGIS (`"is_road_grid" = 0`) where you
      judge it applies.
 
+### Flagging segments near an OSM point of interest or retail area (optional)
+
+`is_building` only sees `building=*` outlines. Where OSM has a business as a
+single *point* (e.g. a restaurant near La Negra, `amenity=restaurant`) or
+only a `landuse=retail`/`commercial` area, the building is invisible to it.
+
+1. Fetch the points/areas per mine (free, no account):
+
+   ```bash
+   python src/fetch_osm_poi.py --imagery-dir data/imagery --out-dir data/osm_poi
+   ```
+
+2. Run the pipeline with `--osm-poi-dir data/osm_poi`. The exported map gets
+   an `is_poi` column: `True` if the segment is within 20 m (`poi_buffer_m`)
+   of an `amenity`/`shop`/`tourism` point or area, or touches a retail/
+   commercial area. Purely informational - `dump_pred` is untouched.
+
+Validated on the 138 mines: 0 of 36 real dumps affected, but only ~0.3% of
+borderline false positives caught (OSM has just ~140 such features across all
+mine tiles). It matters mostly at the edge of towns, not inside mines.
+
 ### Screening a brand-new site (no existing tile)
 
 All 138 existing `data/imagery/*.tif` tiles came from "Stage 2" of the

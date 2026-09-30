@@ -476,6 +476,28 @@ als das Gebäude-Überlappungs-Signal oben.
    Wie bei `is_building` ändert das **niemals `dump_pred`/`dump_proba`**
    - selbst in QGIS ausblenden (`"is_road_grid" = 0`), wo es passt.
 
+### Segmente nahe einem OSM-Punkt oder Gewerbegebiet markieren (optional)
+
+`is_building` sieht nur `building=*`-Umrisse. Wo OSM ein Geschäft nur als
+*Punkt* (z.B. ein Restaurant bei La Negra, `amenity=restaurant`) oder nur als
+`landuse=retail`/`commercial`-Fläche führt, bleibt das Gebäude unsichtbar.
+
+1. Punkte/Flächen pro Mine laden (kostenlos, ohne Account):
+
+   ```bash
+   python src/fetch_osm_poi.py --imagery-dir data/imagery --out-dir data/osm_poi
+   ```
+
+2. Pipeline mit `--osm-poi-dir data/osm_poi` starten. Die exportierte Karte
+   erhält eine Spalte `is_poi`: `True`, wenn das Segment innerhalb von 20 m
+   (`poi_buffer_m`) eines `amenity`/`shop`/`tourism`-Punkts oder -Areals liegt
+   oder eine Gewerbefläche berührt. Rein informativ - `dump_pred` bleibt
+   unverändert.
+
+An den 138 Minen validiert: betrifft 0 von 36 echten Dumps, fängt aber nur
+~0.3% der grenzwertigen Falsch-Positiven ab (OSM hat in allen Minenkacheln nur
+~140 solche Einträge). Relevant vor allem an Ortsrändern, nicht in Minen.
+
 ### Eine völlig neue Stelle prüfen (ohne vorhandene Kachel)
 
 Alle 138 vorhandenen `data/imagery/*.tif`-Kacheln stammen aus "Stage 2"
