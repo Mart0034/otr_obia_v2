@@ -158,7 +158,7 @@ def build_arg_parser(description):
         "--extra-imagery-dir", dest="extra_imagery_dir", metavar="DIR",
         help="Nur mit --use-cache: Ordner mit zusätzlichen Kacheln (z.B. einer "
              "neuen Stelle). Diese werden segmentiert, an den Zwischenspeicher "
-             "angehängt (Training läuft weiter auf allen Minen) und NUR sie "
+             "angehängt (trainiert wird nur auf den bekannten Minen) und NUR sie "
              "werden exportiert.",
     )
     parser.add_argument(

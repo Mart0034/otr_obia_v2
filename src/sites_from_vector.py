@@ -31,6 +31,7 @@ import sys
 
 import geopandas as gpd
 import pandas as pd
+from shapely.geometry import box
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,62 @@ def _site_id(row, position, prefix):
     return f"{prefix}_{position:05d}"
 
 
+def _merge_overlapping(plan, prefix, max_tile_m):
+    """Fasst sich überlappende Kacheln (Status ok) zu einer gemeinsamen Kachel
+    zusammen - die Bounding-Box des Clusters. Cluster, deren Kachel größer als
+    max_tile_m würde, bleiben unverändert (einzelne Kacheln)."""
+    ok = plan[plan["status"] == "ok"]
+    if len(ok) < 2:
+        return plan
+    squares = gpd.GeoDataFrame(
+        {"i": ok.index},
+        geometry=[box(r.center_x - r.radius_m, r.center_y - r.radius_m,
+                      r.center_x + r.radius_m, r.center_y + r.radius_m) for r in ok.itertuples()],
+    )
+    parent = {i: i for i in ok.index}
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    # "overlaps" statt "intersects": bloßes Berühren am Rand zählt nicht
+    hits = squares.sjoin(squares, predicate="intersects")
+    for a, b in zip(hits["i_left"], hits["i_right"]):
+        if a != b and squares.geometry.loc[squares["i"] == a].iloc[0].intersection(
+                squares.geometry.loc[squares["i"] == b].iloc[0]).area > 0:
+            parent[find(a)] = find(b)
+
+    groups = {}
+    for i in ok.index:
+        groups.setdefault(find(i), []).append(i)
+    keep, merged_rows, k = [], [], 0
+    for members in groups.values():
+        if len(members) == 1:
+            continue
+        sub = squares[squares["i"].isin(members)]
+        minx, miny, maxx, maxy = sub.total_bounds
+        radius = math.ceil(max(maxx - minx, maxy - miny) / 2 / PIXEL_M) * PIXEL_M
+        if 2 * radius > max_tile_m:
+            continue
+        k += 1
+        rows = plan.loc[members]
+        merged_rows.append({
+            "site_id": f"{prefix}_cluster_{k:03d}", "center_x": (minx + maxx) / 2,
+            "center_y": (miny + maxy) / 2, "radius_m": radius,
+            "area_m2": rows["area_m2"].sum(), "status": "ok",
+            "members": ",".join(rows["site_id"]),
+        })
+        keep.extend(members)
+    if not merged_rows:
+        return plan
+    return pd.concat([plan.drop(index=keep), pd.DataFrame(merged_rows)], ignore_index=True)
+
+
 def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
-               max_tile_m=10000.0, min_radius_m=500.0, prefix="q", work_crs=WORK_CRS):
+               max_tile_m=10000.0, min_radius_m=500.0, prefix="q", work_crs=WORK_CRS,
+               merge_overlaps=False):
     """Gibt ein DataFrame mit einer Zeile pro Objekt zurück: site_id, center_x,
     center_y (in work_crs), radius_m (halbe Kantenlänge, auf 10 m gerundet),
     area_m2 und status ("ok" oder der Grund, warum es übersprungen wird)."""
@@ -74,11 +129,14 @@ def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
             "site_id": _site_id(row, pos, prefix),
             "center_x": (minx + maxx) / 2, "center_y": (miny + maxy) / 2,
             "radius_m": radius, "area_m2": geom.area, "status": status,
+            "members": "",
         })
     plan = pd.DataFrame(rows)
     if not plan.empty and plan["site_id"].duplicated().any():
         dup = plan["site_id"].duplicated(keep=False)
         plan.loc[dup, "site_id"] = [f"{s}_{i}" for i, s in enumerate(plan.loc[dup, "site_id"])]
+    if merge_overlaps:
+        plan = _merge_overlapping(plan, prefix, max_tile_m)
     return plan
 
 
@@ -93,6 +151,9 @@ def main(argv=None):
     p.add_argument("--min-area-m2", type=float, default=0.0, help="Kleinere Objekte überspringen.")
     p.add_argument("--max-tile-m", type=float, default=10000.0, help="Größere Kacheln überspringen.")
     p.add_argument("--min-radius-m", type=float, default=500.0, help="Mindest-Halbkantenlänge.")
+    p.add_argument("--merge-overlaps", action="store_true",
+                   help="Sich überlappende Kacheln zu einer zusammenfassen (spart doppeltes "
+                        "Laden/Bewerten); Cluster über --max-tile-m bleiben einzeln.")
     p.add_argument("--prefix", default="q", help="Präfix der Kachelnamen (site_id).")
     p.add_argument("--fetch", action="store_true", help="Kacheln auch wirklich laden.")
     p.add_argument("--with-osm", action="store_true",
@@ -109,6 +170,7 @@ def main(argv=None):
         gdf, buffer_m=args.buffer_m, south=args.south, north=args.north,
         min_area_m2=args.min_area_m2, max_tile_m=args.max_tile_m,
         min_radius_m=args.min_radius_m, prefix=args.prefix,
+        merge_overlaps=args.merge_overlaps,
     )
     os.makedirs(args.out_dir, exist_ok=True)
     plan.to_csv(os.path.join(args.out_dir, "sites.csv"), index=False)

@@ -502,8 +502,8 @@ nothing to train a classifier from.
 To score *only* the new tile without re-segmenting the 138 mines, reuse a
 previous full run's cache: copy its output folder, put the new tile(s) in
 their own imagery folder, and pass `--use-cache --extra-imagery-dir <dir>`.
-The tile is segmented, appended to the cached data (training still uses all
-mines), and only the tile's segments are exported:
+The tile is segmented, scored by a model trained only on the labeled mines (the new, unlabeled tiles
+are never trained on), and only the tile's segments are exported:
 
 ```bash
 cp -r output_full_138 output_new_002
@@ -524,7 +524,9 @@ python src/sites_from_vector.py ... --fetch [--with-osm] [--limit 5]  # also dow
 
 Each feature is grown by `--buffer-m` metres and the square around it becomes
 the tile (`--min-radius-m` minimum, `--max-tile-m` cap, `--min-area-m2` and the
-`--south`/`--north` latitude band to skip features). Run the plan first to see
+`--south`/`--north` latitude band to skip features). `--merge-overlaps` joins
+tiles that overlap into one (clusters that would exceed `--max-tile-m` stay
+separate) so shared ground isn't downloaded and scored twice. Run the plan first to see
 how many tiles come out and which are skipped. The tiles land in
 `<out-dir>/imagery|sentinel1|dem` (+ `osm_*` with `--with-osm`) and are scored
 with `--use-cache --extra-imagery-dir <out-dir>/imagery`, passing the matching

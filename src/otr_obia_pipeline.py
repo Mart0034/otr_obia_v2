@@ -1612,6 +1612,8 @@ def main(cfg=CONFIG):
             crs=polygons_gdf.crs,
         )
         cfg = {**cfg, "export_mines": extra_ids}
+    else:
+        extra_ids = []
 
     if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
@@ -1631,7 +1633,15 @@ def main(cfg=CONFIG):
     )
 
     logger.info("2) Training + räumliche Kreuzvalidierung (GroupKFold nach Mine) ...")
-    clf, feature_cols, scores_df = train_and_evaluate(feature_df, polygons_gdf, cfg)
+    # Neue, ungelabelte Kacheln (extra_imagery_dir) werden nur bewertet, nie zum
+    # Training verwendet - sonst würden ihre label=0-Segmente als bekannte
+    # Nicht-Dumps mittrainiert.
+    trained_on = ~feature_df["mine_id"].isin(extra_ids)
+    poly_trained_on = ~polygons_gdf["mine_id"].isin(extra_ids)
+    clf, feature_cols, scores_df = train_and_evaluate(
+        feature_df[trained_on].reset_index(drop=True),
+        polygons_gdf[poly_trained_on].reset_index(drop=True), cfg,
+    )
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)

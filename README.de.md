@@ -543,8 +543,8 @@ Um *nur* die neue Kachel zu bewerten, ohne die 138 Minen neu zu segmentieren,
 lässt sich der Zwischenspeicher eines früheren Volllaufs wiederverwenden:
 Ausgabeordner kopieren, die neue(n) Kachel(n) in einen eigenen Bilderordner
 legen und `--use-cache --extra-imagery-dir <Ordner>` angeben. Die Kachel wird
-segmentiert und an die zwischengespeicherten Daten angehängt (trainiert wird
-weiter auf allen Minen), exportiert werden nur ihre Segmente:
+segmentiert und von einem nur auf den gelabelten Minen trainierten Modell bewertet (die neuen,
+ungelabelten Kacheln werden nie mittrainiert), exportiert werden nur ihre Segmente:
 
 ```bash
 cp -r output_full_138 output_new_002
@@ -565,7 +565,10 @@ python src/sites_from_vector.py ... --fetch [--with-osm] [--limit 5]  # Kacheln 
 
 Jedes Objekt wird um `--buffer-m` Meter erweitert, das Quadrat darum ist die
 Kachel (`--min-radius-m` Minimum, `--max-tile-m` Obergrenze, `--min-area-m2`
-und das Breitengrad-Band `--south`/`--north` überspringen Objekte). Erst den
+und das Breitengrad-Band `--south`/`--north` überspringen Objekte).
+`--merge-overlaps` fasst sich überlappende Kacheln zu einer zusammen (Cluster
+über `--max-tile-m` bleiben einzeln), damit gemeinsame Fläche nicht doppelt
+geladen und bewertet wird. Erst den
 Plan laufen lassen, um zu sehen, wie viele Kacheln entstehen und welche
 übersprungen werden. Die Kacheln landen in `<out-dir>/imagery|sentinel1|dem`
 (+ `osm_*` mit `--with-osm`) und werden mit

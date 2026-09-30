@@ -72,3 +72,24 @@ def test_extra_imagery_dir_without_cache_is_an_error(tmp_path, write_synthetic_r
     write_synthetic_raster(extra / "3.tif", seed=3)
     with pytest.raises(ValueError, match="Zwischenspeicher"):
         main(dict(cfg, extra_imagery_dir=str(extra)))
+
+
+def test_extra_tiles_are_scored_but_never_trained_on(tmp_path, write_synthetic_raster):
+    from unittest.mock import patch
+    import otr_obia_pipeline as pipe
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    main(cfg)
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    write_synthetic_raster(extra / "3.tif", seed=3)
+
+    seen = {}
+    real = pipe.train_and_evaluate
+
+    def spy(feature_df, polygons_gdf, cfg_):
+        seen["train_mines"] = set(feature_df["mine_id"].astype(str))
+        return real(feature_df, polygons_gdf, cfg_)
+
+    with patch("otr_obia_pipeline.train_and_evaluate", side_effect=spy):
+        main(dict(cfg, extra_imagery_dir=str(extra)))
+    assert "3" not in seen["train_mines"] and seen["train_mines"]

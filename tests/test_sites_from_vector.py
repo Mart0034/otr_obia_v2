@@ -68,3 +68,25 @@ def test_missing_crs_is_an_error():
     g = gpd.GeoDataFrame(geometry=[box(0, 0, 1, 1)])
     with pytest.raises(ValueError, match="CRS"):
         plan_sites(g)
+
+
+def test_merge_overlaps_combines_neighbours_into_one_tile():
+    g = _gdf([_utm_box(400000, 7400000, 100), _utm_box(401000, 7400000, 100),
+              _utm_box(420000, 7400000, 100)])
+    plan = plan_sites(g, buffer_m=500, merge_overlaps=True)
+    assert len(plan) == 2  # two neighbours merged, the far one stays alone
+    merged = plan[plan["members"] != ""].iloc[0]
+    assert merged["site_id"].startswith("q_cluster_")
+    assert merged["radius_m"] >= 1000  # spans both neighbours plus buffers
+
+
+def test_merge_overlaps_leaves_clusters_that_would_be_too_big():
+    g = _gdf([_utm_box(400000 + i * 3000, 7400000, 100) for i in range(6)])
+    plan = plan_sites(g, buffer_m=2000, merge_overlaps=True, max_tile_m=10000)
+    assert len(plan) == 6 and (plan["members"] == "").all()
+
+
+def test_touching_edges_do_not_count_as_overlap():
+    g = _gdf([_utm_box(400000, 7400000, 100), _utm_box(401200, 7400000, 100)])
+    plan = plan_sites(g, buffer_m=500, merge_overlaps=True)  # tiles just touch at x=400600/401200
+    assert len(plan) == 2
