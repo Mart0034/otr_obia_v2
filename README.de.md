@@ -552,6 +552,27 @@ python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
   --extra-imagery-dir data/new_only/imagery
 ```
 
+#### Viele neue Stellen aus einer Vektordatei (z.B. alle Steinbrüche)
+
+`sites_from_vector.py` macht aus einer Vektordatei (GeoJSON/GeoPackage/Shapefile
+- z.B. ein overpass-turbo-Export von `landuse=quarry`) pro Objekt eine Kachel:
+
+```bash
+python src/sites_from_vector.py --input quarries.geojson --buffer-m 500 \
+  --south -26 --north -21 --out-dir data/sites_quarries          # nur Plan -> sites.csv
+python src/sites_from_vector.py ... --fetch [--with-osm] [--limit 5]  # Kacheln auch laden
+```
+
+Jedes Objekt wird um `--buffer-m` Meter erweitert, das Quadrat darum ist die
+Kachel (`--min-radius-m` Minimum, `--max-tile-m` Obergrenze, `--min-area-m2`
+und das Breitengrad-Band `--south`/`--north` überspringen Objekte). Erst den
+Plan laufen lassen, um zu sehen, wie viele Kacheln entstehen und welche
+übersprungen werden. Die Kacheln landen in `<out-dir>/imagery|sentinel1|dem`
+(+ `osm_*` mit `--with-osm`) und werden mit
+`--use-cache --extra-imagery-dir <out-dir>/imagery` bewertet, mit den
+passenden `--s1-dir`/`--dem-dir`. Die Kachelnamen stammen aus der OSM-ID
+(z.B. `q_way_123`).
+
 ## Tests ausführen
 
 ```bash

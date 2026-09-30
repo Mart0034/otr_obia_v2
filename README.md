@@ -511,6 +511,25 @@ python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
   --extra-imagery-dir data/new_only/imagery
 ```
 
+#### Many new sites from a vector file (e.g. all quarries)
+
+`sites_from_vector.py` turns a vector file (GeoJSON/GeoPackage/Shapefile - e.g.
+an overpass-turbo export of `landuse=quarry`) into one tile per feature:
+
+```bash
+python src/sites_from_vector.py --input quarries.geojson --buffer-m 500 \
+  --south -26 --north -21 --out-dir data/sites_quarries          # plan only -> sites.csv
+python src/sites_from_vector.py ... --fetch [--with-osm] [--limit 5]  # also download the tiles
+```
+
+Each feature is grown by `--buffer-m` metres and the square around it becomes
+the tile (`--min-radius-m` minimum, `--max-tile-m` cap, `--min-area-m2` and the
+`--south`/`--north` latitude band to skip features). Run the plan first to see
+how many tiles come out and which are skipped. The tiles land in
+`<out-dir>/imagery|sentinel1|dem` (+ `osm_*` with `--with-osm`) and are scored
+with `--use-cache --extra-imagery-dir <out-dir>/imagery`, passing the matching
+`--s1-dir`/`--dem-dir`. The tile IDs come from the OSM id (e.g. `q_way_123`).
+
 ## Running the tests
 
 ```bash
