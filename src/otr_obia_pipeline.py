@@ -1250,8 +1250,9 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     else:
         proba = clf.predict_proba(X_all)[:, 1]
 
+    info_cols = [c for c in ("spatial_split_contrast", "dem_slope_mean") if c in feature_df.columns]
     result = polygons_gdf.merge(
-        feature_df[["mine_id", "segment_id", "label"]],
+        feature_df[["mine_id", "segment_id", "label"] + info_cols],
         on=["mine_id", "segment_id"],
     )
     threshold = cfg.get("classification_threshold", 0.5)
