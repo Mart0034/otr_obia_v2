@@ -97,6 +97,8 @@ def main(argv=None):
     p.add_argument("--fetch", action="store_true", help="Kacheln auch wirklich laden.")
     p.add_argument("--with-osm", action="store_true",
                    help="Mit --fetch: auch OSM-Gebäude/Straßen/POI laden (braucht Zugriff auf overpass-api.de).")
+    p.add_argument("--n-workers", type=int, default=4,
+                   help="Anzahl gleichzeitig geladener Kacheln (das Laden ist netzwerkbegrenzt).")
     p.add_argument("--limit", type=int, help="Nur die ersten N passenden Objekte laden (zum Ausprobieren).")
     args = p.parse_args(argv)
 
@@ -129,18 +131,37 @@ def main(argv=None):
 
     imagery, s1, dem = (os.path.join(args.out_dir, d) for d in ("imagery", "sentinel1", "dem"))
     os.makedirs(imagery, exist_ok=True)
-    catalog = open_catalog()
-    failed = []
-    for _, s in ok.iterrows():
+    open_catalog()  # richtet Logging + GDAL-Pfade einmal ein
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    local = threading.local()
+
+    def build(s):
         out = os.path.join(imagery, f"{s['site_id']}.tif")
         if os.path.exists(out):
-            continue
+            return s["site_id"], "vorhanden"
+        if not hasattr(local, "catalog"):
+            local.catalog = open_catalog()
+        tmp = out + ".part"
         try:
-            logger.info("%s: %s", s["site_id"], fetch_for_site(
-                s["center_x"], s["center_y"], s["radius_m"], out, catalog, crs=WORK_CRS))
-        except Exception as e:
-            logger.error("%s: fehlgeschlagen (%s)", s["site_id"], e)
-            failed.append(s["site_id"])
+            msg = fetch_for_site(s["center_x"], s["center_y"], s["radius_m"], tmp,
+                                 local.catalog, crs=WORK_CRS)
+        except Exception:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+        os.replace(tmp, out)  # nur fertige Kacheln tragen den endgültigen Namen
+        return s["site_id"], msg
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=args.n_workers) as pool:
+        futures = {pool.submit(build, s): s["site_id"] for _, s in ok.iterrows()}
+        for fut in as_completed(futures):
+            try:
+                logger.info("%s: %s", *fut.result())
+            except Exception as e:
+                logger.error("%s: fehlgeschlagen (%s)", futures[fut], e)
+                failed.append(futures[fut])
     import fetch_dem
     import fetch_sentinel1
     fetch_sentinel1.main(["--imagery-dir", imagery, "--out-dir", s1])
