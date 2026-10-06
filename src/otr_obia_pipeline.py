@@ -187,6 +187,10 @@ CONFIG = {
     # None = keine dieser Spalten.
     "osm_roads_dir": None,
     "extra_imagery_dir": None,
+    "extra_labels_path": None,
+    "labeled_imagery_dir": None,
+    "ignore_points_path": None,
+    "ignore_radius_m": 150.0,
     "road_density_radius_m": 150,
     "road_grid_threshold_m": 500,
     "output_dir": "output",
@@ -1079,6 +1083,10 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
     )
     oof_result = gpd.GeoDataFrame(oof_result, geometry="geometry", crs=polygons_gdf.crs)
     oof_result["dump_pred"] = (oof_result["dump_proba"] >= threshold).astype(int)
+    if cfg.get("output_dir"):
+        os.makedirs(cfg["output_dir"], exist_ok=True)
+        oof_result[["mine_id", "segment_id", "label", "dump_proba"]].to_pickle(
+            os.path.join(cfg["output_dir"], "oof_predictions.pkl"))
     if require_neighbor_below is not None:
         oof_result = apply_neighbor_filter(oof_result, high_confidence=require_neighbor_below)
     if require_compact_cluster_below is not None:
@@ -1562,6 +1570,29 @@ def summarize_mine_detection(result):
 # ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
+def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
+    """Entfernt aus dem TRAININGS-Datensatz alle label=0-Segmente, die innerhalb
+    radius_m um einen Punkt aus points_path liegen (positive Segmente bleiben).
+
+    Zweck: an bekannten Halden-Orten, die nicht (oder nur teilweise) als
+    Label-Polygon eingezeichnet sind, würden die umliegenden Reifen-Segmente
+    sonst als "sicher kein Dump" mittrainiert. Die Segmente werden nur aus
+    dem Training genommen, nicht aus Vorhersage und Export."""
+    pts = gpd.read_file(points_path).to_crs(polygons_gdf.crs)
+    zone = pts.geometry.buffer(radius_m).union_all()
+    in_zone = polygons_gdf[polygons_gdf.geometry.intersects(zone)][["mine_id", "segment_id"]]
+    keys = set(zip(in_zone["mine_id"], in_zone["segment_id"]))
+    flagged = np.array([(m, sid) in keys for m, sid in zip(feature_df["mine_id"], feature_df["segment_id"])])
+    drop = flagged & (feature_df["label"].values == 0)
+    kept = feature_df[~drop].reset_index(drop=True)
+    dropped_keys = set(zip(feature_df.loc[drop, "mine_id"], feature_df.loc[drop, "segment_id"]))
+    keep_poly = np.array([(m, sid) not in dropped_keys
+                          for m, sid in zip(polygons_gdf["mine_id"], polygons_gdf["segment_id"])])
+    logger.info("Ignorier-Zone (%.0f m um %d Punkte): %d label=0-Segmente aus dem Training genommen.",
+                radius_m, len(pts), int(drop.sum()))
+    return kept, polygons_gdf[keep_poly].reset_index(drop=True)
+
+
 def main(cfg=CONFIG):
     logging.basicConfig(
         level=logging.INFO,
@@ -1594,26 +1625,35 @@ def main(cfg=CONFIG):
                 break
 
     extra_dir = cfg.get("extra_imagery_dir")
-    if extra_dir:
+    labeled_dir = cfg.get("labeled_imagery_dir")
+    extra_ids, labeled_ids = [], []
+    if extra_dir or labeled_dir:
         if feature_df is None:
             raise ValueError(
-                "extra_imagery_dir braucht einen vorhandenen Zwischenspeicher: "
+                "extra_imagery_dir/labeled_imagery_dir brauchen einen vorhandenen Zwischenspeicher: "
                 "mit --use-cache und einem output_dir starten, das feature_cache.pkl "
                 "und polygons_cache.gpkg eines früheren Volllaufs enthält."
             )
-        logger.info("1b) Segmentiere zusätzliche Kacheln aus %s und hänge sie an ...", extra_dir)
-        extra_feat, extra_poly = build_dataset({**cfg, "imagery_dir": extra_dir})
-        extra_ids = sorted(extra_feat["mine_id"].unique())
-        keep = ~feature_df["mine_id"].isin(extra_ids)
-        feature_df = pd.concat([feature_df[keep], extra_feat], ignore_index=True)
+        new_feats, new_polys = [], []
+        if labeled_dir:
+            if not cfg.get("extra_labels_path"):
+                raise ValueError("labeled_imagery_dir braucht extra_labels_path (Label-Polygone mit mine_id = Kachelname).")
+            logger.info("1b) Segmentiere gelabelte Kacheln aus %s (werden mittrainiert) ...", labeled_dir)
+            lf, lp = build_dataset({**cfg, "imagery_dir": labeled_dir, "labels_path": cfg["extra_labels_path"]})
+            labeled_ids = sorted(lf["mine_id"].unique())
+            new_feats.append(lf); new_polys.append(lp)
+        if extra_dir:
+            logger.info("1c) Segmentiere zusätzliche Kacheln aus %s (werden nur bewertet) ...", extra_dir)
+            ef, ep = build_dataset({**cfg, "imagery_dir": extra_dir})
+            extra_ids = sorted(ef["mine_id"].unique())
+            new_feats.append(ef); new_polys.append(ep)
+        replaced = extra_ids + labeled_ids
+        feature_df = pd.concat([feature_df[~feature_df["mine_id"].isin(replaced)]] + new_feats, ignore_index=True)
         polygons_gdf = gpd.GeoDataFrame(
-            pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(extra_ids)], extra_poly],
-                      ignore_index=True),
+            pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(replaced)]] + new_polys, ignore_index=True),
             crs=polygons_gdf.crs,
         )
-        cfg = {**cfg, "export_mines": extra_ids}
-    else:
-        extra_ids = []
+        cfg = {**cfg, "export_mines": extra_ids or labeled_ids}
 
     if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
@@ -1638,10 +1678,13 @@ def main(cfg=CONFIG):
     # Nicht-Dumps mittrainiert.
     trained_on = ~feature_df["mine_id"].isin(extra_ids)
     poly_trained_on = ~polygons_gdf["mine_id"].isin(extra_ids)
-    clf, feature_cols, scores_df = train_and_evaluate(
-        feature_df[trained_on].reset_index(drop=True),
-        polygons_gdf[poly_trained_on].reset_index(drop=True), cfg,
-    )
+    train_feat = feature_df[trained_on].reset_index(drop=True)
+    train_poly = polygons_gdf[poly_trained_on].reset_index(drop=True)
+    if cfg.get("ignore_points_path"):
+        train_feat, train_poly = drop_ignored_negatives(
+            train_feat, train_poly, cfg["ignore_points_path"], cfg.get("ignore_radius_m", 150.0),
+        )
+    clf, feature_cols, scores_df = train_and_evaluate(train_feat, train_poly, cfg)
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)

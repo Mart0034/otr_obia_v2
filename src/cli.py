@@ -162,6 +162,24 @@ def build_arg_parser(description):
              "werden exportiert.",
     )
     parser.add_argument(
+        "--extra-labels-path", dest="extra_labels_path", metavar="PATH",
+        help="Label-Polygone (mine_id = Kachelname) für --labeled-imagery-dir.",
+    )
+    parser.add_argument(
+        "--labeled-imagery-dir", dest="labeled_imagery_dir", metavar="DIR",
+        help="Nur mit --use-cache und --extra-labels-path: Ordner mit Kacheln, deren Dumps "
+             "als Label-Polygone vorliegen. Sie werden mittrainiert (anders als "
+             "--extra-imagery-dir, das nur bewertet wird).",
+    )
+    parser.add_argument(
+        "--ignore-points-path", dest="ignore_points_path", metavar="PATH",
+        help="Punkte bekannter Halden: label=0-Segmente im Umkreis werden aus dem Training genommen.",
+    )
+    parser.add_argument(
+        "--ignore-radius-m", dest="ignore_radius_m", type=float, metavar="M",
+        help="Radius der Ignorier-Zone (Standard 150 m).",
+    )
+    parser.add_argument(
         "--osm-buildings-dir", dest="osm_buildings_dir", metavar="DIR",
         help="Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von "
              "src/fetch_osm_buildings.py). Fügt der exportierten Karte eine "
@@ -222,6 +240,10 @@ def resolve_config(base_config, args):
         "n_jobs": args.n_jobs,
         "use_cache": args.use_cache,
         "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
+        "extra_labels_path": getattr(args, "extra_labels_path", None),
+        "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
+        "ignore_points_path": getattr(args, "ignore_points_path", None),
+        "ignore_radius_m": getattr(args, "ignore_radius_m", None),
         "mine_boundary_path": getattr(args, "mine_boundary_path", None),
         "mine_boundary_id_field": getattr(args, "mine_boundary_id_field", None),
         "mine_boundary_buffer_m": getattr(args, "mine_boundary_buffer_m", None),

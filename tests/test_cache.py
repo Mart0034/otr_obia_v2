@@ -93,3 +93,80 @@ def test_extra_tiles_are_scored_but_never_trained_on(tmp_path, write_synthetic_r
     with patch("otr_obia_pipeline.train_and_evaluate", side_effect=spy):
         main(dict(cfg, extra_imagery_dir=str(extra)))
     assert "3" not in seen["train_mines"] and seen["train_mines"]
+
+
+def _extra_setup(tmp_path, write_synthetic_raster):
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    main(cfg)
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    write_synthetic_raster(extra / "3.tif", seed=3)
+    return cfg, extra
+
+
+def test_labeled_tiles_are_trained_on_with_their_labels(tmp_path, write_synthetic_raster):
+    from unittest.mock import patch
+    import otr_obia_pipeline as pipe
+    cfg, extra = _extra_setup(tmp_path, write_synthetic_raster)
+    labels = gpd.GeoDataFrame({"mine_id": [3]}, geometry=[box(500050, 5599850, 500150, 5599950)],
+                              crs="EPSG:32632")
+    labels_path = tmp_path / "extra_labels.gpkg"
+    labels.to_file(labels_path, driver="GPKG")
+
+    seen = {}
+    real = pipe.train_and_evaluate
+
+    def spy(feature_df, polygons_gdf, cfg_):
+        seen["mines"] = set(feature_df["mine_id"].astype(str))
+        seen["pos3"] = int(feature_df.loc[feature_df["mine_id"].astype(str) == "3", "label"].sum())
+        return real(feature_df, polygons_gdf, cfg_)
+
+    with patch("otr_obia_pipeline.train_and_evaluate", side_effect=spy):
+        main(dict(cfg, labeled_imagery_dir=str(extra), extra_labels_path=str(labels_path)))
+    assert "3" in seen["mines"] and seen["pos3"] > 0
+
+
+def test_ignore_zone_drops_only_negatives_near_the_points(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from otr_obia_pipeline import drop_ignored_negatives
+    polys = gpd.GeoDataFrame(
+        {"mine_id": ["m"] * 4, "segment_id": [1, 2, 3, 4]},
+        geometry=[box(0, 0, 10, 10), box(20, 0, 30, 10), box(40, 0, 50, 10), box(900, 0, 910, 10)],
+        crs="EPSG:32719")
+    feats = pd.DataFrame({"mine_id": ["m"] * 4, "segment_id": [1, 2, 3, 4],
+                          "label": [1, 0, 0, 0], "x": np.arange(4.0)})
+    pts = tmp_path / "pts.gpkg"
+    gpd.GeoDataFrame(geometry=[box(0, 0, 1, 1).centroid], crs="EPSG:32719").to_file(pts, driver="GPKG")
+
+    kept, kept_poly = drop_ignored_negatives(feats, polys, str(pts), radius_m=35)
+    # seg 1 is positive (kept), seg 2 is a negative ~20 m away (dropped),
+    # seg 3 is ~40 m away and seg 4 is far (both outside the 35 m zone, kept)
+    assert kept["segment_id"].tolist() == [1, 3, 4]
+    assert kept_poly["segment_id"].tolist() == [1, 3, 4]
+
+
+def test_labeled_and_scored_tiles_are_handled_separately(tmp_path, write_synthetic_raster):
+    from unittest.mock import patch
+    import otr_obia_pipeline as pipe
+    cfg, labeled = _extra_setup(tmp_path, write_synthetic_raster)
+    scored = tmp_path / "scored"
+    scored.mkdir()
+    write_synthetic_raster(scored / "4.tif", seed=4)
+    labels = gpd.GeoDataFrame({"mine_id": [3]}, geometry=[box(500050, 5599850, 500150, 5599950)],
+                              crs="EPSG:32632")
+    labels_path = tmp_path / "labels3.gpkg"
+    labels.to_file(labels_path, driver="GPKG")
+    seen = {}
+    real = pipe.train_and_evaluate
+
+    def spy(feature_df, polygons_gdf, cfg_):
+        seen["mines"] = set(feature_df["mine_id"].astype(str))
+        return real(feature_df, polygons_gdf, cfg_)
+
+    with patch("otr_obia_pipeline.train_and_evaluate", side_effect=spy):
+        main(dict(cfg, labeled_imagery_dir=str(labeled), extra_labels_path=str(labels_path),
+                  extra_imagery_dir=str(scored)))
+    assert "3" in seen["mines"] and "4" not in seen["mines"]
+    out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    assert set(out["mine_id"].astype(str)) == {"4"}

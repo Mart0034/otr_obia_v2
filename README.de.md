@@ -552,6 +552,16 @@ python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
   --extra-imagery-dir data/new_only/imagery
 ```
 
+Bekannte Halden an neuen Stellen lassen sich ins Training zurückführen:
+Label-Polygone erzeugen (`mine_id` = Kachelname), `--labeled-imagery-dir
+<Kacheln> --extra-labels-path <labels.gpkg>` angeben und optional
+`--ignore-points-path <Punkte> --ignore-radius-m 150`, damit ungelabelte
+Reifen neben einer bekannten Halde nicht als "sauber" (label=0) mittrainiert
+werden (label=0-Segmente in der Zone fliegen nur aus dem Training; Positive,
+Vorhersage und Export bleiben unverändert). Gelabelte Kacheln werden
+mittrainiert, `--extra-imagery-dir`-Kacheln nur bewertet; beides lässt sich in
+einem Lauf kombinieren.
+
 #### Viele neue Stellen aus einer Vektordatei (z.B. alle Steinbrüche)
 
 `sites_from_vector.py` macht aus einer Vektordatei (GeoJSON/GeoPackage/Shapefile

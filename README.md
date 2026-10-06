@@ -511,6 +511,15 @@ python src/otr_obia_pipeline.py ... --output-dir output_new_002 --use-cache \
   --extra-imagery-dir data/new_only/imagery
 ```
 
+Known dumps at new sites can be fed back into training: draw/generate label
+polygons (`mine_id` = tile name), pass `--labeled-imagery-dir <tiles>
+--extra-labels-path <labels.gpkg>`, and optionally `--ignore-points-path
+<points> --ignore-radius-m 150` so unlabeled tires next to a known dump aren't
+trained on as "clean" (label=0 segments inside the zone are dropped from
+training only; positives, prediction and export are untouched). Labeled tiles
+are trained on, `--extra-imagery-dir` tiles are only scored, and both can be
+combined in one run.
+
 #### Many new sites from a vector file (e.g. all quarries)
 
 `sites_from_vector.py` turns a vector file (GeoJSON/GeoPackage/Shapefile - e.g.
