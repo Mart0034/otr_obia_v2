@@ -73,3 +73,49 @@ def test_all_mines_failing_raises_clear_error(tmp_path, write_synthetic_raster, 
 
     with pytest.raises(RuntimeError, match="Alle Minen sind fehlgeschlagen"):
         build_dataset(cfg)
+
+
+_CRASH_STATE = {}
+
+
+def _flaky_process_one_mine(path, *args, **kwargs):
+    """Module-level so it can be pickled into the worker processes."""
+    import os
+
+    import otr_obia_pipeline as pipe
+
+    if path.endswith("1.tif") and not os.path.exists(_CRASH_STATE["marker"]):
+        open(_CRASH_STATE["marker"], "w").write("x")
+        os._exit(1)  # simulates the OOM killer
+    return _CRASH_STATE["real"](path, *args, **kwargs)
+
+
+def test_a_killed_worker_is_retried_instead_of_failing_every_pending_mine(tmp_path, write_synthetic_raster):
+    """An out-of-memory kill of one worker breaks the whole pool; the affected
+    mines must be retried one at a time and still end up in the dataset."""
+    from unittest.mock import patch
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    import otr_obia_pipeline as pipe
+
+    imagery = tmp_path / "imagery"
+    imagery.mkdir()
+    write_synthetic_raster(imagery / "1.tif", seed=1)
+    write_synthetic_raster(imagery / "2.tif", seed=2)
+    labels = gpd.GeoDataFrame({"mine_id": [1]}, geometry=[box(500050, 5599850, 500150, 5599950)],
+                              crs="EPSG:32632")
+    labels_path = tmp_path / "labels.gpkg"
+    labels.to_file(labels_path, driver="GPKG")
+    cfg = dict(pipe.CONFIG)
+    cfg.update(imagery_dir=str(imagery), labels_path=str(labels_path), mine_id_field="mine_id",
+               n_segments_per_mine=20, target_segment_px=None, min_overlap_ratio=0.3,
+               output_dir=str(tmp_path / "out"), n_jobs=2)
+
+    _CRASH_STATE["marker"] = str(tmp_path / "already_crashed")
+    _CRASH_STATE["real"] = pipe._process_one_mine
+    with patch.object(pipe, "_process_one_mine", _flaky_process_one_mine):
+        feature_df, _ = pipe.build_dataset(cfg)
+
+    assert set(feature_df["mine_id"].astype(str)) == {"1", "2"}

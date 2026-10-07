@@ -51,6 +51,7 @@ import os
 import glob
 import re
 import logging
+from concurrent.futures.process import BrokenProcessPool
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -945,13 +946,37 @@ def build_dataset(cfg):
                 ): i
                 for i, path in enumerate(imagery_paths)
             }
+            crashed = []
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 try:
                     results[idx] = future.result()
+                except BrokenProcessPool:
+                    # Ein Worker wurde hart beendet (meist Speichermangel). Das reißt
+                    # ALLE noch laufenden/wartenden Minen des Pools mit - sie werden
+                    # unten einzeln und isoliert wiederholt.
+                    crashed.append(idx)
                 except Exception:
                     logger.exception(
                         "Mine '%s' fehlgeschlagen, wird übersprungen.", imagery_paths[idx]
+                    )
+                    failed.append(imagery_paths[idx])
+        if crashed:
+            logger.warning(
+                "Ein Worker-Prozess wurde abrupt beendet (vermutlich Speichermangel); "
+                "wiederhole %d betroffene Minen einzeln: %s",
+                len(crashed), [os.path.basename(imagery_paths[i]) for i in crashed],
+            )
+            for idx in sorted(crashed, key=lambda i: -os.path.getsize(imagery_paths[i])):
+                try:
+                    with ProcessPoolExecutor(max_workers=1, initializer=_init_worker_logging) as solo:
+                        results[idx] = solo.submit(
+                            _process_one_mine, imagery_paths[idx], cfg, labels_gdf,
+                            target_crs, mine_boundaries_gdf,
+                        ).result()
+                except Exception:
+                    logger.exception(
+                        "Mine '%s' fehlgeschlagen (auch einzeln), wird übersprungen.", imagery_paths[idx]
                     )
                     failed.append(imagery_paths[idx])
 
