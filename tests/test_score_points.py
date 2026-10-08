@@ -31,3 +31,10 @@ def test_point_outside_any_segment_is_nan():
     pts = gpd.GeoDataFrame(geometry=[Point(X0 + 500, Y0)], crs="EPSG:32719")
     out = score_points(_segments(), pts)
     assert out["seg_proba"].isna().all() and out["tile"].isna().all()
+
+
+def test_point_on_a_shared_corner_still_gets_a_score():
+    # corner shared by cell 0 (0.9) and cell 1 (0.5): the better one counts
+    pts = gpd.GeoDataFrame(geometry=[Point(X0 + 10, Y0 + 10)], crs="EPSG:32719")
+    out = score_points(_segments(), pts)
+    assert out.loc[0, "seg_proba"] == pytest.approx(0.9)

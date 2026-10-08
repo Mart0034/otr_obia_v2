@@ -28,8 +28,13 @@ def score_points(seg, points, radii=(100, 250)):
     seg = seg[seg["dump_proba"].notna()].copy()
     seg["_area"] = seg.geometry.area
     rows = []
+    tree = seg.sindex
     for i, p in enumerate(pts.geometry):
-        hit = seg[seg.geometry.contains(p)]
+        # intersects statt contains: ein Punkt genau auf einer Segmentgrenze (z.B. der
+        # Mittelpunkt einer Ein-Punkt-Kachel liegt auf einer Pixelecke) gehört zu
+        # keinem Segment "innen". Bei mehreren berührten Segmenten zählt das beste.
+        hit = seg.iloc[tree.query(p, predicate="intersects")]
+        hit = hit.sort_values("dump_proba", ascending=False)
         row = {"point": i}
         if hit.empty:
             row.update(tile=None, seg_proba=np.nan, top_share_pct=np.nan)
@@ -59,11 +64,27 @@ def score_points(seg, points, radii=(100, 250)):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Modellbewertung an Punkten ablesen.")
-    p.add_argument("--segments", required=True, help="segments_classified.gpkg eines Laufs.")
+    p.add_argument("--segments", default=None,
+                   help="segments_classified.gpkg eines Laufs (bei Läufen mit Zusatzkacheln: die nur "
+                        "bewerteten Kacheln).")
+    p.add_argument("--run", action="append", default=[], metavar="ORDNER",
+                   help="Laufordner: ergänzt die ehrlichen Out-of-Fold-Bewertungen aller Segmente, "
+                        "die mittrainiert wurden (oof_predictions.pkl + Polygone).")
     p.add_argument("--points", required=True, help="Punktdatei (GeoJSON/GPKG).")
     p.add_argument("--out", required=True, help="Ausgabe-CSV.")
     args = p.parse_args(argv)
-    out = score_points(gpd.read_file(args.segments), gpd.read_file(args.points))
+    parts = []
+    if args.segments:
+        parts.append(gpd.read_file(args.segments)[["mine_id", "dump_proba", "geometry"]])
+    for folder in args.run:
+        from eval_segment_size import load_run
+        oof, poly = load_run(folder)
+        merged = poly.merge(oof[["mine_id", "segment_id", "dump_proba"]], on=["mine_id", "segment_id"])
+        parts.append(merged[["mine_id", "dump_proba", "geometry"]])
+    if not parts:
+        p.error("--segments und/oder --run angeben")
+    seg = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True), crs=parts[0].crs)
+    out = score_points(seg, gpd.read_file(args.points))
     out.to_csv(args.out, index=False)
     print(out.drop(columns="maps_url").round(3).to_string())
     return 0
