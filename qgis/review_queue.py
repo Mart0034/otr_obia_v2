@@ -1,0 +1,253 @@
+"""
+Review-Leiste für Kandidaten-Standorte in QGIS
+==============================================
+
+Geht die Standorte der Reihe nach durch (Rang 1, 2, 3, ...): zoomt automatisch
+auf den nächsten ungeprüften Standort, ein Klick (oder eine Zifferntaste)
+trägt das Urteil ein und springt zum nächsten.
+
+Voraussetzung: die Schichten `candidate_sites` und `drawn_polygons` sind geladen
+(Skript load_candidate_sites.py zuerst ausführen). Dann dieses Skript in der
+QGIS-Python-Konsole öffnen und ausführen: rechts erscheint das Fenster
+"Review". Jede Entscheidung wird sofort in die Datei gespeichert.
+
+    1  Dump      echte Reifenhalde, Umriss passt grob
+    2  Clean     keine Halde (Fehlalarm, z.B. Stadt, Straße)
+    3  Partial   Halde enthalten, aber der Umriss ist viel größer
+    4  Unsure    unklar
+    5  Skip      später nochmal ansehen (kommt am Ende wieder)
+    6  Back      letzte Entscheidung zurücknehmen
+    7  Karte     in Google Maps öffnen
+   "Teil einzeichnen": setzt Partial und schaltet die Zeichen-Schicht ein - Umriss
+   der echten Halde zeichnen (Rechtsklick beendet), kind = dump wählen, dann
+   "Weiter".
+
+Die Zifferntasten 1-6 gelten im ganzen QGIS-Fenster; beim Eintippen von Zahlen in
+Tabellenzellen deshalb zuerst das Review-Fenster anklicken.
+
+Hinweis: gegen die PyQGIS-3-Schnittstelle geschrieben, nicht in QGIS getestet;
+die Reihenfolge-Logik (ReviewQueue) ist getestet. Meldet ein Schritt einen
+Fehler, bitte die Meldung weitergeben.
+"""
+
+from collections import deque
+
+
+class ReviewQueue:
+    """Reihenfolge-Logik ohne QGIS: ungeprüfte Standorte nach Rang, Überspringen
+    hängt hinten an, Zurück stellt die letzte Entscheidung wieder vorne ein."""
+
+    def __init__(self, items):
+        """items: Liste von (fid, rank, review); leeres review = noch ungeprüft."""
+        ordered = sorted(items, key=lambda it: it[1])
+        self.total = len(ordered)
+        self.reviews = {fid: (review or "") for fid, _, review in ordered}
+        self.todo = deque(fid for fid, _, review in ordered if not review)
+        self.history = []                      # (fid, vorheriges Urteil)
+
+    @property
+    def current(self):
+        return self.todo[0] if self.todo else None
+
+    @property
+    def done(self):
+        return self.total - len(self.todo)
+
+    def mark(self, value):
+        """Urteil für den aktuellen Standort setzen, ohne weiterzugehen."""
+        fid = self.current
+        if fid is None:
+            return None
+        self.history.append((fid, self.reviews[fid]))
+        self.reviews[fid] = value
+        return fid
+
+    def advance(self):
+        """Zum nächsten Standort; ein bereits beurteilter fällt aus der Liste."""
+        if not self.todo:
+            return None
+        fid = self.todo.popleft()
+        if not self.reviews[fid]:              # nichts eingetragen: später wieder (Skip)
+            self.todo.append(fid)
+        return self.current
+
+    def decide(self, value):
+        fid = self.mark(value)
+        self.advance()
+        return fid
+
+    def skip(self):
+        return self.advance()
+
+    def back(self):
+        """Letzte Entscheidung zurücknehmen. Gibt (fid, altes Urteil) zurück."""
+        if not self.history:
+            return None
+        fid, old = self.history.pop()
+        self.reviews[fid] = old
+        if fid in self.todo:
+            self.todo.remove(fid)
+        self.todo.appendleft(fid)
+        return fid, old
+
+    def counts(self):
+        out = {}
+        for v in self.reviews.values():
+            if v:
+                out[v] = out.get(v, 0) + 1
+        return out
+
+
+try:  # außerhalb von QGIS (Tests) nicht verfügbar
+    from qgis.core import QgsCoordinateTransform, QgsProject, QgsRectangle
+    from qgis.PyQt.QtCore import Qt, QUrl
+    from qgis.PyQt.QtGui import QDesktopServices, QKeySequence
+    from qgis.PyQt.QtWidgets import (QDockWidget, QGridLayout, QLabel, QPushButton, QShortcut, QWidget)
+    IN_QGIS = True
+except ImportError:
+    IN_QGIS = False
+    QDockWidget = object   # damit die Klasse unten auch ohne QGIS (Tests) importierbar bleibt
+
+MIN_VIEW_M = 400.0   # kleinster Kartenausschnitt (Meter) beim Heranzoomen
+
+
+def _layer(name):
+    found = QgsProject.instance().mapLayersByName(name)
+    if not found:
+        raise RuntimeError(f"Schicht '{name}' nicht gefunden - zuerst load_candidate_sites.py ausführen.")
+    return found[0]
+
+
+class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
+    DECISIONS = (("1  Dump", "dump", "1"), ("2  Clean", "clean", "2"),
+                 ("3  Partial", "partial", "3"), ("4  Unsure", "unsure", "4"))
+
+    def __init__(self, iface):
+        super().__init__("Review", iface.mainWindow())
+        self.iface = iface
+        self.layer = _layer("candidate_sites")
+        self.drawn = None
+        try:
+            self.drawn = _layer("drawn_polygons")
+        except RuntimeError:
+            pass
+        self.idx = self.layer.fields().indexOf("review")
+        feats = {f.id(): f for f in self.layer.getFeatures()}
+        self.feats = feats
+        self.queue = ReviewQueue([(fid, f["rank"], f["review"] if f["review"] else "") for fid, f in feats.items()])
+        self.awaiting_draw = False
+
+        body = QWidget()
+        grid = QGridLayout(body)
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        grid.addWidget(self.info, 0, 0, 1, 2)
+        for n, (text, value, _) in enumerate(self.DECISIONS):
+            btn = QPushButton(text)
+            btn.clicked.connect(lambda _=False, v=value: self.decide(v))
+            grid.addWidget(btn, 1 + n // 2, n % 2)
+        extra = [("5  Skip", self.skip), ("6  Back", self.back), ("7  Karte", self.open_map),
+                 ("Teil einzeichnen", self.draw_part), ("Weiter", self.next_after_draw)]
+        for n, (text, func) in enumerate(extra):
+            btn = QPushButton(text)
+            btn.clicked.connect(lambda _=False, f=func: f())
+            grid.addWidget(btn, 3 + n // 2, n % 2)
+        self.setWidget(body)
+        for key, func in (("1", lambda: self.decide("dump")), ("2", lambda: self.decide("clean")),
+                          ("3", lambda: self.decide("partial")), ("4", lambda: self.decide("unsure")),
+                          ("5", self.skip), ("6", self.back), ("7", self.open_map)):
+            QShortcut(QKeySequence(key), self, activated=func, context=Qt.ApplicationShortcut)
+        iface.addDockWidget(Qt.RightDockWidgetArea, self)
+        self.layer.startEditing()
+        self.show_current()
+
+    # ---- Darstellung -------------------------------------------------
+    def show_current(self):
+        fid = self.queue.current
+        counts = ", ".join(f"{k} {v}" for k, v in sorted(self.queue.counts().items())) or "noch nichts"
+        if fid is None:
+            self.layer.removeSelection()
+            self.info.setText(f"Fertig. Alle {self.queue.total} Standorte haben ein Urteil.\n{counts}")
+            return
+        f = self.feats[fid]
+        self.info.setText(
+            f"<b>{f['site_id']}</b> &nbsp; Rang {f['rank']}<br>{f['mine_id']} &nbsp; {f['size_class']}<br>"
+            f"{round(f['area_m2']):,} m² &nbsp; Score {f['mean_proba']:.2f}"
+            + ("<br><b>nahe bekannter Halde</b>" if f.fields().indexOf("near_known_dump") >= 0 and f["near_known_dump"] else "")
+            + f"<br><br>{self.queue.done} von {self.queue.total} erledigt<br><small>{counts}</small>")
+        self.layer.selectByIds([fid])
+        box = f.geometry().boundingBox()
+        box.scale(2.0)
+        if box.width() < MIN_VIEW_M or box.height() < MIN_VIEW_M:
+            c = box.center()
+            box = QgsRectangle(c.x() - MIN_VIEW_M / 2, c.y() - MIN_VIEW_M / 2,
+                               c.x() + MIN_VIEW_M / 2, c.y() + MIN_VIEW_M / 2)
+        canvas = self.iface.mapCanvas()
+        xform = QgsCoordinateTransform(self.layer.crs(), canvas.mapSettings().destinationCrs(), QgsProject.instance())
+        canvas.setExtent(xform.transformBoundingBox(box))
+        canvas.refresh()
+
+    # ---- Aktionen ----------------------------------------------------
+    def _write(self, fid, value):
+        self.layer.changeAttributeValue(fid, self.idx, value if value else None)
+        self.layer.commitChanges(False)        # sofort speichern, Bearbeitungsmodus bleibt an
+        if not self.layer.isEditable():
+            self.layer.startEditing()
+
+    def decide(self, value):
+        if self.awaiting_draw:
+            self.next_after_draw()
+        fid = self.queue.decide(value)
+        if fid is not None:
+            self._write(fid, value)
+        self.show_current()
+
+    def skip(self):
+        self.queue.skip()
+        self.show_current()
+
+    def back(self):
+        res = self.queue.back()
+        if res:
+            self._write(res[0], res[1])
+        self.show_current()
+
+    def open_map(self):
+        fid = self.queue.current
+        if fid is not None:
+            QDesktopServices.openUrl(QUrl(self.feats[fid]["maps_url"]))
+
+    def draw_part(self):
+        if self.drawn is None or self.queue.current is None:
+            return
+        fid = self.queue.mark("partial")
+        self._write(fid, "partial")
+        self.awaiting_draw = True
+        self.iface.setActiveLayer(self.drawn)
+        self.drawn.startEditing()
+        self.iface.actionAddFeature().trigger()   # Zeichenwerkzeug "Polygon hinzufügen"
+        self.info.setText(self.info.text() + "<br><b>Jetzt den Umriss der Halde zeichnen, kind = dump, dann 'Weiter'.</b>")
+
+    def next_after_draw(self):
+        if self.drawn is not None:
+            self.drawn.commitChanges(False)
+            if not self.drawn.isEditable():
+                self.drawn.startEditing()
+        self.awaiting_draw = False
+        self.iface.setActiveLayer(self.layer)
+        self.queue.advance()
+        self.show_current()
+
+    def closeEvent(self, event):
+        self.layer.commitChanges()
+        if self.drawn is not None and self.drawn.isEditable():
+            self.drawn.commitChanges()
+        super().closeEvent(event)
+
+
+if IN_QGIS:  # beim Ausführen im QGIS-Editor/Konsole
+    try:
+        _panel.close()  # noqa: F821  (altes Fenster einer früheren Ausführung)
+    except Exception:
+        pass
+    _panel = ReviewPanel(iface)  # noqa: F821  (iface gibt es in der QGIS-Konsole)
