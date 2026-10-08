@@ -153,6 +153,12 @@ def build_arg_parser(description):
              "Schatten wandern mit dem Sonnenstand, Reifen nicht.",
     )
     parser.add_argument(
+        "--s2my-dir", dest="s2my_dir", metavar="DIR",
+        help="Optional: Ordner mit Mehrjahres-Merkmalen aus Sentinel-2 (erzeugt von "
+             "src/fetch_s2_multiyear.py): wie sich die Helligkeit eines Pixels über die Jahre "
+             "ändert - eine Halde wächst, die meisten Fehlalarme bleiben gleich.",
+    )
+    parser.add_argument(
         "--s1t-dir", dest="s1t_dir", metavar="DIR",
         help="Optional: Ordner mit Radar-Zeitreihen-Merkmalen aus mehreren "
              "Sentinel-1-Aufnahmen (erzeugt von "
@@ -281,6 +287,7 @@ def resolve_config(base_config, args):
         "dem_dir": getattr(args, "dem_dir", None),
         "s2t_dir": getattr(args, "s2t_dir", None),
         "s1t_dir": getattr(args, "s1t_dir", None),
+        "s2my_dir": getattr(args, "s2my_dir", None),
         "osm_buildings_dir": getattr(args, "osm_buildings_dir", None),
         "osm_poi_dir": getattr(args, "osm_poi_dir", None),
         "osm_roads_dir": getattr(args, "osm_roads_dir", None),

@@ -179,6 +179,9 @@ CONFIG = {
     # Sentinel-1-Aufnahmen (erzeugt von src/fetch_sentinel1_timeseries.py).
     # None = keine Radar-Zeitreihen-Merkmale.
     "s1t_dir": None,
+    # Optional: Ordner mit Mehrjahres-Merkmalen aus Sentinel-2 (erzeugt von
+    # src/fetch_s2_multiyear.py): wächst an der Stelle etwas Dunkles? None = aus.
+    "s2my_dir": None,
     # Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von
     # src/fetch_osm_buildings.py). Fügt der exportierten Karte eine rein
     # informative is_building-Spalte hinzu (kein Filter, ändert dump_pred
@@ -240,6 +243,12 @@ S2T_BAND_NAMES = ["s2t_bright_cv", "s2t_bright_min_ratio"]
 # ungeordneter Reifenhaufen streut diffus und bleibt vergleichsweise
 # konstant. Siehe fetch_sentinel1_timeseries.py.
 S1T_BAND_NAMES = ["s1t_vv_cv", "s1t_vh_cv"]
+
+# Mehrjahres-Merkmale (siehe fetch_s2_multiyear.py): wächst an einer Stelle etwas
+# Dunkles? Helligkeit früh/spät, Veränderung, Steigung, Anteil dunkler Jahre und
+# Zeitpunkt des ersten dunklen Jahres.
+S2MY_BAND_NAMES = ["s2my_bright_early", "s2my_bright_late", "s2my_bright_delta", "s2my_bright_slope",
+                   "s2my_dark_years_frac", "s2my_dark_onset"]
 
 
 # ------------------------------------------------------------------
@@ -807,6 +816,16 @@ def load_s2_temporal_for_mine(s2_path, s2t_dir, shape):
     return np.moveaxis(data, 0, -1)
 
 
+def load_s2_multiyear_for_mine(s2_path, s2my_dir, shape):
+    """Mehrjahres-Merkmale aus Sentinel-2 als (H, W, 6), siehe fetch_s2_multiyear.py."""
+    read = _read_aligned(s2_path, s2my_dir, shape, len(S2MY_BAND_NAMES),
+                         "Sentinel-2-Mehrjahres", "fetch_s2_multiyear.py")
+    if read is None:
+        return np.full((*shape, len(S2MY_BAND_NAMES)), np.nan, dtype=np.float32)
+    data, *_ = read
+    return np.moveaxis(data, 0, -1)
+
+
 def load_s1_temporal_for_mine(s2_path, s1t_dir, shape):
     """Radar-Zeitreihen-Merkmale aus mehreren Sentinel-1-Aufnahmen als
     (H, W, 2), siehe fetch_sentinel1_timeseries.py."""
@@ -977,6 +996,9 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=Non
     if cfg.get("s2t_dir"):
         extra_arrays.append(load_s2_temporal_for_mine(path, cfg["s2t_dir"], shape))
         feat_band_names += S2T_BAND_NAMES
+    if cfg.get("s2my_dir"):
+        extra_arrays.append(load_s2_multiyear_for_mine(path, cfg["s2my_dir"], shape))
+        feat_band_names += S2MY_BAND_NAMES
     if cfg.get("s1t_dir"):
         extra_arrays.append(load_s1_temporal_for_mine(path, cfg["s1t_dir"], shape))
         feat_band_names += S1T_BAND_NAMES
@@ -1844,6 +1866,7 @@ def main(cfg=CONFIG):
         for key, names, label in (("s1_dir", S1_BAND_NAMES, "Sentinel-1"),
                                   ("dem_dir", DEM_BAND_NAMES, "Gelände"),
                                   ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen"),
+                                  ("s2my_dir", S2MY_BAND_NAMES, "Mehrjahres"),
                                   ("s1t_dir", S1T_BAND_NAMES, "Radar-Zeitreihen")):
             if cfg.get(key) and f"{names[0]}_mean" not in feature_df.columns:
                 logger.warning(
