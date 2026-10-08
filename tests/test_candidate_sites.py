@@ -157,3 +157,19 @@ def test_exclude_areas_hides_already_reviewed_sites():
     done = gpd.GeoDataFrame(geometry=[box(X0 + 495, Y0 - 5, X0 + 515, Y0 + 15)], crs="EPSG:32719")   # covers cell 50
     sites = build_candidate_sites(_seg(cells), threshold=0.5, exclude_areas=done)
     assert len(sites) == 2 and sorted(sites["max_proba"]) == [0.7, 0.9] and list(sites["rank"]) == [1, 2]
+
+
+def test_preselect_reader_loads_only_the_best_segments_per_mine_and_gives_the_same_sites(tmp_path):
+    from candidate_sites import load_top_segments
+
+    cells = [(c, 0, 0.1 + 0.005 * c) for c in range(100)]                 # best segments at the right end
+    seg = pd.concat([_seg(cells, "m1"), _seg(cells[:50], "m2")], ignore_index=True)
+    seg["segment_id"] = range(len(seg))
+    path = str(tmp_path / "seg.gpkg")
+    seg.to_file(path, driver="GPKG")
+    part = load_top_segments(path, area_pct=5.0, fraction_margin=1.0)
+    assert len(part) == 5 + 3                                             # 5% of 100 + ceil(5% of 50)
+    assert part[part.mine_id == "m1"]["dump_proba"].min() == pytest.approx(seg[seg.mine_id == "m1"]["dump_proba"].nlargest(5).min())
+    full = build_candidate_sites(seg, area_pct=5.0)
+    fast = build_candidate_sites(part, area_pct=100.0)
+    assert sorted(full["max_proba"]) == pytest.approx(sorted(fast["max_proba"]))

@@ -176,6 +176,30 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     return sites
 
 
+def load_top_segments(path, area_pct=2.0, threshold=None, fraction_margin=1.5):
+    """Liest nur die Segmente, die als Fund in Frage kommen - ohne die ganze (oft mehrere GB
+    große) Datei in den Speicher zu laden: erst nur die Tabelle OHNE Geometrie (schnell), dann je
+    Mine die bestbewerteten Segmente nach Anzahl (area_pct * fraction_margin % der Segmente)
+    bzw. alle ab threshold, und nur deren Geometrien über die Objekt-IDs.
+    Die Auswahl nach Anzahl statt nach Fläche weicht nur dort ab, wo die Segmente einer Mine
+    sehr unterschiedlich groß sind; die Flächenauswahl von select_seeds läuft danach noch einmal."""
+    import pyogrio
+
+    attrs = pyogrio.read_dataframe(path, read_geometry=False, fid_as_index=True)
+    attrs = attrs[attrs["dump_proba"].notna()]
+    if threshold is not None:
+        keep = attrs[attrs["dump_proba"] >= threshold]
+    else:
+        parts = []
+        for _, grp in attrs.groupby("mine_id"):
+            n = max(1, int(np.ceil(len(grp) * area_pct * fraction_margin / 100.0)))
+            parts.append(grp.nlargest(n, "dump_proba"))
+        keep = pd.concat(parts) if parts else attrs.iloc[0:0]
+    seg = pyogrio.read_dataframe(path, fids=keep.index.values)
+    logger.info("%d von %d Segmenten geladen (Vorauswahl je Mine).", len(seg), len(attrs))
+    return seg
+
+
 def write_sites_gpkg(sites, path):
     """Schreibt die Standorte und eine zusätzliche, leere Polygon-Schicht
     `drawn_polygons` in dieselbe GeoPackage-Datei. In QGIS werden dort die
@@ -220,19 +244,26 @@ def main(argv=None):
     p.add_argument("--exclude-areas", default=None,
                    help="Dateien (mit Komma getrennt) mit Flächen, die nicht mehr angezeigt werden sollen, "
                         "z.B. bereits geprüfte Standorte (negatives_reviewed_clean.gpkg, ignore_reviewed.geojson).")
+    p.add_argument("--preselect", action="store_true",
+                   help="Für sehr große Dateien (mehrere GB): erst nur die Bewertungen lesen und dann nur "
+                        "die Geometrien der bestbewerteten Segmente laden (spart viel Speicher).")
     p.add_argument("--exclude-known", action="store_true",
                    help="Standorte nahe bekannter Halden (--labels) weglassen - zum Suchen NEUER Halden.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    seg = gpd.read_file(args.segments)
+    # Mit --preselect ist die Auswahl (je Mine die obersten area_pct % der Segmente) schon beim
+    # Laden erfolgt; danach werden alle geladenen Segmente verwendet.
+    seg = load_top_segments(args.segments, args.area_pct, args.threshold, fraction_margin=1.0) \
+        if args.preselect else gpd.read_file(args.segments)
+    area_pct = 100.0 if args.preselect else args.area_pct
     labels = gpd.read_file(args.labels) if args.labels else None
     excl = None
     if args.exclude_areas:
         excl = gpd.GeoDataFrame(pd.concat(
             [gpd.read_file(f.strip())[["geometry"]].to_crs(seg.crs) for f in args.exclude_areas.split(",") if f.strip()],
             ignore_index=True), crs=seg.crs)
-    sites = build_candidate_sites(seg, args.threshold, args.area_pct, args.join_dist_m,
+    sites = build_candidate_sites(seg, args.threshold, area_pct, args.join_dist_m,
                                   args.min_area_m2, labels, args.known_dist_m, args.top,
                                   args.max_site_m2, args.exclude_known, args.max_urban_frac, args.rank_by,
                                   excl)
