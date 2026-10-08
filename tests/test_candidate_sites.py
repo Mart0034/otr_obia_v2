@@ -150,3 +150,10 @@ def test_rank_by_peak_score_puts_the_highest_peak_first():
     assert by_score.loc[0, "n_segments"] == 10 and by_peak.loc[0, "n_segments"] == 1
     with pytest.raises(ValueError):
         build_candidate_sites(_seg(cells), threshold=0.5, rank_by="nonsense")
+
+
+def test_exclude_areas_hides_already_reviewed_sites():
+    cells = [(0, 0, 0.9), (50, 0, 0.8), (100, 0, 0.7)]
+    done = gpd.GeoDataFrame(geometry=[box(X0 + 495, Y0 - 5, X0 + 515, Y0 + 15)], crs="EPSG:32719")   # covers cell 50
+    sites = build_candidate_sites(_seg(cells), threshold=0.5, exclude_areas=done)
+    assert len(sites) == 2 and sorted(sites["max_proba"]) == [0.7, 0.9] and list(sites["rank"]) == [1, 2]
