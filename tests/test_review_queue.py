@@ -36,12 +36,12 @@ def test_skip_moves_to_the_end_and_comes_back():
 def test_back_undoes_the_last_decision_and_restores_the_old_value():
     q = ReviewQueue(_items())
     q.decide("dump")
-    fid, old = q.back()
-    assert (fid, old) == (11, "") and q.current == 11 and q.reviews[11] == ""
+    fid, old, old_note = q.back()
+    assert (fid, old, old_note) == (11, "", "") and q.current == 11 and q.reviews[11] == ""
     assert q.back() is None                                            # nothing left to undo
     q.decide("clean")
     q.decide("partial")
-    assert q.back() == (10, "")
+    assert q.back() == (10, "", "")
     assert q.current == 10 and q.counts() == {"clean": 2}
 
 
@@ -55,3 +55,15 @@ def test_draw_flow_marks_without_advancing_until_next():
 def test_empty_queue_is_harmless():
     q = ReviewQueue([(1, 1, "dump")])
     assert q.current is None and q.decide("dump") is None and q.skip() is None and q.back() is None
+
+
+def test_notes_are_stored_with_the_decision_and_restored_by_back():
+    q = ReviewQueue([(1, 1, "", ""), (2, 2, "", "old text")])
+    q.decide("clean", "town")
+    assert q.notes[1] == "town"
+    q.decide("dump")                                  # no new note: the old one stays
+    assert q.notes[2] == "old text"
+    fid, old, old_note = q.back()
+    assert (fid, old, old_note) == (2, "", "old text")
+    fid, old, old_note = q.back()
+    assert (fid, old, old_note) == (1, "", "") and q.notes[1] == ""

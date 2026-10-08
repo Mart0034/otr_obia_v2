@@ -19,6 +19,9 @@ QGIS-Python-Konsole öffnen und ausführen: rechts erscheint das Fenster
     6  Back      letzte Entscheidung zurücknehmen (beliebig oft: geht Schritt für
                  Schritt zurück, solange das Fenster offen ist)
     7  Karte     in Google Maps öffnen
+   Notiz     im Feld unter "Zurück" eine Notiz wählen oder tippen (town, yard,
+             road, ...), dann Entscheidung drücken - sie wird mitgespeichert.
+             Nach Auswahl aus der Liste bzw. Enter gelten die Zifferntasten wieder.
    "Teil einzeichnen": setzt Partial und schaltet die Zeichen-Schicht ein - Umriss
    der echten Halde zeichnen (Rechtsklick beendet), kind = dump wählen, dann
    "Weiter".
@@ -39,12 +42,14 @@ class ReviewQueue:
     hängt hinten an, Zurück stellt die letzte Entscheidung wieder vorne ein."""
 
     def __init__(self, items):
-        """items: Liste von (fid, rank, review); leeres review = noch ungeprüft."""
+        """items: Liste von (fid, rank, review) oder (fid, rank, review, note);
+        leeres review = noch ungeprüft."""
         ordered = sorted(items, key=lambda it: it[1])
         self.total = len(ordered)
-        self.reviews = {fid: (review or "") for fid, _, review in ordered}
-        self.todo = deque(fid for fid, _, review in ordered if not review)
-        self.history = []                      # (fid, vorheriges Urteil)
+        self.reviews = {it[0]: (it[2] or "") for it in ordered}
+        self.notes = {it[0]: ((it[3] if len(it) > 3 else "") or "") for it in ordered}
+        self.todo = deque(it[0] for it in ordered if not it[2])
+        self.history = []                      # (fid, vorheriges Urteil, vorherige Notiz)
 
     @property
     def current(self):
@@ -54,13 +59,16 @@ class ReviewQueue:
     def done(self):
         return self.total - len(self.todo)
 
-    def mark(self, value):
-        """Urteil für den aktuellen Standort setzen, ohne weiterzugehen."""
+    def mark(self, value, note=None):
+        """Urteil (und optional eine Notiz) für den aktuellen Standort setzen, ohne
+        weiterzugehen. note=None lässt die bisherige Notiz unverändert."""
         fid = self.current
         if fid is None:
             return None
-        self.history.append((fid, self.reviews[fid]))
+        self.history.append((fid, self.reviews[fid], self.notes[fid]))
         self.reviews[fid] = value
+        if note is not None:
+            self.notes[fid] = note
         return fid
 
     def advance(self):
@@ -72,8 +80,8 @@ class ReviewQueue:
             self.todo.append(fid)
         return self.current
 
-    def decide(self, value):
-        fid = self.mark(value)
+    def decide(self, value, note=None):
+        fid = self.mark(value, note)
         self.advance()
         return fid
 
@@ -81,15 +89,16 @@ class ReviewQueue:
         return self.advance()
 
     def back(self):
-        """Letzte Entscheidung zurücknehmen. Gibt (fid, altes Urteil) zurück."""
+        """Letzte Entscheidung zurücknehmen. Gibt (fid, altes Urteil, alte Notiz) zurück."""
         if not self.history:
             return None
-        fid, old = self.history.pop()
+        fid, old, old_note = self.history.pop()
         self.reviews[fid] = old
+        self.notes[fid] = old_note
         if fid in self.todo:
             self.todo.remove(fid)
         self.todo.appendleft(fid)
-        return fid, old
+        return fid, old, old_note
 
     def counts(self):
         out = {}
@@ -103,7 +112,7 @@ try:  # außerhalb von QGIS (Tests) nicht verfügbar
     from qgis.core import QgsCoordinateTransform, QgsProject, QgsRectangle
     from qgis.PyQt.QtCore import Qt, QUrl
     from qgis.PyQt.QtGui import QDesktopServices, QKeySequence
-    from qgis.PyQt.QtWidgets import QDockWidget, QGridLayout, QLabel, QPushButton, QWidget
+    from qgis.PyQt.QtWidgets import QComboBox, QDockWidget, QGridLayout, QLabel, QPushButton, QWidget
     try:                                  # Qt6: QShortcut liegt in QtGui, Qt5: in QtWidgets
         from qgis.PyQt.QtGui import QShortcut
     except ImportError:
@@ -114,6 +123,7 @@ except ImportError:
     QDockWidget = object   # damit die Klasse unten auch ohne QGIS (Tests) importierbar bleibt
 
 MIN_VIEW_M = 400.0   # kleinster Kartenausschnitt (Meter) beim Heranzoomen
+NOTE_PRESETS = ["", "town", "yard / equipment", "road / haul road", "pit / rock pile", "neat dump", "messy dump", "rubber, unclear"]
 
 
 def _qt_enum(group_name, name):
@@ -144,6 +154,7 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
     def __init__(self, iface):
         super().__init__("Review", iface.mainWindow())
         self.iface = iface
+        self.setFocusPolicy(_qt_enum("FocusPolicy", "StrongFocus"))     # damit setFocus() greift
         self.layer = _layer("candidate_sites")
         self.drawn = None
         try:
@@ -151,9 +162,11 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         except RuntimeError:
             pass
         self.idx = self.layer.fields().indexOf("review")
+        self.note_idx = self.layer.fields().indexOf("note")
         feats = {f.id(): f for f in self.layer.getFeatures()}
         self.feats = feats
-        self.queue = ReviewQueue([(fid, f["rank"], f["review"] if f["review"] else "") for fid, f in feats.items()])
+        self.queue = ReviewQueue([(fid, f["rank"], f["review"] if f["review"] else "",
+                                   f["note"] if f["note"] else "") for fid, f in feats.items()])
         self.awaiting_draw = False
 
         body = QWidget()
@@ -169,17 +182,26 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         back_btn.setMinimumHeight(34)
         back_btn.clicked.connect(lambda _=False: self.back())
         grid.addWidget(back_btn, 2, 0, 1, 2)
+        # Notiz: aus der Liste wählen oder frei tippen; wird mit der nächsten Entscheidung gespeichert
+        self.note = QComboBox()
+        self.note.setEditable(True)
+        self.note.addItems(NOTE_PRESETS)
+        self.note.setCurrentIndex(0)
+        self.note.lineEdit().setPlaceholderText("Notiz (z.B. town, yard, road) - dann Entscheidung wählen")
+        self.note.activated.connect(lambda _=0: self.setFocus())          # danach gelten die Zifferntasten wieder
+        self.note.lineEdit().returnPressed.connect(self.setFocus)
+        grid.addWidget(self.note, 3, 0, 1, 2)
         for n, (text, value, _) in enumerate(self.DECISIONS):
             btn = QPushButton(text)
             btn.setMinimumHeight(30)
             btn.clicked.connect(lambda _=False, v=value: self.decide(v))
-            grid.addWidget(btn, 3 + n // 2, n % 2)
+            grid.addWidget(btn, 4 + n // 2, n % 2)
         extra = [("5  Skip", self.skip), ("7  Karte", self.open_map),
                  ("Teil einzeichnen", self.draw_part), ("Weiter", self.next_after_draw)]
         for n, (text, func) in enumerate(extra):
             btn = QPushButton(text)
             btn.clicked.connect(lambda _=False, f=func: f())
-            grid.addWidget(btn, 5 + n // 2, n % 2)
+            grid.addWidget(btn, 6 + n // 2, n % 2)
         self.setWidget(body)
         for key, func in (("1", lambda: self.decide("dump")), ("2", lambda: self.decide("clean")),
                           ("3", lambda: self.decide("partial")), ("4", lambda: self.decide("unsure")),
@@ -226,8 +248,10 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             pass
 
     # ---- Aktionen ----------------------------------------------------
-    def _write(self, fid, value):
+    def _write(self, fid, value, note=None):
         self.layer.changeAttributeValue(fid, self.idx, value if value else None)
+        if note is not None and self.note_idx >= 0:
+            self.layer.changeAttributeValue(fid, self.note_idx, note if note else None)
         self.layer.commitChanges(False)        # sofort speichern, Bearbeitungsmodus bleibt an
         if not self.layer.isEditable():
             self.layer.startEditing()
@@ -235,11 +259,15 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
     def decide(self, value):
         if self.awaiting_draw:
             self.next_after_draw()
-        fid = self.queue.decide(value)
+        note = self.note.currentText().strip()
+        fid = self.queue.decide(value, note if note else None)
         if fid is not None:
-            self._write(fid, value)
+            self._write(fid, value, note if note else None)
             f = self.feats[fid]
-            self.notify(f"Standort {f['site_id']} (Rang {f['rank']}) als {value.upper()} eingetragen")
+            self.notify(f"Standort {f['site_id']} (Rang {f['rank']}) als {value.upper()} eingetragen"
+                        + (f" - Notiz: {note}" if note else ""))
+        self.note.setCurrentIndex(0)
+        self.note.clearEditText()
         self.show_current()
 
     def skip(self):
@@ -252,7 +280,7 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
     def back(self):
         res = self.queue.back()
         if res:
-            self._write(res[0], res[1])
+            self._write(res[0], res[1], res[2])
             f = self.feats[res[0]]
             self.notify(f"Zurück bei {f['site_id']} (Rang {f['rank']}): Eintrag gelöscht"
                         + (f", war vorher: {res[1]}" if res[1] else ""))
@@ -268,8 +296,9 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
     def draw_part(self):
         if self.drawn is None or self.queue.current is None:
             return
-        fid = self.queue.mark("partial")
-        self._write(fid, "partial")
+        note = self.note.currentText().strip()
+        fid = self.queue.mark("partial", note if note else None)
+        self._write(fid, "partial", note if note else None)
         self.notify(f"Standort {self.feats[fid]['site_id']} als PARTIAL eingetragen - jetzt den Umriss zeichnen")
         self.awaiting_draw = True
         self.iface.setActiveLayer(self.drawn)
