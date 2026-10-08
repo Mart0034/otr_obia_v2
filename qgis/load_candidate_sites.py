@@ -14,6 +14,8 @@ wählen. Das Skript
     ausführen" / Rechtsklick > Aktionen; die Adresse steht auch in der
     Spalte maps_url),
   * macht die Spalte `review` zu einer Auswahlliste (dump / clean / unsure),
+  * macht die Auswahlfarbe durchscheinend (sonst verdeckt das gelbe
+    Auswahl-Highlight das Luftbild),
   * zoomt auf alle Standorte.
 
 Zum Eintragen: Schicht markieren > Bearbeitungsmodus (Stift) > in der
@@ -86,6 +88,12 @@ def add_maps_action(layer):
     layer.actions().setDefaultAction("Canvas", action.id())
 
 
+def soften_selection():
+    """Die Auswahlfarbe von QGIS ist standardmäßig deckend gelb und verdeckt das
+    Luftbild. Hier nur schwach durchscheinend, damit man darunter noch sieht."""
+    iface.mapCanvas().setSelectionColor(QColor(255, 255, 0, 60))  # noqa: F821
+
+
 def review_dropdown(layer):
     idx = layer.fields().indexOf("review")
     if idx < 0:
@@ -106,6 +114,7 @@ if path:
         step("Rang-Beschriftung", lambda: label_with_rank(layer))
         step("Google-Maps-Aktion", lambda: add_maps_action(layer))
         step("review-Auswahlliste", lambda: review_dropdown(layer))
+        step("Auswahlfarbe durchscheinend", soften_selection)
         layer.triggerRepaint()
         iface.mapCanvas().setExtent(layer.extent())  # noqa: F821  (iface gibt es in der QGIS-Konsole)
         iface.mapCanvas().refresh()  # noqa: F821
