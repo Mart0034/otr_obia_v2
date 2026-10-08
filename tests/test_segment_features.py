@@ -165,3 +165,29 @@ def test_compute_segment_features_without_color_bands_defaults_to_zero():
     feats = compute_segment_features(arr, segments, band_names, texture_band="dsi")
 
     assert feats.loc[0, "brightness_extreme_fraction"] == 0.0
+
+
+def test_bounding_box_loop_matches_the_full_image_reference():
+    """compute_segment_features looks at each segment only inside its own
+    bounding box; the numbers must equal the straightforward full-image version
+    (irregular, interleaved segments and NaN pixels included)."""
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(3)
+    h, w = 60, 70
+    band_names = ["blue", "green", "red", "dsi"]
+    arr = rng.normal(size=(h, w, 4)).astype("float32")
+    arr[5:9, 5:9, :] = np.nan
+    seg = (gaussian_filter(rng.normal(size=(h, w)), 2) > 0).astype(int) + 1
+    seg = seg * 10 + (np.arange(w)[None, :] // 7)  # irregular, non-compact labels
+    seg[:3, :] = 0
+    feats = compute_segment_features(arr, seg, band_names, texture_band="dsi").set_index("segment_id")
+    for sid in feats.index:
+        m = seg == sid
+        for b, name in enumerate(band_names):
+            vals = arr[..., b][m]
+            assert feats.loc[sid, f"{name}_mean"] == np.nanmean(vals) or (
+                np.isnan(feats.loc[sid, f"{name}_mean"]) and np.isnan(np.nanmean(vals)))
+        ys, xs = np.where(m)
+        assert feats.loc[sid, "n_pixels"] == m.sum()
+        assert ys.min() >= 0  # bounding box sanity

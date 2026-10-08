@@ -57,6 +57,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from scipy.ndimage import find_objects
 import rasterio
 from rasterio.features import shapes as rio_shapes
 from rasterio.warp import transform as warp_transform
@@ -489,28 +490,38 @@ def compute_segment_features(arr, segments, band_names, texture_band):
         nan=0.0,
     ).astype(np.uint8)
 
+    # Jedes Segment nur in SEINER Bounding Box betrachten (find_objects liefert
+    # sie in einem Durchlauf). Früher wurde pro Segment `segments == seg_id` über
+    # das GANZE Bild gerechnet - bei Hunderttausenden Segmenten auf Millionen
+    # Pixeln quadratisch und der eigentliche Flaschenhals großer Minen. Die
+    # Ergebnisse sind identisch, denn Pixel außerhalb der Bounding Box gehören
+    # ohnehin nicht zum Segment.
+    boxes = find_objects(segments.astype(np.int32))
+
     rows = []
     for seg_id in seg_ids:
-        m = segments == seg_id
+        box = boxes[int(seg_id) - 1]
+        if box is None:
+            continue
+        m = segments[box] == seg_id
         if m.sum() < 4:
             continue  # zu kleines Segment, überspringen
 
         row = {"segment_id": int(seg_id), "n_pixels": int(m.sum())}
 
         for b, name in enumerate(band_names):
-            vals = arr[..., b][m]
+            vals = arr[box][..., b][m]
             row[f"{name}_mean"] = float(np.nanmean(vals))
             row[f"{name}_std"] = float(np.nanstd(vals))
 
         row["brightness_extreme_fraction"] = (
-            brightness_extreme_fraction(brightness[m]) if brightness is not None else 0.0
+            brightness_extreme_fraction(brightness[box][m]) if brightness is not None else 0.0
         )
 
         # Bounding Box des Segments (einfache, robuste Näherung statt
         # exakter Segmentgeometrie - auch für die GLCM-Textur unten
         # verwendet).
-        ys, xs = np.where(m)
-        y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+        y0, y1, x0, x1 = box[0].start, box[0].stop, box[1].start, box[1].stop
 
         # Räumlicher Helligkeits-Split: max(|links-rechts|, |oben-unten|)
         # über die Bounding Box. Anders als brightness_extreme_fraction
