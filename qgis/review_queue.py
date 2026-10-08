@@ -16,7 +16,8 @@ QGIS-Python-Konsole öffnen und ausführen: rechts erscheint das Fenster
     3  Partial   Halde enthalten, aber der Umriss ist viel größer
     4  Unsure    unklar
     5  Skip      später nochmal ansehen (kommt am Ende wieder)
-    6  Back      letzte Entscheidung zurücknehmen
+    6  Back      letzte Entscheidung zurücknehmen (beliebig oft: geht Schritt für
+                 Schritt zurück, solange das Fenster offen ist)
     7  Karte     in Google Maps öffnen
    "Teil einzeichnen": setzt Partial und schaltet die Zeichen-Schicht ein - Umriss
    der echten Halde zeichnen (Rechtsklick beendet), kind = dump wählen, dann
@@ -154,16 +155,25 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.info = QLabel("")
         self.info.setWordWrap(True)
         grid.addWidget(self.info, 0, 0, 1, 2)
+        self.last = QLabel("")                    # was zuletzt entschieden wurde
+        self.last.setWordWrap(True)
+        self.last.setStyleSheet("font-weight: bold; color: #1a7f37;")
+        grid.addWidget(self.last, 1, 0, 1, 2)
+        back_btn = QPushButton("6  ◀ Zurück  (letzte Entscheidung rückgängig)")
+        back_btn.setMinimumHeight(34)
+        back_btn.clicked.connect(lambda _=False: self.back())
+        grid.addWidget(back_btn, 2, 0, 1, 2)
         for n, (text, value, _) in enumerate(self.DECISIONS):
             btn = QPushButton(text)
+            btn.setMinimumHeight(30)
             btn.clicked.connect(lambda _=False, v=value: self.decide(v))
-            grid.addWidget(btn, 1 + n // 2, n % 2)
-        extra = [("5  Skip", self.skip), ("6  Back", self.back), ("7  Karte", self.open_map),
+            grid.addWidget(btn, 3 + n // 2, n % 2)
+        extra = [("5  Skip", self.skip), ("7  Karte", self.open_map),
                  ("Teil einzeichnen", self.draw_part), ("Weiter", self.next_after_draw)]
         for n, (text, func) in enumerate(extra):
             btn = QPushButton(text)
             btn.clicked.connect(lambda _=False, f=func: f())
-            grid.addWidget(btn, 3 + n // 2, n % 2)
+            grid.addWidget(btn, 5 + n // 2, n % 2)
         self.setWidget(body)
         for key, func in (("1", lambda: self.decide("dump")), ("2", lambda: self.decide("clean")),
                           ("3", lambda: self.decide("partial")), ("4", lambda: self.decide("unsure")),
@@ -199,6 +209,16 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         canvas.setExtent(xform.transformBoundingBox(box))
         canvas.refresh()
 
+    def notify(self, text):
+        """Kurze Rückmeldung: im Fenster und als Meldung oben in der Karte."""
+        self.last.setText(text)
+        try:
+            bar = self.iface.messageBar()
+            bar.clearWidgets()
+            bar.pushSuccess("Review", text)
+        except Exception:
+            pass
+
     # ---- Aktionen ----------------------------------------------------
     def _write(self, fid, value):
         self.layer.changeAttributeValue(fid, self.idx, value if value else None)
@@ -212,16 +232,26 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         fid = self.queue.decide(value)
         if fid is not None:
             self._write(fid, value)
+            f = self.feats[fid]
+            self.notify(f"Standort {f['site_id']} (Rang {f['rank']}) als {value.upper()} eingetragen")
         self.show_current()
 
     def skip(self):
+        fid = self.queue.current
         self.queue.skip()
+        if fid is not None:
+            self.notify(f"Standort {self.feats[fid]['site_id']} übersprungen - kommt am Ende wieder")
         self.show_current()
 
     def back(self):
         res = self.queue.back()
         if res:
             self._write(res[0], res[1])
+            f = self.feats[res[0]]
+            self.notify(f"Zurück bei {f['site_id']} (Rang {f['rank']}): Eintrag gelöscht"
+                        + (f", war vorher: {res[1]}" if res[1] else ""))
+        else:
+            self.notify("Nichts mehr zum Zurücknehmen")
         self.show_current()
 
     def open_map(self):
@@ -234,6 +264,7 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             return
         fid = self.queue.mark("partial")
         self._write(fid, "partial")
+        self.notify(f"Standort {self.feats[fid]['site_id']} als PARTIAL eingetragen - jetzt den Umriss zeichnen")
         self.awaiting_draw = True
         self.iface.setActiveLayer(self.drawn)
         self.drawn.startEditing()
