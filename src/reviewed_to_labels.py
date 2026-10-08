@@ -13,6 +13,12 @@ ausgefüllt wurde:
     unsure  -> unklar                 (wird beim Training ignoriert)
     (leer)  -> noch nicht geprüft
 
+Zusätzlich kann in QGIS in der Schicht `drawn_polygons` (gleiche Datei) von Hand
+eingezeichnet werden, was genau Halde (kind = dump) bzw. eindeutig sauber
+(kind = clean) ist. Gezeichnete Polygone haben Vorrang: ein Standort, den sie
+berühren, liefert nicht mehr seinen ganzen Umriss als Label, sondern nur die
+gezeichneten Umrisse. Ohne mine_id wird sie vom nächsten Standort übernommen.
+
 Ausgabe in --out-dir:
     labels_reviewed_dump.gpkg      Halden-Polygone (mine_id = Kachel/Mine) - wie
                                    --extra-labels-path bzw. dump_labels.gpkg
@@ -35,16 +41,75 @@ import sys
 
 import geopandas as gpd
 import pandas as pd
+import pyogrio
 
 VALID = ("dump", "clean", "partial", "unsure")
 
 
-def split_reviews(sites, close_gaps_m=5.0):
+def _clean_drawn(drawn, sites, max_dist_m=500.0):
+    """Prüft die gezeichneten Polygone und ergänzt fehlende mine_id vom nächsten Standort."""
+    drawn = drawn[drawn.geometry.notna() & ~drawn.geometry.is_empty].copy()
+    if drawn.empty:
+        return drawn
+    drawn["kind"] = drawn["kind"].fillna("").astype(str).str.strip().str.lower()
+    bad = sorted(set(drawn["kind"]) - {"dump", "clean"})
+    if bad:
+        raise ValueError(f"Unbekannte Werte in drawn_polygons.kind: {bad} (erlaubt: dump, clean)")
+    drawn["mine_id"] = drawn["mine_id"].fillna("").astype(str).str.strip()
+    missing = drawn["mine_id"] == ""
+    if missing.any():
+        near = gpd.sjoin_nearest(drawn[missing][["geometry"]], sites[["mine_id", "geometry"]],
+                                 how="left", max_distance=max_dist_m)
+        near = near[~near.index.duplicated(keep="first")]
+        if near["mine_id"].isna().any():
+            raise ValueError(
+                f"{int(near['mine_id'].isna().sum())} gezeichnete Polygone liegen weiter als "
+                f"{max_dist_m:.0f} m von jedem Standort entfernt und haben keine mine_id - bitte "
+                "mine_id eintragen (z.B. mine_019 bzw. der Kachelname).")
+        drawn.loc[missing, "mine_id"] = near["mine_id"]
+    return drawn
+
+
+def apply_drawn(sites, drawn):
+    """Gezeichnete Polygone haben Vorrang vor dem Urteil über den ganzen Standort.
+    Gibt (sites, drawn, skip) zurück: skip = Standorte, die gezeichnete Polygone
+    berühren (ihr Umriss wird nicht als Label verwendet). Ein Standort ohne eigenes
+    Urteil bekommt: dump (gezeichnete Halde füllt >= die Hälfte), partial (weniger),
+    clean (nur gezeichnete saubere Flächen)."""
+    sites = sites.copy()
+    skip = pd.Series(False, index=sites.index)
+    drawn = _clean_drawn(drawn, sites)
+    if drawn.empty:
+        return sites, drawn, skip
+    for idx, site in sites.iterrows():
+        hit = drawn[drawn.geometry.intersects(site.geometry)]
+        if hit.empty:
+            continue
+        skip[idx] = True
+        if str(site["review"]).strip().lower() not in ("", "none", "nan"):
+            continue
+        dump_area = hit[hit["kind"] == "dump"].geometry.intersection(site.geometry).area.sum()
+        if dump_area > 0:
+            sites.loc[idx, "review"] = "dump" if dump_area >= 0.5 * site.geometry.area else "partial"
+        else:
+            sites.loc[idx, "review"] = "clean"
+    return sites, drawn, skip
+
+
+def split_reviews(sites, close_gaps_m=5.0, drawn=None):
     """Teilt die Standorte nach dem Urteil in (dump, clean, unsure, summary).
     dump/clean: GeoDataFrame(mine_id, site_id, geometry); unsure: Umrisse der
     unklaren und teilweisen Standorte (Ignorier-Zone)."""
     sites = sites.copy()
     sites["review"] = sites["review"].fillna("").astype(str).str.strip().str.lower()
+    skip = pd.Series(False, index=sites.index)
+    drawn_dump = drawn_clean = None
+    if drawn is not None and len(drawn):
+        sites, drawn, skip = apply_drawn(sites, drawn.to_crs(sites.crs) if drawn.crs else drawn)
+        sites["review"] = sites["review"].astype(str).str.strip().str.lower()
+        cols_d = ["mine_id", "geometry"]
+        drawn_dump = drawn[drawn["kind"] == "dump"][cols_d].assign(site_id="drawn")
+        drawn_clean = drawn[drawn["kind"] == "clean"][cols_d].assign(site_id="drawn")
     unknown = sorted(set(sites["review"]) - set(VALID) - {""})
     if unknown:
         raise ValueError(f"Unbekannte Werte in 'review': {unknown} (erlaubt: {', '.join(VALID)} oder leer)")
@@ -52,8 +117,12 @@ def split_reviews(sites, close_gaps_m=5.0):
     # Lücken zwischen den markierten Segmenten schließen, damit ein zusammenhängendes
     # Halden-Polygon entsteht
     shaped = sites.assign(geometry=sites.geometry.buffer(close_gaps_m).buffer(-close_gaps_m))
-    dump = shaped[sites["review"] == "dump"][cols + ["geometry"]]
-    clean = shaped[sites["review"] == "clean"][cols + ["geometry"]]
+    dump = shaped[(sites["review"] == "dump") & ~skip][cols + ["geometry"]]
+    clean = shaped[(sites["review"] == "clean") & ~skip][cols + ["geometry"]]
+    if drawn_dump is not None:
+        dump = pd.concat([dump, drawn_dump[cols + ["geometry"]]], ignore_index=True)
+        clean = pd.concat([clean, drawn_clean[cols + ["geometry"]]], ignore_index=True)
+        dump, clean = gpd.GeoDataFrame(dump, crs=sites.crs), gpd.GeoDataFrame(clean, crs=sites.crs)
     # unklare und teilweise Standorte: als Ganzes aus dem Negativ-Training nehmen
     unsure = sites[sites["review"].isin(["unsure", "partial"])][cols + ["geometry"]].copy()
     summary = sites[sites["review"] != ""].sort_values("rank")[
@@ -87,7 +156,11 @@ def main(argv=None):
     args = p.parse_args(argv)
     sites = gpd.read_file(args.reviewed, layer="candidate_sites") if args.reviewed.endswith(".gpkg") \
         else gpd.read_file(args.reviewed)
-    dump, clean, unsure, summary = split_reviews(sites)
+    drawn = None
+    if args.reviewed.endswith(".gpkg") and "drawn_polygons" in set(pyogrio.list_layers(args.reviewed)[:, 0]):
+        drawn = gpd.read_file(args.reviewed, layer="drawn_polygons")
+        print(f"Gezeichnete Polygone: {len(drawn)}")
+    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn)
     os.makedirs(args.out_dir, exist_ok=True)
     if len(dump):
         dump.to_file(os.path.join(args.out_dir, "labels_reviewed_dump.gpkg"), driver="GPKG")

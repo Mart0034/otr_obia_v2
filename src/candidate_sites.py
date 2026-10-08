@@ -16,6 +16,9 @@ etwas anderes als ein einzelnes. Dieses Skript
      (Fläche x mittlere Bewertung) und einen Google-Maps-Link,
   4. schreibt alles als GeoPackage (für QGIS) und als CSV.
 
+Die Datei enthält außerdem eine leere Schicht `drawn_polygons`, in die man in
+QGIS die echten Halden-Umrisse einzeichnen kann (siehe unten).
+
 Die Spalten `review` und `note` bleiben leer - in QGIS kann man dort eintragen,
 ob ein Fund eine echte Halde ist (dump), sauberes Gelände (clean) oder unklar
 (unsure). Das ist die Grundlage, um echte Negativbeispiele zu sammeln.
@@ -27,6 +30,7 @@ Nutzung:
 
 import argparse
 import logging
+import os
 import sys
 
 import geopandas as gpd
@@ -161,6 +165,21 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     return sites
 
 
+def write_sites_gpkg(sites, path):
+    """Schreibt die Standorte und eine zusätzliche, leere Polygon-Schicht
+    `drawn_polygons` in dieselbe GeoPackage-Datei. In QGIS werden dort die
+    tatsächlichen Halden-Umrisse (kind = dump) bzw. eindeutig saubere Flächen
+    (kind = clean) von Hand eingezeichnet; reviewed_to_labels.py liest sie."""
+    if os.path.exists(path):
+        os.remove(path)
+    sites.to_file(path, layer="candidate_sites", driver="GPKG")
+    empty = gpd.GeoDataFrame(
+        {"kind": pd.Series(dtype="object"), "mine_id": pd.Series(dtype="object"),
+         "note": pd.Series(dtype="object")},
+        geometry=gpd.GeoSeries([], crs=sites.crs))
+    empty.to_file(path, layer="drawn_polygons", driver="GPKG", mode="a", geometry_type="Polygon")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Kandidaten-Standorte aus Segment-Vorhersagen bauen.")
     p.add_argument("--segments", required=True, help="segments_classified.gpkg eines Laufs.")
@@ -194,7 +213,7 @@ def main(argv=None):
     sites = build_candidate_sites(seg, args.threshold, args.area_pct, args.join_dist_m,
                                   args.min_area_m2, labels, args.known_dist_m, args.top,
                                   args.max_site_m2, args.exclude_known, args.max_urban_frac)
-    sites.to_file(args.out, layer="candidate_sites", driver="GPKG")
+    write_sites_gpkg(sites, args.out)
     csv_path = args.out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
     logging.info("%d Standorte -> %s (+ %s)", len(sites), args.out, csv_path)

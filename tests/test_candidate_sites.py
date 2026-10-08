@@ -128,3 +128,16 @@ def test_urban_filter_drops_built_up_sites_and_needs_osm_columns():
     assert sorted(both["urban_frac"]) == [0.0, 1.0]
     # without OSM columns the filter is a no-op (with a warning), not a crash
     assert len(build_candidate_sites(_seg(cells), threshold=0.5, max_urban_frac=0.2)) == 2
+
+
+def test_gpkg_has_an_empty_polygon_layer_for_hand_drawn_shapes(tmp_path):
+    import pyogrio
+    from candidate_sites import write_sites_gpkg
+
+    path = str(tmp_path / "sites.gpkg")
+    write_sites_gpkg(build_candidate_sites(_seg([(0, 0, 0.9)]), threshold=0.5), path)
+    layers = dict(pyogrio.list_layers(path))
+    assert layers["candidate_sites"] == "Polygon" and layers["drawn_polygons"] == "Polygon"
+    drawn = gpd.read_file(path, layer="drawn_polygons")
+    assert drawn.empty and {"kind", "mine_id", "note"} <= set(drawn.columns)
+    assert drawn.crs.to_epsg() == 32719

@@ -16,7 +16,15 @@ wählen. Das Skript
   * macht die Spalte `review` zu einer Auswahlliste (dump / clean / partial / unsure),
   * macht die Auswahlfarbe durchscheinend (sonst verdeckt das gelbe
     Auswahl-Highlight das Luftbild),
+  * lädt die leere Zeichen-Schicht `drawn_polygons` (siehe unten),
   * zoomt auf alle Standorte.
+
+Genauer: in der Schicht `drawn_polygons` (wird mitgeladen) die echten Umrisse
+einzeichnen - Schicht markieren > Bearbeitungsmodus > "Polygon-Objekt hinzufügen"
+(Strg+.) > Umriss um die Reifen ziehen (Rechtsklick beendet) > `kind` wählen:
+dump = hier liegen Reifen, clean = eindeutig keine. `mine_id` füllt sich meist
+selbst (vom überlappenden Standort); sonst von Hand eintragen. Gezeichnete
+Umrisse haben Vorrang vor dem Urteil über den ganzen Standort.
 
 Zum Eintragen: Schicht markieren > Bearbeitungsmodus (Stift) > in der
 Attributtabelle `review` (und gern `note`) setzen > Änderungen speichern.
@@ -29,7 +37,7 @@ Skript es und macht mit dem nächsten weiter.
 """
 
 from qgis.core import (
-    QgsAction, QgsCategorizedSymbolRenderer, QgsEditorWidgetSetup, QgsPalLayerSettings,
+    QgsAction, QgsCategorizedSymbolRenderer, QgsDefaultValue, QgsEditorWidgetSetup, QgsPalLayerSettings,
     QgsProject, QgsRendererCategory, QgsSymbol, QgsTextBufferSettings, QgsTextFormat,
     QgsVectorLayer, QgsVectorLayerSimpleLabeling,
 )
@@ -94,6 +102,30 @@ def soften_selection():
     iface.mapCanvas().setSelectionColor(QColor(255, 255, 0, 60))  # noqa: F821
 
 
+def setup_drawn_layer(path, sites_layer):
+    drawn = QgsVectorLayer(f"{path}|layername=drawn_polygons", "drawn_polygons", "ogr")
+    if not drawn.isValid():
+        raise ValueError("Schicht drawn_polygons nicht in der Datei (Datei mit der neuen candidate_sites.py erzeugt?)")
+    QgsProject.instance().addMapLayer(drawn)
+    cats = []
+    for value, color in (("dump", "#d7191c"), ("clean", "#1a9641")):
+        sym = QgsSymbol.defaultSymbol(drawn.geometryType())
+        fill = QColor(color)
+        fill.setAlphaF(0.20)
+        sym.setColor(fill)
+        sym.symbolLayer(0).setStrokeColor(QColor(color))
+        sym.symbolLayer(0).setStrokeWidth(1.0)
+        cats.append(QgsRendererCategory(value, sym, value))
+    drawn.setRenderer(QgsCategorizedSymbolRenderer("kind", cats))
+    kind_idx = drawn.fields().indexOf("kind")
+    drawn.setEditorWidgetSetup(
+        kind_idx, QgsEditorWidgetSetup("ValueMap", {"map": [{"dump": "dump"}, {"clean": "clean"}]}))
+    mine_idx = drawn.fields().indexOf("mine_id")
+    drawn.setDefaultValueDefinition(
+        mine_idx,
+        QgsDefaultValue('array_first(overlay_intersects(\'candidate_sites\', "mine_id"))'))
+
+
 def review_dropdown(layer):
     idx = layer.fields().indexOf("review")
     if idx < 0:
@@ -115,6 +147,7 @@ if path:
         step("Google-Maps-Aktion", lambda: add_maps_action(layer))
         step("review-Auswahlliste", lambda: review_dropdown(layer))
         step("Auswahlfarbe durchscheinend", soften_selection)
+        step("Zeichen-Schicht drawn_polygons", lambda: setup_drawn_layer(path, layer))
         layer.triggerRepaint()
         iface.mapCanvas().setExtent(layer.extent())  # noqa: F821  (iface gibt es in der QGIS-Konsole)
         iface.mapCanvas().refresh()  # noqa: F821

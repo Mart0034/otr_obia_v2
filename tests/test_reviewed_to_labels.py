@@ -50,3 +50,51 @@ def test_precision_by_rank_ignores_unsure_and_counts_dumps():
     assert table.loc[2, "trefferquote"] == pytest.approx(1.0)
     assert table.loc[5, "geprueft"] == 4 and table.loc[5, "trefferquote"] == pytest.approx(0.5)
     assert table.loc[6, "davon_dump"] == 3
+
+
+def _drawn(*rows):
+    """rows: (kind, mine_id, box) in the same grid as _sites()."""
+    return gpd.GeoDataFrame({"kind": [r[0] for r in rows], "mine_id": [r[1] for r in rows],
+                             "note": ""}, geometry=[r[2] for r in rows], crs="EPSG:32719")
+
+
+def test_drawn_dump_replaces_the_whole_site_outline_as_label():
+    sites = _sites(["", ""])                       # two 20 x 20 m sites, not reviewed
+    drawn = _drawn(("dump", "", box(X0 + 2, Y0 + 2, X0 + 8, Y0 + 8)))      # small piece of site 1
+    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn)
+    assert len(dump) == 1 and dump.geometry.iloc[0].area == pytest.approx(36)    # the drawn shape, not 400
+    assert dump.iloc[0]["mine_id"] == "tile_a"                                    # filled from the site
+    row = summary[summary["site_id"] == "S0001"].iloc[0]
+    assert row["review"] == "partial"                                             # 36 of 400 m2: not most of the site
+    assert "S0002" not in set(summary["site_id"])                                 # untouched site stays unreviewed
+
+
+def test_drawn_dump_that_fills_the_site_counts_as_dump_and_clean_drawn_as_clean():
+    sites = _sites(["", ""])
+    drawn = _drawn(("dump", "tile_a", box(X0, Y0, X0 + 20, Y0 + 15)),
+                   ("clean", "tile_a", box(X0 + 100, Y0, X0 + 120, Y0 + 20)))
+    dump, clean, _, summary = split_reviews(sites, drawn=drawn)
+    reviews = dict(zip(summary["site_id"], summary["review"]))
+    assert reviews == {"S0001": "dump", "S0002": "clean"}
+    assert len(dump) == 1 and len(clean) == 1
+
+
+def test_own_review_is_kept_when_drawn_polygons_exist_but_outline_is_not_used():
+    sites = _sites(["clean"])
+    drawn = _drawn(("dump", "tile_a", box(X0 + 1, Y0 + 1, X0 + 5, Y0 + 5)))
+    dump, clean, _, summary = split_reviews(sites, drawn=drawn)
+    assert summary.iloc[0]["review"] == "clean" and len(clean) == 0 and len(dump) == 1
+
+
+def test_drawn_polygon_far_from_any_site_needs_a_mine_id():
+    far = _drawn(("dump", "", box(X0 + 5000, Y0, X0 + 5010, Y0 + 10)))
+    with pytest.raises(ValueError, match="mine_id"):
+        split_reviews(_sites(["dump"]), drawn=far)
+    ok = _drawn(("dump", "mine_007", box(X0 + 5000, Y0, X0 + 5010, Y0 + 10)))
+    dump, *_ = split_reviews(_sites(["dump"]), drawn=ok)
+    assert set(dump["mine_id"]) == {"tile_a", "mine_007"}
+
+
+def test_unknown_drawn_kind_is_an_error():
+    with pytest.raises(ValueError, match="kind"):
+        split_reviews(_sites(["dump"]), drawn=_drawn(("dumb", "tile_a", box(X0, Y0, X0 + 5, Y0 + 5))))
