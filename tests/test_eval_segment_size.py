@@ -46,3 +46,17 @@ def test_rows_without_predictions_are_ignored():
     oof = pd.DataFrame({"mine_id": "m", "segment_id": range(10), "dump_proba": [None] * 5 + [0.9] + [0.1] * 4})
     labels = gpd.GeoDataFrame({"mine_id": ["m"]}, geometry=[box(51, 2, 55, 6)], crs="EPSG:32719")
     assert area_recall(oof, poly, labels, qs=(20,))[20][0] == 1.0
+
+
+def test_load_run_adds_the_polygons_of_extra_tiles(tmp_path):
+    import geopandas as gpd
+    import pandas as pd
+    from shapely.geometry import box
+    from eval_segment_size import load_run
+
+    pd.DataFrame({"mine_id": ["m"], "segment_id": [1], "dump_proba": [0.5]}).to_pickle(tmp_path / "oof_predictions.pkl")
+    mk = lambda mid: gpd.GeoDataFrame({"mine_id": [mid], "segment_id": [1]}, geometry=[box(0, 0, 1, 1)], crs="EPSG:32719")
+    mk("m").to_file(tmp_path / "polygons_cache.gpkg", driver="GPKG")
+    assert len(load_run(str(tmp_path))[1]) == 1
+    mk("tile").to_file(tmp_path / "polygons_extra.gpkg", driver="GPKG")
+    assert sorted(load_run(str(tmp_path))[1]["mine_id"]) == ["m", "tile"]

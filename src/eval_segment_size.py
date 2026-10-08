@@ -19,6 +19,7 @@ Nutzung:
 """
 
 import argparse
+import os
 import sys
 
 import geopandas as gpd
@@ -57,6 +58,18 @@ def area_recall(oof, polygons, labels, qs=(1, 2, 5, 10)):
     return out
 
 
+def load_run(folder):
+    """oof_predictions.pkl und die Segment-Polygone eines Laufs. Bei Läufen mit
+    zusätzlichen Kacheln (--labeled/--extra-imagery-dir) kommen deren Polygone
+    aus polygons_extra.gpkg dazu."""
+    oof = pd.read_pickle(f"{folder}/oof_predictions.pkl")
+    poly = gpd.read_file(f"{folder}/polygons_cache.gpkg")
+    extra = f"{folder}/polygons_extra.gpkg"
+    if os.path.exists(extra):
+        poly = pd.concat([poly, gpd.read_file(extra)], ignore_index=True)
+    return oof, poly
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Größenunabhängiger Vergleich mehrerer Läufe.")
     p.add_argument("--labels", required=True, help="Halden-Polygone (GeoPackage).")
@@ -69,8 +82,7 @@ def main(argv=None):
     print("%-14s" % "" + "".join(f"{'top %d%%' % q:>16}" for q in qs))
     for item in args.run:
         name, folder = item.split("=", 1)
-        oof = pd.read_pickle(f"{folder}/oof_predictions.pkl")
-        poly = gpd.read_file(f"{folder}/polygons_cache.gpkg")
+        oof, poly = load_run(folder)
         res = area_recall(oof, poly, labels, qs)
         print("%-14s" % name + "".join(f"{100 * res[q][0]:>8.0f}% /{100 * res[q][1]:>4.0f}%" for q in qs))
     return 0

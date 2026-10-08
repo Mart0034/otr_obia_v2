@@ -1818,6 +1818,12 @@ def main(cfg=CONFIG):
             extra_ids = sorted(ef["mine_id"].unique())
             new_feats.append(ef); new_polys.append(ep)
         replaced = extra_ids + labeled_ids
+        # Die Segment-Polygone der neuen Kacheln stehen NICHT im polygons_cache.gpkg
+        # (der gehört zum Volllauf) - separat ablegen, damit sich z.B.
+        # eval_segment_size.py für diese Kacheln auswerten lässt.
+        gpd.GeoDataFrame(pd.concat(new_polys, ignore_index=True), crs=polygons_gdf.crs).to_file(
+            os.path.join(cfg["output_dir"], "polygons_extra.gpkg"), driver="GPKG"
+        )
         feature_df = pd.concat([feature_df[~feature_df["mine_id"].isin(replaced)]] + new_feats, ignore_index=True)
         polygons_gdf = gpd.GeoDataFrame(
             pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(replaced)]] + new_polys, ignore_index=True),
