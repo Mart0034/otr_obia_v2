@@ -77,6 +77,12 @@ def build_arg_parser(description):
              "Standard: alle verfügbaren CPU-Kerne. 1 = sequentiell.",
     )
     parser.add_argument(
+        "--feature-workers", dest="feature_workers", type=int, metavar="N",
+        help="Prozesse, auf die die Merkmalsberechnung EINER großen Mine "
+             "(ab ca. 20000 Segmenten) verteilt wird. Standard: alle CPU-Kerne. "
+             "1 = aus. Das Ergebnis ist identisch, nur schneller.",
+    )
+    parser.add_argument(
         "--use-cache", dest="use_cache", action="store_true", default=None,
         help="Zwischengespeicherten Segment-Datensatz aus einem vorherigen "
              "Lauf wiederverwenden (aus output_dir), statt Segmentierung "
@@ -238,6 +244,7 @@ def resolve_config(base_config, args):
         "n_estimators": args.n_estimators,
         "random_state": args.random_state,
         "n_jobs": args.n_jobs,
+        "feature_workers": args.feature_workers,
         "use_cache": args.use_cache,
         "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
         "extra_labels_path": getattr(args, "extra_labels_path", None),

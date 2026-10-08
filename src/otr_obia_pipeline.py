@@ -51,6 +51,7 @@ import os
 import glob
 import re
 import logging
+import multiprocessing
 from concurrent.futures.process import BrokenProcessPool
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -117,6 +118,9 @@ CONFIG = {
     "n_jobs": None,                               # Minen parallel verarbeiten:
                                                    # None = alle CPU-Kerne nutzen,
                                                    # 1 = sequentiell (alter Modus)
+    "feature_workers": None,                      # Prozesse für die Merkmals-
+                                                   # berechnung EINER großen Mine
+                                                   # (None = alle CPU-Kerne)
     "use_cache": False,                           # zwischengespeicherten
                                                    # Segment-Datensatz aus
                                                    # output_dir wiederverwenden
@@ -452,13 +456,18 @@ def brightness_extreme_fraction(vals):
     return float(((norm <= 1 / 3) | (norm >= 2 / 3)).mean())
 
 
-def compute_segment_features(arr, segments, band_names, texture_band):
-    """Berechnet je Segment: Mittelwert & Std pro Band, Helligkeits-
-    Bimodalität (siehe brightness_extreme_fraction()) und GLCM-Textur auf
-    dem gewählten Band (z. B. Dark Surface Index)."""
-    seg_ids = np.unique(segments)
-    seg_ids = seg_ids[seg_ids > 0]
+# Ab so vielen Segmenten lohnt es sich, die Merkmalsberechnung einer Mine auf
+# mehrere Prozesse zu verteilen (darunter ist der Start der Prozesse teurer).
+PARALLEL_MIN_SEGMENTS = 20000
 
+# Wird vor dem Start der Kind-Prozesse gesetzt; per fork erben diese die Arrays
+# ohne Kopie/Pickling (ein 500-MB-Bild nicht pro Prozess neu zu serialisieren).
+_FEATURE_CTX = None
+
+
+def _build_feature_ctx(arr, segments, band_names, texture_band):
+    """Einmal pro Mine vorberechnete Hilfsgrößen (Helligkeit, quantisiertes
+    Texturband, Bounding Boxes) - von allen Teilstücken gemeinsam genutzt."""
     # Helligkeit für brightness_extreme_fraction: Mittel über die im Bild
     # vorhandenen sichtbaren Bänder. Fehlen alle drei (z.B. in Tests mit
     # einem minimalen Bandsatz), bleibt das Merkmal 0.0 statt abzustürzen.
@@ -496,8 +505,18 @@ def compute_segment_features(arr, segments, band_names, texture_band):
     # Pixeln quadratisch und der eigentliche Flaschenhals großer Minen. Die
     # Ergebnisse sind identisch, denn Pixel außerhalb der Bounding Box gehören
     # ohnehin nicht zum Segment.
-    boxes = find_objects(segments.astype(np.int32))
+    return {
+        "arr": arr, "segments": segments, "band_names": band_names,
+        "brightness": brightness, "tex_band_q": tex_band_q,
+        "boxes": find_objects(segments.astype(np.int32)),
+    }
 
+
+def _segment_feature_rows(ctx, seg_ids):
+    """Merkmalszeilen für die angegebenen Segment-IDs (unabhängig voneinander,
+    deshalb beliebig auf Prozesse aufteilbar)."""
+    arr, segments, band_names = ctx["arr"], ctx["segments"], ctx["band_names"]
+    brightness, tex_band_q, boxes = ctx["brightness"], ctx["tex_band_q"], ctx["boxes"]
     rows = []
     for seg_id in seg_ids:
         box = boxes[int(seg_id) - 1]
@@ -565,8 +584,50 @@ def compute_segment_features(arr, segments, band_names, texture_band):
             row["tex_energy"] = row["tex_correlation"] = 0.0
 
         rows.append(row)
+    return rows
 
-    return pd.DataFrame(rows)
+
+def _feature_chunk(seg_ids):
+    return _segment_feature_rows(_FEATURE_CTX, seg_ids)
+
+
+def compute_segment_features(arr, segments, band_names, texture_band,
+                             n_workers=1, min_parallel_segments=PARALLEL_MIN_SEGMENTS):
+    """Berechnet je Segment: Mittelwert & Std pro Band, Helligkeits-
+    Bimodalität (siehe brightness_extreme_fraction()) und GLCM-Textur auf
+    dem gewählten Band (z. B. Dark Surface Index).
+
+    Bei sehr vielen Segmenten (große Minen) werden die Segmente auf n_workers
+    Prozesse verteilt. Jedes Segment wird unabhängig berechnet, das Ergebnis
+    ist daher identisch zur sequentiellen Variante (gleiche Reihenfolge)."""
+    global _FEATURE_CTX
+    seg_ids = np.unique(segments)
+    seg_ids = seg_ids[seg_ids > 0]
+    ctx = _build_feature_ctx(arr, segments, band_names, texture_band)
+
+    use_pool = (
+        n_workers and n_workers > 1 and len(seg_ids) >= min_parallel_segments
+        and "fork" in multiprocessing.get_all_start_methods()
+    )
+    if use_pool:
+        chunks = np.array_split(seg_ids, n_workers * 4)
+        _FEATURE_CTX = ctx
+        try:
+            with ProcessPoolExecutor(
+                max_workers=n_workers, mp_context=multiprocessing.get_context("fork"),
+                initializer=_init_worker_logging,
+            ) as executor:
+                rows = [r for part in executor.map(_feature_chunk, chunks) for r in part]
+            return pd.DataFrame(rows)
+        except (BrokenProcessPool, OSError, AssertionError) as exc:
+            logger.warning(
+                "Parallele Merkmalsberechnung nicht möglich (%s: %s) - rechne sequentiell.",
+                type(exc).__name__, exc,
+            )
+        finally:
+            _FEATURE_CTX = None
+
+    return pd.DataFrame(_segment_feature_rows(ctx, seg_ids))
 
 
 # ------------------------------------------------------------------
@@ -881,7 +942,10 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=Non
         feat_band_names += S1T_BAND_NAMES
     feat_arr = np.concatenate([arr, *extra_arrays], axis=-1) if extra_arrays else arr
 
-    feats = compute_segment_features(feat_arr, segments, feat_band_names, cfg["texture_band"])
+    feats = compute_segment_features(
+        feat_arr, segments, feat_band_names, cfg["texture_band"],
+        n_workers=cfg.get("feature_workers") or os.cpu_count() or 1,
+    )
     merged = seg_polys.merge(feats, on="segment_id", how="inner")
 
     n_pos = int(merged["label"].sum())

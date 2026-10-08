@@ -2,6 +2,7 @@
 import warnings
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from otr_obia_pipeline import brightness_extreme_fraction, compute_segment_features
@@ -191,3 +192,37 @@ def test_bounding_box_loop_matches_the_full_image_reference():
         ys, xs = np.where(m)
         assert feats.loc[sid, "n_pixels"] == m.sum()
         assert ys.min() >= 0  # bounding box sanity
+
+
+def test_parallel_features_equal_the_sequential_result():
+    """Splitting one big mine's segments over worker processes must give the
+    exact same table (same rows, same order) as the single-process version."""
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(11)
+    h, w = 90, 100
+    band_names = ["blue", "green", "red", "dsi"]
+    arr = rng.normal(size=(h, w, 4)).astype("float32")
+    arr[10:14, 10:14, :] = np.nan
+    seg = (gaussian_filter(rng.normal(size=(h, w)), 2) > 0).astype(int) + 1
+    seg = seg * 10 + (np.arange(w)[None, :] // 9)
+    seg[:2, :] = 0
+    seq = compute_segment_features(arr, seg, band_names, "dsi", n_workers=1)
+    par = compute_segment_features(arr, seg, band_names, "dsi", n_workers=3, min_parallel_segments=1)
+    pd.testing.assert_frame_equal(seq, par)
+    assert len(seq) > 4
+
+
+def test_parallel_features_fall_back_when_the_pool_is_unavailable(monkeypatch):
+    import otr_obia_pipeline as pipe
+
+    def broken(*args, **kwargs):
+        raise OSError("no processes")
+
+    monkeypatch.setattr(pipe, "ProcessPoolExecutor", broken)
+    rng = np.random.default_rng(5)
+    arr = rng.normal(size=(30, 30, 4)).astype("float32")
+    seg = (np.arange(30)[:, None] // 6) * 5 + (np.arange(30)[None, :] // 6) + 1
+    out = pipe.compute_segment_features(arr, seg, ["blue", "green", "red", "dsi"], "dsi",
+                                        n_workers=4, min_parallel_segments=1)
+    assert len(out) == 25
