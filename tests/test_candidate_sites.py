@@ -87,3 +87,32 @@ def test_default_flags_the_top_share_of_each_mine_area():
     # each mine is judged on its own area
     two = pd.concat([_seg(cells, "mine_001"), _seg(cells[:20], "mine_002")], ignore_index=True)
     assert build_candidate_sites(two, area_pct=10.0)["n_segments"].sum() == 10 + 2
+
+
+def _two_hills():
+    """A 40 x 6 strip of squares whose scores peak at two places far apart, so they
+    form one connected blob that should split into two cores."""
+    import math
+    cells = []
+    for c in range(40):
+        for r in range(6):
+            p = 0.3 + 0.65 * max(math.exp(-((c - 5) ** 2) / 8), math.exp(-((c - 34) ** 2) / 8))
+            cells.append((c, r, p))
+    return _seg(cells)
+
+
+def test_big_blob_splits_into_cores_under_the_size_cap():
+    seg = _two_hills()
+    one = build_candidate_sites(seg, threshold=0.0, max_site_m2=0)
+    assert len(one) == 1 and one.loc[0, "area_m2"] == pytest.approx(24000)
+    cores = build_candidate_sites(seg, threshold=0.0, max_site_m2=3000, join_dist_m=2)
+    assert len(cores) >= 2
+    assert (cores["area_m2"] <= 3000 + 1e-6).all()
+    assert cores["mean_proba"].min() > one.loc[0, "mean_proba"]      # cores beat the blob average
+
+
+def test_exclude_known_drops_sites_near_labels_and_reranks():
+    cells = [(0, 0, 0.9), (50, 0, 0.8)]
+    labels = gpd.GeoDataFrame(geometry=[box(X0 - 5, Y0 - 5, X0 + 15, Y0 + 15)], crs="EPSG:32719")
+    sites = build_candidate_sites(_seg(cells), threshold=0.5, labels=labels, exclude_known=True)
+    assert len(sites) == 1 and sites.loc[0, "rank"] == 1 and not sites.loc[0, "near_known_dump"]
