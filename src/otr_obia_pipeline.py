@@ -465,6 +465,46 @@ PARALLEL_MIN_SEGMENTS = 20000
 _FEATURE_CTX = None
 
 
+# (Zeilen-, Spalten-)Versatz der vier GLCM-Richtungen bei Abstand 1. Durch die
+# Symmetrie (P + P.T) ist die Richtung bis aufs Vorzeichen egal.
+_GLCM_OFFSETS = ((0, 1), (1, 1), (1, 0), (1, -1))
+
+
+def glcm_texture_stats(patch):
+    """(Kontrast, Homogenität, Energie, Korrelation) der GLCM eines uint8-Patches,
+    Mittel über vier Richtungen bei Abstand 1, symmetrisch und normiert.
+
+    Mathematisch identisch zu graycomatrix(levels=256, symmetric, normed) +
+    graycoprops, aber nur über die tatsächlich vorkommenden Pixelpaare gerechnet
+    statt über vier dichte 256x256-Matrizen: bei einem kleinen Segment sind das
+    wenige Dutzend Paare, und graycoprops brauchte ~20 ms pro Segment (der
+    größte Posten bei Hunderttausenden Segmenten). Abweichung nur im Rundungs-
+    bereich (~1e-15 relativ)."""
+    patch = patch.astype(np.int64)
+    h, w = patch.shape
+    stats = np.zeros((len(_GLCM_OFFSETS), 4))
+    for k, (dr, dc) in enumerate(_GLCM_OFFSETS):
+        a = patch[: h - dr, max(0, -dc): w - max(0, dc)].ravel()
+        b = patch[dr:, max(0, dc): w - max(0, -dc)].ravel()
+        i = np.concatenate([a, b])  # symmetrisch: jedes Paar in beide Richtungen
+        j = np.concatenate([b, a])
+        n = i.size
+        diff = (i - j).astype(np.float64)
+        contrast = float(np.mean(diff ** 2))
+        homogeneity = float(np.mean(1.0 / (1.0 + diff ** 2)))
+        _, counts = np.unique(i * 256 + j, return_counts=True)
+        energy = float(np.sqrt(np.sum((counts / n) ** 2)))
+        mean_i, mean_j = i.mean(), j.mean()
+        std_i = float(np.sqrt(np.mean((i - mean_i) ** 2)))
+        std_j = float(np.sqrt(np.mean((j - mean_j) ** 2)))
+        if std_i < 1e-15 or std_j < 1e-15:
+            correlation = 1.0  # wie graycoprops bei konstantem Patch
+        else:
+            correlation = float(np.mean((i - mean_i) * (j - mean_j)) / (std_i * std_j))
+        stats[k] = (contrast, homogeneity, energy, correlation)
+    return tuple(float(v) for v in stats.mean(axis=0))
+
+
 def _build_feature_ctx(arr, segments, band_names, texture_band):
     """Einmal pro Mine vorberechnete Hilfsgrößen (Helligkeit, quantisiertes
     Texturband, Bounding Boxes) - von allen Teilstücken gemeinsam genutzt."""
@@ -571,14 +611,8 @@ def _segment_feature_rows(ctx, seg_ids):
         # GLCM-Textur auf derselben Bounding Box
         patch = tex_band_q[y0:y1, x0:x1]
         if patch.shape[0] >= 2 and patch.shape[1] >= 2:
-            glcm = graycomatrix(
-                patch, distances=[1], angles=[0, np.pi / 4, np.pi / 2, 3 * np.pi / 4],
-                levels=256, symmetric=True, normed=True,
-            )
-            row["tex_contrast"] = float(graycoprops(glcm, "contrast").mean())
-            row["tex_homogeneity"] = float(graycoprops(glcm, "homogeneity").mean())
-            row["tex_energy"] = float(graycoprops(glcm, "energy").mean())
-            row["tex_correlation"] = float(np.nan_to_num(graycoprops(glcm, "correlation")).mean())
+            (row["tex_contrast"], row["tex_homogeneity"],
+             row["tex_energy"], row["tex_correlation"]) = glcm_texture_stats(patch)
         else:
             row["tex_contrast"] = row["tex_homogeneity"] = 0.0
             row["tex_energy"] = row["tex_correlation"] = 0.0

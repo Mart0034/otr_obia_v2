@@ -226,3 +226,25 @@ def test_parallel_features_fall_back_when_the_pool_is_unavailable(monkeypatch):
     out = pipe.compute_segment_features(arr, seg, ["blue", "green", "red", "dsi"], "dsi",
                                         n_workers=4, min_parallel_segments=1)
     assert len(out) == 25
+
+
+def test_sparse_glcm_matches_skimage():
+    """glcm_texture_stats() must equal graycomatrix + graycoprops (the slow
+    dense version it replaces) for varied patch shapes and contents."""
+    from skimage.feature import graycomatrix, graycoprops
+    from otr_obia_pipeline import glcm_texture_stats
+
+    rng = np.random.default_rng(21)
+    patches = [rng.integers(0, 256, size=s).astype(np.uint8)
+               for s in [(2, 2), (2, 7), (7, 2), (3, 3), (6, 6), (5, 11), (20, 9)]]
+    patches += [rng.integers(0, 4, size=(8, 8)).astype(np.uint8),      # few levels
+                np.full((5, 5), 77, dtype=np.uint8),                   # constant
+                np.tile(np.arange(6, dtype=np.uint8) * 40, (4, 1)),    # pure ramp
+                np.arange(36, dtype=np.uint8).reshape(6, 6) * 7]
+    for patch in patches:
+        glcm = graycomatrix(patch, distances=[1], angles=[0, np.pi / 4, np.pi / 2, 3 * np.pi / 4],
+                            levels=256, symmetric=True, normed=True)
+        ref = [float(np.nan_to_num(graycoprops(glcm, name)).mean())
+               for name in ("contrast", "homogeneity", "energy", "correlation")]
+        np.testing.assert_allclose(glcm_texture_stats(patch), ref, rtol=1e-9, atol=1e-12,
+                                   err_msg=f"patch shape {patch.shape}")
