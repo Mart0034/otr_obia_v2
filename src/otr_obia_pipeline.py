@@ -195,6 +195,9 @@ CONFIG = {
     "extra_imagery_dir": None,
     "extra_labels_path": None,
     "labeled_imagery_dir": None,
+    "hard_negatives_path": None,                  # bestätigte Fehlalarme (Polygone, mine_id):
+                                                   # ihre Segmente zählen im Training mehrfach
+    "hard_negative_factor": 10,                   # ... und zwar so oft
     "add_labels_path": None,                      # zusätzliche Halden-Polygone (mine_id =
                                                    # Mine/Kachel), z.B. aus reviewed_to_labels.py:
                                                    # werden auf den Datensatz angewendet
@@ -1170,7 +1173,7 @@ def _build_classifier(cfg):
 # ------------------------------------------------------------------
 # 6) Training + räumliche Validierung (Split NACH Mine, wie im Report)
 # ------------------------------------------------------------------
-def train_and_evaluate(feature_df, polygons_gdf, cfg):
+def train_and_evaluate(feature_df, polygons_gdf, cfg, hard_neg_mask=None, hard_neg_factor=1):
     # overlap_area/overlap_ratio werden direkt aus dem Label abgeleitet
     # (Data Leakage) und dürfen daher NICHT als Merkmal verwendet werden.
     # shape_area/shape_perimeter/shape_compactness sind dagegen legitime
@@ -1182,6 +1185,14 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
     X = feature_df[feature_cols].fillna(0.0).values
     y = feature_df["label"].values
     groups = feature_df["mine_id"].values
+    hard = np.asarray(hard_neg_mask, dtype=bool) if hard_neg_mask is not None else np.zeros(len(y), dtype=bool)
+
+    def _augment(idx):
+        """Harte Negative im Training (nur dort!) k-mal wiederholen - Out-of-Fold-Vorhersagen
+        bleiben unverändert eine Zeile je Segment."""
+        if hard_neg_factor <= 1 or not hard[idx].any():
+            return idx
+        return np.concatenate([idx] + [idx[hard[idx]]] * (int(hard_neg_factor) - 1))
 
     n_mines = feature_df["mine_id"].nunique()
     n_splits = min(5, n_mines)
@@ -1219,7 +1230,8 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
             )
         else:
             clf = _build_classifier(cfg)
-            clf.fit(X[train_idx], y[train_idx])
+            aug = _augment(train_idx)
+            clf.fit(X[aug], y[aug])
             proba = clf.predict_proba(X[val_idx])[:, 1]
         pred = (proba >= threshold).astype(int)
         out_of_fold_proba[val_idx] = proba
@@ -1292,7 +1304,8 @@ def train_and_evaluate(feature_df, polygons_gdf, cfg):
         )
     else:
         final_clf = _build_classifier(cfg)
-    final_clf.fit(X, y)
+    aug_all = _augment(np.arange(len(y)))
+    final_clf.fit(X[aug_all], y[aug_all])
 
     importances = pd.Series(final_clf.feature_importances_, index=feature_cols)
     logger.info(
@@ -1767,6 +1780,23 @@ def apply_extra_labels(feature_df, polygons_gdf, labels_gdf, min_overlap_ratio):
     return feature_df
 
 
+def mark_hard_negatives(feature_df, polygons_gdf, negatives_gdf, min_overlap=0.5):
+    """Bool-Array (Länge feature_df): label=0-Segmente, die zu >= min_overlap von einem
+    bestätigten Fehlalarm-Polygon (negatives_gdf, Spalte mine_id) überdeckt werden."""
+    negatives_gdf = negatives_gdf.to_crs(polygons_gdf.crs)
+    mine_ids = feature_df["mine_id"].astype(str).values
+    mask = np.zeros(len(feature_df), dtype=bool)
+    for mine, neg in negatives_gdf.groupby(negatives_gdf["mine_id"].astype(str)):
+        polys = polygons_gdf[polygons_gdf["mine_id"].astype(str) == mine]
+        if polys.empty:
+            continue
+        labeled = label_segments(polys, neg, min_overlap)
+        ids = set(labeled.loc[labeled["label"] == 1, "segment_id"])
+        mask |= (mine_ids == mine) & feature_df["segment_id"].isin(ids).values & (feature_df["label"].values == 0)
+    logger.info("Harte Negative: %d label=0-Segmente in bestätigten Fehlalarm-Flächen.", int(mask.sum()))
+    return mask
+
+
 def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
     """Entfernt aus dem TRAININGS-Datensatz alle label=0-Segmente, die innerhalb
     radius_m um einen Punkt aus points_path liegen (positive Segmente bleiben).
@@ -1893,7 +1923,13 @@ def main(cfg=CONFIG):
         train_feat, train_poly = drop_ignored_negatives(
             train_feat, train_poly, cfg["ignore_points_path"], cfg.get("ignore_radius_m", 150.0),
         )
-    clf, feature_cols, scores_df = train_and_evaluate(train_feat, train_poly, cfg)
+    hard_mask = None
+    if cfg.get("hard_negatives_path"):
+        hard_mask = mark_hard_negatives(train_feat, train_poly, gpd.read_file(cfg["hard_negatives_path"]))
+        logger.info("Harte Negative werden im Training %dx gewichtet.", int(cfg.get("hard_negative_factor", 10)))
+    clf, feature_cols, scores_df = train_and_evaluate(
+        train_feat, train_poly, cfg, hard_neg_mask=hard_mask,
+        hard_neg_factor=int(cfg.get("hard_negative_factor", 10)) if hard_mask is not None else 1)
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)

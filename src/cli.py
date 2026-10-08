@@ -184,6 +184,15 @@ def build_arg_parser(description):
              "(mit --use-cache muss nichts neu berechnet werden).",
     )
     parser.add_argument(
+        "--hard-negatives-path", dest="hard_negatives_path", metavar="PATH",
+        help="Bestätigte Fehlalarme (GeoPackage, Spalte mine_id), z.B. negatives_reviewed_clean.gpkg: "
+             "deren Segmente werden im Training --hard-negative-factor mal wiederholt.",
+    )
+    parser.add_argument(
+        "--hard-negative-factor", dest="hard_negative_factor", type=int, metavar="K",
+        help="Wie oft die harten Negativen im Training gezählt werden (Standard 10).",
+    )
+    parser.add_argument(
         "--ignore-points-path", dest="ignore_points_path", metavar="PATH",
         help="Punkte/Umrisse bekannter oder unklarer Halden (mehrere Dateien mit Komma): label=0-Segmente "
              "im Umkreis werden aus dem Training genommen.",
@@ -257,6 +266,8 @@ def resolve_config(base_config, args):
         "extra_labels_path": getattr(args, "extra_labels_path", None),
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
         "add_labels_path": getattr(args, "add_labels_path", None),
+        "hard_negatives_path": getattr(args, "hard_negatives_path", None),
+        "hard_negative_factor": getattr(args, "hard_negative_factor", None),
         "ignore_points_path": getattr(args, "ignore_points_path", None),
         "ignore_radius_m": getattr(args, "ignore_radius_m", None),
         "mine_boundary_path": getattr(args, "mine_boundary_path", None),
