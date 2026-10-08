@@ -279,6 +279,11 @@ def extract_mine_id(filename, pattern=r"(mine[_\-]?\d+|\d+)"):
 # ------------------------------------------------------------------
 # 2) Segmentierung
 # ------------------------------------------------------------------
+# Blockweise Segmentierung ab dieser Segmentzahl (siehe segment_mine()).
+SLIC_BLOCK_MIN_SEGMENTS = 6000
+SLIC_BLOCK_PX = 256
+
+
 def segment_mine(arr, n_segments, compactness, nodata=None,
                   target_segment_px=None, max_segments=None):
     """SLIC-Superpixel-Segmentierung auf allen Bändern gleichzeitig.
@@ -337,15 +342,46 @@ def segment_mine(arr, n_segments, compactness, nodata=None,
             hi = lo + 1e-6
         norm[..., b] = np.clip((band - lo) / (hi - lo), 0, 1)
 
-    segments = slic(
-        norm,
-        n_segments=n_segments,
-        compactness=compactness,
-        channel_axis=-1,
-        start_label=1,
-        enforce_connectivity=True,
-        mask=valid_mask,
-    )
+    if n_segments <= SLIC_BLOCK_MIN_SEGMENTS:
+        return slic(
+            norm,
+            n_segments=n_segments,
+            compactness=compactness,
+            channel_axis=-1,
+            start_label=1,
+            enforce_connectivity=True,
+            mask=valid_mask,
+        )
+
+    # Sehr viele Segmente: skimage platziert die Startpunkte bei einer Maske per
+    # k-means über ALLE gültigen Pixel - Aufwand ~ Pixel x Segmente. Bei einer
+    # 2.5-Mpx-Mine mit 80.000 Segmenten läuft das über Stunden (und wurde auf
+    # dem Server hart beendet). Deshalb blockweise segmentieren: jeder Block
+    # bekommt proportional zu seinen gültigen Pixeln seine Segmentzahl. Die
+    # Segmente enden dann an den Blockgrenzen (harmlos bei Halden von wenigen
+    # Pixeln Größe).
+    height, width = valid_mask.shape
+    n_valid_total = int(valid_mask.sum())
+    segments = np.zeros((height, width), dtype=np.int32)
+    offset = 0
+    for y0 in range(0, height, SLIC_BLOCK_PX):
+        for x0 in range(0, width, SLIC_BLOCK_PX):
+            block_mask = valid_mask[y0:y0 + SLIC_BLOCK_PX, x0:x0 + SLIC_BLOCK_PX]
+            n_block_valid = int(block_mask.sum())
+            if n_block_valid == 0:
+                continue
+            n_block = max(1, round(n_segments * n_block_valid / n_valid_total))
+            block = norm[y0:y0 + SLIC_BLOCK_PX, x0:x0 + SLIC_BLOCK_PX]
+            if n_block < 2:
+                seg = np.where(block_mask, 1, 0)
+            else:
+                seg = slic(
+                    block, n_segments=n_block, compactness=compactness, channel_axis=-1,
+                    start_label=1, enforce_connectivity=True, mask=block_mask,
+                )
+            seg = np.where(seg > 0, seg + offset, 0)
+            offset = max(offset, int(seg.max()))
+            segments[y0:y0 + SLIC_BLOCK_PX, x0:x0 + SLIC_BLOCK_PX] = seg
     return segments
 
 
