@@ -159,6 +159,11 @@ def build_arg_parser(description):
              "ändert - eine Halde wächst, die meisten Fehlalarme bleiben gleich.",
     )
     parser.add_argument(
+        "--s2my-bands", dest="s2my_bands", metavar="LIST",
+        help="Nur diese Mehrjahres-Merkmale verwenden (Komma-Liste, z.B. "
+             "s2my_bright_early,s2my_bright_late). Standard: alle sechs.",
+    )
+    parser.add_argument(
         "--s1t-dir", dest="s1t_dir", metavar="DIR",
         help="Optional: Ordner mit Radar-Zeitreihen-Merkmalen aus mehreren "
              "Sentinel-1-Aufnahmen (erzeugt von "
@@ -288,6 +293,7 @@ def resolve_config(base_config, args):
         "s2t_dir": getattr(args, "s2t_dir", None),
         "s1t_dir": getattr(args, "s1t_dir", None),
         "s2my_dir": getattr(args, "s2my_dir", None),
+        "s2my_bands": getattr(args, "s2my_bands", None),
         "osm_buildings_dir": getattr(args, "osm_buildings_dir", None),
         "osm_poi_dir": getattr(args, "osm_poi_dir", None),
         "osm_roads_dir": getattr(args, "osm_roads_dir", None),

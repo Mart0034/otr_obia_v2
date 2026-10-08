@@ -68,3 +68,25 @@ def test_pipeline_loader_returns_nan_bands_when_the_file_is_missing_and_reads_it
         dst.write(data)
     got = load_s2_multiyear_for_mine(s2_path, str(out_dir), (4, 5))
     assert got.shape == (4, 5, 6) and got[2, 3, 4] == data[4, 2, 3]
+
+
+def test_a_subset_of_the_multiyear_features_can_be_selected(tmp_path):
+    import rasterio
+    from rasterio.transform import from_origin
+    from otr_obia_pipeline import load_s2_multiyear_for_mine, select_s2my_names
+
+    assert select_s2my_names({}) == BAND_NAMES
+    assert select_s2my_names({"s2my_bands": "s2my_bright_late, s2my_bright_early"}) == ["s2my_bright_early", "s2my_bright_late"]
+    with pytest.raises(ValueError):
+        select_s2my_names({"s2my_bands": "s2my_nonsense"})
+    (tmp_path / "imagery").mkdir()
+    out_dir = tmp_path / "my"
+    out_dir.mkdir()
+    data = np.arange(6 * 3 * 3, dtype="float32").reshape(6, 3, 3)
+    with rasterio.open(out_dir / "m.tif", "w", driver="GTiff", height=3, width=3, count=6, dtype="float32",
+                       crs="EPSG:32719", transform=from_origin(0, 30, 10, 10)) as dst:
+        dst.write(data)
+    got = load_s2_multiyear_for_mine(str(tmp_path / "imagery" / "m.tif"), str(out_dir), (3, 3),
+                                     ["s2my_bright_late", "s2my_dark_onset"])
+    assert got.shape == (3, 3, 2)
+    assert got[1, 2, 0] == data[1, 1, 2] and got[1, 2, 1] == data[5, 1, 2]       # late = band index 1, onset = 5

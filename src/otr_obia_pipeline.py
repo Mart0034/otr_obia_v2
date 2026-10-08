@@ -182,6 +182,7 @@ CONFIG = {
     # Optional: Ordner mit Mehrjahres-Merkmalen aus Sentinel-2 (erzeugt von
     # src/fetch_s2_multiyear.py): wächst an der Stelle etwas Dunkles? None = aus.
     "s2my_dir": None,
+    "s2my_bands": None,   # Teilmenge der sechs Mehrjahres-Merkmale (Komma-Liste), None = alle
     # Optional: Ordner mit OSM-Gebäudeumrissen pro Mine (erzeugt von
     # src/fetch_osm_buildings.py). Fügt der exportierten Karte eine rein
     # informative is_building-Spalte hinzu (kein Filter, ändert dump_pred
@@ -816,14 +817,30 @@ def load_s2_temporal_for_mine(s2_path, s2t_dir, shape):
     return np.moveaxis(data, 0, -1)
 
 
-def load_s2_multiyear_for_mine(s2_path, s2my_dir, shape):
-    """Mehrjahres-Merkmale aus Sentinel-2 als (H, W, 6), siehe fetch_s2_multiyear.py."""
+def select_s2my_names(cfg):
+    """Welche der sechs Mehrjahres-Merkmale genutzt werden (cfg["s2my_bands"], Komma-Liste
+    oder Liste; leer = alle). Zum Testen, welche davon etwas bringen."""
+    wanted = cfg.get("s2my_bands")
+    if not wanted:
+        return list(S2MY_BAND_NAMES)
+    names = [n.strip() for n in wanted.split(",")] if isinstance(wanted, str) else list(wanted)
+    unknown = [n for n in names if n not in S2MY_BAND_NAMES]
+    if unknown or not names:
+        raise ValueError(f"Unbekannte Mehrjahres-Merkmale {unknown}; erlaubt: {S2MY_BAND_NAMES}")
+    return [n for n in S2MY_BAND_NAMES if n in names]      # feste Reihenfolge
+
+
+def load_s2_multiyear_for_mine(s2_path, s2my_dir, shape, names=None):
+    """Mehrjahres-Merkmale aus Sentinel-2 als (H, W, n), siehe fetch_s2_multiyear.py.
+    names: Auswahl aus S2MY_BAND_NAMES (Standard: alle sechs)."""
+    names = list(names) if names else list(S2MY_BAND_NAMES)
+    cols = [S2MY_BAND_NAMES.index(n) for n in names]
     read = _read_aligned(s2_path, s2my_dir, shape, len(S2MY_BAND_NAMES),
                          "Sentinel-2-Mehrjahres", "fetch_s2_multiyear.py")
     if read is None:
-        return np.full((*shape, len(S2MY_BAND_NAMES)), np.nan, dtype=np.float32)
+        return np.full((*shape, len(names)), np.nan, dtype=np.float32)
     data, *_ = read
-    return np.moveaxis(data, 0, -1)
+    return np.moveaxis(data[cols], 0, -1)
 
 
 def load_s1_temporal_for_mine(s2_path, s1t_dir, shape):
@@ -997,8 +1014,9 @@ def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=Non
         extra_arrays.append(load_s2_temporal_for_mine(path, cfg["s2t_dir"], shape))
         feat_band_names += S2T_BAND_NAMES
     if cfg.get("s2my_dir"):
-        extra_arrays.append(load_s2_multiyear_for_mine(path, cfg["s2my_dir"], shape))
-        feat_band_names += S2MY_BAND_NAMES
+        s2my_names = select_s2my_names(cfg)
+        extra_arrays.append(load_s2_multiyear_for_mine(path, cfg["s2my_dir"], shape, s2my_names))
+        feat_band_names += s2my_names
     if cfg.get("s1t_dir"):
         extra_arrays.append(load_s1_temporal_for_mine(path, cfg["s1t_dir"], shape))
         feat_band_names += S1T_BAND_NAMES
@@ -1866,7 +1884,7 @@ def main(cfg=CONFIG):
         for key, names, label in (("s1_dir", S1_BAND_NAMES, "Sentinel-1"),
                                   ("dem_dir", DEM_BAND_NAMES, "Gelände"),
                                   ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen"),
-                                  ("s2my_dir", S2MY_BAND_NAMES, "Mehrjahres"),
+                                  ("s2my_dir", select_s2my_names(cfg) if cfg.get("s2my_dir") else S2MY_BAND_NAMES, "Mehrjahres"),
                                   ("s1t_dir", S1T_BAND_NAMES, "Radar-Zeitreihen")):
             if cfg.get(key) and f"{names[0]}_mean" not in feature_df.columns:
                 logger.warning(
