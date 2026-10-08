@@ -141,3 +141,12 @@ def test_gpkg_has_an_empty_polygon_layer_for_hand_drawn_shapes(tmp_path):
     drawn = gpd.read_file(path, layer="drawn_polygons")
     assert drawn.empty and {"kind", "mine_id", "note"} <= set(drawn.columns)
     assert drawn.crs.to_epsg() == 32719
+
+
+def test_rank_by_peak_score_puts_the_highest_peak_first():
+    cells = [(c, 0, 0.60) for c in range(10)] + [(100, 0, 0.99)]    # big mediocre blob, small sharp peak
+    by_score = build_candidate_sites(_seg(cells), threshold=0.5, rank_by="score")
+    by_peak = build_candidate_sites(_seg(cells), threshold=0.5, rank_by="max_proba")
+    assert by_score.loc[0, "n_segments"] == 10 and by_peak.loc[0, "n_segments"] == 1
+    with pytest.raises(ValueError):
+        build_candidate_sites(_seg(cells), threshold=0.5, rank_by="nonsense")

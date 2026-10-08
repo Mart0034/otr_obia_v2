@@ -94,11 +94,14 @@ def _split_big(g, join_dist_m, max_area_m2, crs):
 
 def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                           labels=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
-                          exclude_known=False, max_urban_frac=None):
+                          exclude_known=False, max_urban_frac=None, rank_by="score"):
     """seg: Segmente mit mine_id, dump_proba, geometry (projiziertes CRS in Metern).
     Gibt ein GeoDataFrame mit einem Standort pro Zeile zurück, nach Rang sortiert.
     max_site_m2: größere Standorte werden in ihre Kerne zerlegt (0 = aus).
     exclude_known: Standorte nahe bekannter Halden (labels) weglassen.
+    rank_by: Sortierung - "score" (Fläche x mittlere Bewertung), "max_proba" (höchste
+    Segment-Bewertung im Standort) oder "mean_proba". In der ersten Prüfung von 300
+    Standorten waren die Treffer bei max_proba >= 0.95 am häufigsten.
     max_urban_frac: Standorte weglassen, bei denen mehr als dieser Flächenanteil
     Gebäude / Straßenraster / Sehenswürdigkeit laut OSM ist (nur mit den
     OSM-Spalten im Lauf, siehe --osm-*-dir der Pipeline)."""
@@ -137,7 +140,9 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     elif max_urban_frac is not None:
         logger.warning("--max-urban-frac ignoriert: der Lauf enthält keine OSM-Spalten "
                        "(is_building/is_road_grid/is_poi).")
-    sites = sites.sort_values("score", ascending=False).reset_index(drop=True)
+    if rank_by not in ("score", "max_proba", "mean_proba"):
+        raise ValueError("rank_by muss score, max_proba oder mean_proba sein")
+    sites = sites.sort_values([rank_by, "score"], ascending=False).reset_index(drop=True)
 
     if labels is not None and len(labels):
         lab = labels.to_crs(seg.crs)
@@ -203,6 +208,9 @@ def main(argv=None):
                    help="Standorte weglassen, die zu mehr als diesem Anteil (0-1) aus OSM-Gebäuden, "
                         "Straßenraster oder Sehenswürdigkeiten bestehen (z.B. 0.2). Braucht einen "
                         "Lauf mit --osm-buildings-dir/--osm-roads-dir/--osm-poi-dir.")
+    p.add_argument("--rank-by", choices=["score", "max_proba", "mean_proba"], default="score",
+                   help="Reihenfolge der Standorte: score = Fläche x mittlere Bewertung (Standard), "
+                        "max_proba = höchste Segment-Bewertung (bisher treffsicherer).")
     p.add_argument("--exclude-known", action="store_true",
                    help="Standorte nahe bekannter Halden (--labels) weglassen - zum Suchen NEUER Halden.")
     args = p.parse_args(argv)
@@ -212,7 +220,7 @@ def main(argv=None):
     labels = gpd.read_file(args.labels) if args.labels else None
     sites = build_candidate_sites(seg, args.threshold, args.area_pct, args.join_dist_m,
                                   args.min_area_m2, labels, args.known_dist_m, args.top,
-                                  args.max_site_m2, args.exclude_known, args.max_urban_frac)
+                                  args.max_site_m2, args.exclude_known, args.max_urban_frac, args.rank_by)
     write_sites_gpkg(sites, args.out)
     csv_path = args.out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
