@@ -105,3 +105,9 @@ def test_buffer_scales_with_quarry_size_within_limits():
 def test_fixed_buffer_is_used_without_buffer_scale():
     plan = plan_sites(_gdf([_utm_box(400000, 7400000, 50)]), buffer_m=700)
     assert plan.loc[0, "buffer_m"] == 700
+
+
+def test_points_without_buffer_get_the_minimum_tile():
+    plan = plan_sites(_gdf([Point(400000, 7400000)]), buffer_m=0, min_radius_m=1000, min_area_m2=0)
+    assert plan.loc[0, "radius_m"] == 1000
+    assert plan.loc[0, "center_x"] == pytest.approx(400000)

@@ -129,7 +129,8 @@ def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
         if buffer_scale is not None:
             gx0, gy0, gx1, gy1 = geom.bounds
             buf = min(max(buffer_scale * max(gx1 - gx0, gy1 - gy0), buffer_min_m), buffer_max_m)
-        minx, miny, maxx, maxy = geom.buffer(buf).bounds
+        # buffer(0) macht aus einem Punkt eine leere Geometrie (NaN-Grenzen)
+        minx, miny, maxx, maxy = (geom.buffer(buf) if buf > 0 else geom).bounds
         side = max(maxx - minx, maxy - miny, 2 * min_radius_m)
         radius = math.ceil(side / 2 / PIXEL_M) * PIXEL_M
         if status == "ok" and 2 * radius > max_tile_m:
