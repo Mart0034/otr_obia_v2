@@ -90,11 +90,14 @@ def _split_big(g, join_dist_m, max_area_m2, crs):
 
 def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                           labels=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
-                          exclude_known=False):
+                          exclude_known=False, max_urban_frac=None):
     """seg: Segmente mit mine_id, dump_proba, geometry (projiziertes CRS in Metern).
     Gibt ein GeoDataFrame mit einem Standort pro Zeile zurück, nach Rang sortiert.
     max_site_m2: größere Standorte werden in ihre Kerne zerlegt (0 = aus).
-    exclude_known: Standorte nahe bekannter Halden (labels) weglassen."""
+    exclude_known: Standorte nahe bekannter Halden (labels) weglassen.
+    max_urban_frac: Standorte weglassen, bei denen mehr als dieser Flächenanteil
+    Gebäude / Straßenraster / Sehenswürdigkeit laut OSM ist (nur mit den
+    OSM-Spalten im Lauf, siehe --osm-*-dir der Pipeline)."""
     if seg.crs is None or not seg.crs.is_projected:
         raise ValueError("Die Segmente brauchen ein projiziertes CRS (Meter), z.B. UTM.")
     seeds = select_seeds(seg, threshold, area_pct)
@@ -122,6 +125,14 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     sites = gpd.GeoDataFrame(parts, geometry="geometry", crs=seg.crs)
     sites = sites[sites["area_m2"] >= min_area_m2]
     sites["score"] = sites["area_m2"] * sites["mean_proba"]
+    frac_cols = [c for c in sites.columns if c.startswith("frac_")]
+    if frac_cols:
+        sites["urban_frac"] = sites[frac_cols].max(axis=1).round(3)
+        if max_urban_frac is not None:
+            sites = sites[sites["urban_frac"] <= max_urban_frac]
+    elif max_urban_frac is not None:
+        logger.warning("--max-urban-frac ignoriert: der Lauf enthält keine OSM-Spalten "
+                       "(is_building/is_road_grid/is_poi).")
     sites = sites.sort_values("score", ascending=False).reset_index(drop=True)
 
     if labels is not None and len(labels):
@@ -169,6 +180,10 @@ def main(argv=None):
     p.add_argument("--max-site-m2", type=float, default=100000.0,
                    help="Größere Standorte in ihre hochbewerteten Kerne zerlegen (0 = nicht zerlegen). "
                         "Standard 100000 m2; echte Halden sind meist 5.000 - 70.000 m2.")
+    p.add_argument("--max-urban-frac", type=float, default=None,
+                   help="Standorte weglassen, die zu mehr als diesem Anteil (0-1) aus OSM-Gebäuden, "
+                        "Straßenraster oder Sehenswürdigkeiten bestehen (z.B. 0.2). Braucht einen "
+                        "Lauf mit --osm-buildings-dir/--osm-roads-dir/--osm-poi-dir.")
     p.add_argument("--exclude-known", action="store_true",
                    help="Standorte nahe bekannter Halden (--labels) weglassen - zum Suchen NEUER Halden.")
     args = p.parse_args(argv)
@@ -178,7 +193,7 @@ def main(argv=None):
     labels = gpd.read_file(args.labels) if args.labels else None
     sites = build_candidate_sites(seg, args.threshold, args.area_pct, args.join_dist_m,
                                   args.min_area_m2, labels, args.known_dist_m, args.top,
-                                  args.max_site_m2, args.exclude_known)
+                                  args.max_site_m2, args.exclude_known, args.max_urban_frac)
     sites.to_file(args.out, layer="candidate_sites", driver="GPKG")
     csv_path = args.out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)

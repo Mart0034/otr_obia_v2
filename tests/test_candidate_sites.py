@@ -116,3 +116,15 @@ def test_exclude_known_drops_sites_near_labels_and_reranks():
     labels = gpd.GeoDataFrame(geometry=[box(X0 - 5, Y0 - 5, X0 + 15, Y0 + 15)], crs="EPSG:32719")
     sites = build_candidate_sites(_seg(cells), threshold=0.5, labels=labels, exclude_known=True)
     assert len(sites) == 1 and sites.loc[0, "rank"] == 1 and not sites.loc[0, "near_known_dump"]
+
+
+def test_urban_filter_drops_built_up_sites_and_needs_osm_columns():
+    cells = [(0, 0, 0.9), (50, 0, 0.8)]
+    seg = _seg(cells)
+    seg["is_building"] = [True, False]
+    kept = build_candidate_sites(seg, threshold=0.5, max_urban_frac=0.2)
+    assert len(kept) == 1 and kept.loc[0, "urban_frac"] == 0.0
+    both = build_candidate_sites(seg, threshold=0.5)
+    assert sorted(both["urban_frac"]) == [0.0, 1.0]
+    # without OSM columns the filter is a no-op (with a warning), not a crash
+    assert len(build_candidate_sites(_seg(cells), threshold=0.5, max_urban_frac=0.2)) == 2
