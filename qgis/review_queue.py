@@ -16,6 +16,9 @@ QGIS-Python-Konsole öffnen und ausführen: rechts erscheint das Fenster
     3  Partial   Halde enthalten, aber der Umriss ist viel größer
     4  Unsure    unklar
     5  Skip      später nochmal ansehen (kommt am Ende wieder)
+    S  Sichern   (Knopf) schreibt alles in die .gpkg-Datei; passiert auch automatisch alle
+                 10 Entscheidungen und beim Schließen des Fensters. Vor dem Hochladen/
+                 Kopieren der Datei einmal drücken.
     6  Back      letzte Entscheidung zurücknehmen (beliebig oft: geht Schritt für
                  Schritt zurück, solange das Fenster offen ist)
     7  Karte     in Google Maps öffnen
@@ -197,7 +200,8 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             btn.clicked.connect(lambda _=False, v=value: self.decide(v))
             grid.addWidget(btn, 4 + n // 2, n % 2)
         extra = [("5  Skip", self.skip), ("7  Karte", self.open_map),
-                 ("Teil einzeichnen", self.draw_part), ("Weiter", self.next_after_draw)]
+                 ("Teil einzeichnen", self.draw_part), ("Weiter", self.next_after_draw),
+                 ("💾 Sichern", self.save_to_file)]
         for n, (text, func) in enumerate(extra):
             btn = QPushButton(text)
             btn.clicked.connect(lambda _=False, f=func: f())
@@ -256,6 +260,20 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         if not self.layer.isEditable():
             self.layer.startEditing()
 
+    def save_to_file(self, quiet=False):
+        """Schreibt die in der Seitendatei (-wal) wartenden Änderungen in die eigentliche
+        .gpkg-Datei - danach lässt sie sich direkt kopieren/hochladen."""
+        import sqlite3
+        path = self.layer.source().split("|")[0]
+        try:
+            con = sqlite3.connect(path, timeout=10)
+            busy, _, _ = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            con.close()
+            if not quiet:
+                self.notify(f"In die Datei gesichert: {path}" + (" (teilweise - QGIS liest gerade)" if busy else ""))
+        except Exception as exc:
+            self.notify(f"Sichern fehlgeschlagen: {exc}")
+
     def decide(self, value):
         if self.awaiting_draw:
             self.next_after_draw()
@@ -268,6 +286,10 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                         + (f" - Notiz: {note}" if note else ""))
         self.note.setCurrentIndex(0)
         self.note.clearEditText()
+        self.since_save = getattr(self, "since_save", 0) + 1
+        if self.since_save >= 10:              # alle 10 Entscheidungen automatisch in die Datei schreiben
+            self.since_save = 0
+            self.save_to_file(quiet=True)
         self.show_current()
 
     def skip(self):
@@ -325,6 +347,10 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                     layer.commitChanges()
             except RuntimeError:
                 pass
+        try:
+            self.save_to_file(quiet=True)
+        except Exception:
+            pass
         super().closeEvent(event)
 
 
