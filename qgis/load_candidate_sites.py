@@ -13,7 +13,7 @@ wählen. Das Skript
   * legt die Aktion "In Google Maps öffnen" an (Werkzeug "Objektaktion
     ausführen" / Rechtsklick > Aktionen; die Adresse steht auch in der
     Spalte maps_url),
-  * macht die Spalte `review` zu einer Auswahlliste (dump / clean / unsure),
+  * macht die Spalte `review` zu einer Auswahlliste (dump / clean / partial / unsure),
   * macht die Auswahlfarbe durchscheinend (sonst verdeckt das gelbe
     Auswahl-Highlight das Luftbild),
   * zoomt auf alle Standorte.
@@ -98,7 +98,7 @@ def review_dropdown(layer):
     idx = layer.fields().indexOf("review")
     if idx < 0:
         raise ValueError("Spalte 'review' nicht gefunden")
-    options = [{"dump": "dump"}, {"clean": "clean"}, {"unsure": "unsure"}]
+    options = [{"dump": "dump"}, {"clean": "clean"}, {"partial": "partial"}, {"unsure": "unsure"}]
     layer.setEditorWidgetSetup(idx, QgsEditorWidgetSetup("ValueMap", {"map": options}))
 
 

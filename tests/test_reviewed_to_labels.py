@@ -18,14 +18,22 @@ def _sites(reviews):
 def test_split_by_review_value_with_case_and_blanks():
     dump, clean, unsure, summary = split_reviews(_sites(["dump", "Clean ", "unsure", "", None, "DUMP"]))
     assert len(dump) == 2 and len(clean) == 1 and len(unsure) == 1
+    assert unsure.geometry.iloc[0].geom_type == "Polygon"   # ignore zone keeps the whole outline
     assert list(dump["site_id"]) == ["S0001", "S0006"]
     assert len(summary) == 4                      # blanks are not reviewed yet
-    assert unsure.geometry.iloc[0].geom_type == "Point"
 
 
 def test_unknown_review_value_is_an_error():
     with pytest.raises(ValueError, match="maybe"):
         split_reviews(_sites(["dump", "maybe"]))
+
+
+def test_partial_sites_are_ignored_not_labeled_and_count_in_the_lenient_rate():
+    dump, clean, unsure, summary = split_reviews(_sites(["dump", "partial", "clean", "partial"]))
+    assert len(dump) == 1 and len(clean) == 1 and len(unsure) == 2
+    table = precision_by_rank(summary, steps=(4,)).iloc[0]
+    assert table["trefferquote"] == pytest.approx(0.25)
+    assert table["trefferquote_mit_partial"] == pytest.approx(0.75)
 
 
 def test_gaps_between_flagged_segments_are_closed():
