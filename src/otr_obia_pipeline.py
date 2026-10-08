@@ -195,6 +195,9 @@ CONFIG = {
     "extra_imagery_dir": None,
     "extra_labels_path": None,
     "labeled_imagery_dir": None,
+    "add_labels_path": None,                      # zusätzliche Halden-Polygone (mine_id =
+                                                   # Mine/Kachel), z.B. aus reviewed_to_labels.py:
+                                                   # werden auf den Datensatz angewendet
     "ignore_points_path": None,
     "ignore_radius_m": 150.0,
     "road_density_radius_m": 150,
@@ -1740,6 +1743,30 @@ def summarize_mine_detection(result):
 # ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
+def apply_extra_labels(feature_df, polygons_gdf, labels_gdf, min_overlap_ratio):
+    """Setzt zusätzliche Halden-Labels (z.B. in QGIS geprüfte Funde) auf einen
+    FERTIGEN Segment-Datensatz an, ohne ihn neu zu berechnen: Segmente, die eines
+    der Polygone zu >= min_overlap_ratio überdecken, werden positiv. Bestehende
+    Positive bleiben; die Zuordnung läuft über mine_id des Label-Polygons."""
+    labels_gdf = labels_gdf.to_crs(polygons_gdf.crs)
+    feature_df = feature_df.copy()
+    mine_ids = feature_df["mine_id"].astype(str)
+    added = 0
+    for mine, lab in labels_gdf.groupby(labels_gdf["mine_id"].astype(str)):
+        polys = polygons_gdf[polygons_gdf["mine_id"].astype(str) == mine]
+        if polys.empty:
+            logger.warning("Zusatz-Labels für '%s': keine Segmente dieser Mine/Kachel im Datensatz - übersprungen.", mine)
+            continue
+        labeled = label_segments(polys, lab, min_overlap_ratio)
+        positive_ids = set(labeled.loc[labeled["label"] == 1, "segment_id"])
+        rows = feature_df.index[(mine_ids == mine).values]
+        newly = feature_df.loc[rows, "segment_id"].isin(positive_ids).values & (feature_df.loc[rows, "label"].values == 0)
+        feature_df.loc[rows[newly], "label"] = 1
+        added += int(newly.sum())
+    logger.info("Zusatz-Labels: %d Segmente zusätzlich positiv (%d Label-Polygone).", added, len(labels_gdf))
+    return feature_df
+
+
 def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
     """Entfernt aus dem TRAININGS-Datensatz alle label=0-Segmente, die innerhalb
     radius_m um einen Punkt aus points_path liegen (positive Segmente bleiben).
@@ -1748,7 +1775,9 @@ def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
     Label-Polygon eingezeichnet sind, würden die umliegenden Reifen-Segmente
     sonst als "sicher kein Dump" mittrainiert. Die Segmente werden nur aus
     dem Training genommen, nicht aus Vorhersage und Export."""
-    pts = gpd.read_file(points_path).to_crs(polygons_gdf.crs)
+    # mehrere Dateien mit Komma getrennt möglich (z.B. Boss-Punkte + geprüfte Standorte)
+    pts = pd.concat([gpd.read_file(p.strip()).to_crs(polygons_gdf.crs)[["geometry"]]
+                     for p in str(points_path).split(",") if p.strip()], ignore_index=True)
     zone = pts.geometry.buffer(radius_m).union_all()
     in_zone = polygons_gdf[polygons_gdf.geometry.intersects(zone)][["mine_id", "segment_id"]]
     keys = set(zip(in_zone["mine_id"], in_zone["segment_id"]))
@@ -1842,6 +1871,10 @@ def main(cfg=CONFIG):
             "nächsten Mal wiederverwenden, ohne alles neu zu berechnen).",
             cfg["output_dir"],
         )
+
+    if cfg.get("add_labels_path"):
+        feature_df = apply_extra_labels(
+            feature_df, polygons_gdf, gpd.read_file(cfg["add_labels_path"]), cfg["min_overlap_ratio"])
 
     logger.info(
         "Gesamt: %d Segmente, %d positiv (%d Minen).",

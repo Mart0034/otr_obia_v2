@@ -178,8 +178,15 @@ def build_arg_parser(description):
              "--extra-imagery-dir, das nur bewertet wird).",
     )
     parser.add_argument(
+        "--add-labels-path", dest="add_labels_path", metavar="PATH",
+        help="Zusätzliche Halden-Polygone (GeoPackage, Spalte mine_id = Mine/Kachel), z.B. die "
+             "geprüften Funde aus reviewed_to_labels.py. Wird auf den fertigen Datensatz angewendet "
+             "(mit --use-cache muss nichts neu berechnet werden).",
+    )
+    parser.add_argument(
         "--ignore-points-path", dest="ignore_points_path", metavar="PATH",
-        help="Punkte bekannter Halden: label=0-Segmente im Umkreis werden aus dem Training genommen.",
+        help="Punkte/Umrisse bekannter oder unklarer Halden (mehrere Dateien mit Komma): label=0-Segmente "
+             "im Umkreis werden aus dem Training genommen.",
     )
     parser.add_argument(
         "--ignore-radius-m", dest="ignore_radius_m", type=float, metavar="M",
@@ -249,6 +256,7 @@ def resolve_config(base_config, args):
         "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
         "extra_labels_path": getattr(args, "extra_labels_path", None),
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
+        "add_labels_path": getattr(args, "add_labels_path", None),
         "ignore_points_path": getattr(args, "ignore_points_path", None),
         "ignore_radius_m": getattr(args, "ignore_radius_m", None),
         "mine_boundary_path": getattr(args, "mine_boundary_path", None),

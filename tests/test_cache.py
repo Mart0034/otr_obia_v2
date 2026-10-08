@@ -170,3 +170,39 @@ def test_labeled_and_scored_tiles_are_handled_separately(tmp_path, write_synthet
     assert "3" in seen["mines"] and "4" not in seen["mines"]
     out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
     assert set(out["mine_id"].astype(str)) == {"4"}
+
+
+def test_apply_extra_labels_adds_positives_without_touching_others():
+    import geopandas as gpd
+    import pandas as pd
+    from shapely.geometry import box
+    from otr_obia_pipeline import apply_extra_labels
+
+    def polys(mine):
+        return gpd.GeoDataFrame({"mine_id": mine, "segment_id": [1, 2, 3, 4]},
+                                geometry=[box(i * 10, 0, i * 10 + 10, 10) for i in range(4)], crs="EPSG:32719")
+
+    polygons = pd.concat([polys("m1"), polys("m2")], ignore_index=True)
+    polygons = gpd.GeoDataFrame(polygons, crs="EPSG:32719")
+    feats = pd.DataFrame({"mine_id": ["m1"] * 4 + ["m2"] * 4, "segment_id": [1, 2, 3, 4] * 2,
+                          "label": [0, 0, 0, 1, 0, 0, 0, 0]})
+    labels = gpd.GeoDataFrame({"mine_id": ["m1"]}, geometry=[box(0, 0, 20, 10)], crs="EPSG:32719")  # covers segs 1+2
+    out = apply_extra_labels(feats, polygons, labels, min_overlap_ratio=0.1)
+    assert out.loc[out.mine_id == "m1", "label"].tolist() == [1, 1, 0, 1]     # old positive kept
+    assert out.loc[out.mine_id == "m2", "label"].sum() == 0                    # other mine untouched
+    assert feats["label"].sum() == 1                                           # input not modified
+
+
+def test_drop_ignored_negatives_accepts_several_files(tmp_path):
+    import geopandas as gpd
+    import pandas as pd
+    from shapely.geometry import Point, box
+    from otr_obia_pipeline import drop_ignored_negatives
+
+    polygons = gpd.GeoDataFrame({"mine_id": "m", "segment_id": [1, 2, 3]},
+                                geometry=[box(i * 1000, 0, i * 1000 + 10, 10) for i in range(3)], crs="EPSG:32719")
+    feats = pd.DataFrame({"mine_id": "m", "segment_id": [1, 2, 3], "label": [0, 0, 0]})
+    for name, x in (("a.geojson", 5), ("b.geojson", 1005)):
+        gpd.GeoDataFrame(geometry=[Point(x, 5)], crs="EPSG:32719").to_crs(4326).to_file(tmp_path / name, driver="GeoJSON")
+    kept, _ = drop_ignored_negatives(feats, polygons, f"{tmp_path / 'a.geojson'},{tmp_path / 'b.geojson'}", 50)
+    assert kept["segment_id"].tolist() == [3]
