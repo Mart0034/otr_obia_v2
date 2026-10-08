@@ -1927,9 +1927,12 @@ def main(cfg=CONFIG):
     if cfg.get("hard_negatives_path"):
         hard_mask = mark_hard_negatives(train_feat, train_poly, gpd.read_file(cfg["hard_negatives_path"]))
         logger.info("Harte Negative werden im Training %dx gewichtet.", int(cfg.get("hard_negative_factor", 10)))
-    clf, feature_cols, scores_df = train_and_evaluate(
-        train_feat, train_poly, cfg, hard_neg_mask=hard_mask,
-        hard_neg_factor=int(cfg.get("hard_negative_factor", 10)) if hard_mask is not None else 1)
+    if hard_mask is None:
+        clf, feature_cols, scores_df = train_and_evaluate(train_feat, train_poly, cfg)
+    else:
+        clf, feature_cols, scores_df = train_and_evaluate(
+            train_feat, train_poly, cfg, hard_neg_mask=hard_mask,
+            hard_neg_factor=int(cfg.get("hard_negative_factor", 10)))
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)
