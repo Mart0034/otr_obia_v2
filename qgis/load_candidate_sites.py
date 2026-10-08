@@ -102,6 +102,31 @@ def soften_selection():
     iface.mapCanvas().setSelectionColor(QColor(255, 255, 0, 60))  # noqa: F821
 
 
+def ensure_drawn_layer(path):
+    """Legt die Schicht drawn_polygons in der Datei an, falls sie fehlt (Dateien, die mit
+    einer älteren candidate_sites.py erzeugt wurden). Muss laufen, BEVOR die Datei in QGIS
+    geladen ist, sonst ist sie gesperrt."""
+    from osgeo import ogr
+    ds = ogr.Open(path, 1)
+    if ds is None:
+        raise ValueError("Datei lässt sich nicht zum Schreiben öffnen (in QGIS noch geladen?)")
+    names = [ds.GetLayerByIndex(i).GetName() for i in range(ds.GetLayerCount())]
+    if "drawn_polygons" not in names:
+        srs = ds.GetLayerByName("candidate_sites").GetSpatialRef()
+        layer = ds.CreateLayer("drawn_polygons", srs, ogr.wkbPolygon)
+        for name in ("kind", "mine_id", "note"):
+            layer.CreateField(ogr.FieldDefn(name, ogr.OFTString))
+        print("[candidate_sites] Zeichen-Schicht drawn_polygons in der Datei angelegt.")
+    ds = None  # schreibt und schließt
+
+
+def remove_old_layers():
+    """Frühere Kopien (mehrfaches Ausführen) entfernen, sonst gibt es doppelte Schichten."""
+    for name in ("candidate_sites", "drawn_polygons"):
+        for old in QgsProject.instance().mapLayersByName(name):
+            QgsProject.instance().removeMapLayer(old.id())
+
+
 def setup_drawn_layer(path, sites_layer):
     drawn = QgsVectorLayer(f"{path}|layername=drawn_polygons", "drawn_polygons", "ogr")
     if not drawn.isValid():
@@ -136,6 +161,8 @@ def review_dropdown(layer):
 
 path = PATH or QFileDialog.getOpenFileName(None, "candidate_sites.gpkg wählen", "", "GeoPackage (*.gpkg)")[0]
 if path:
+    step("alte Schichten entfernen", remove_old_layers)
+    step("Zeichen-Schicht anlegen", lambda: ensure_drawn_layer(path))
     layer = QgsVectorLayer(f"{path}|layername=candidate_sites", "candidate_sites", "ogr")
     if not layer.isValid():
         print(f"[candidate_sites] Schicht konnte nicht geladen werden: {path}")

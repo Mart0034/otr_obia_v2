@@ -102,13 +102,25 @@ try:  # außerhalb von QGIS (Tests) nicht verfügbar
     from qgis.core import QgsCoordinateTransform, QgsProject, QgsRectangle
     from qgis.PyQt.QtCore import Qt, QUrl
     from qgis.PyQt.QtGui import QDesktopServices, QKeySequence
-    from qgis.PyQt.QtWidgets import (QDockWidget, QGridLayout, QLabel, QPushButton, QShortcut, QWidget)
+    from qgis.PyQt.QtWidgets import QDockWidget, QGridLayout, QLabel, QPushButton, QWidget
+    try:                                  # Qt6: QShortcut liegt in QtGui, Qt5: in QtWidgets
+        from qgis.PyQt.QtGui import QShortcut
+    except ImportError:
+        from qgis.PyQt.QtWidgets import QShortcut
     IN_QGIS = True
 except ImportError:
     IN_QGIS = False
     QDockWidget = object   # damit die Klasse unten auch ohne QGIS (Tests) importierbar bleibt
 
 MIN_VIEW_M = 400.0   # kleinster Kartenausschnitt (Meter) beim Heranzoomen
+
+
+def _qt_enum(group_name, name):
+    """Qt6 (PyQt6) kennt nur Qt.<Gruppe>.<Name>, Qt5 nur Qt.<Name> - beides unterstützen."""
+    group = getattr(Qt, group_name, None)
+    if group is not None and hasattr(group, name):
+        return getattr(group, name)
+    return getattr(Qt, name)
 
 
 def _layer(name):
@@ -156,8 +168,8 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         for key, func in (("1", lambda: self.decide("dump")), ("2", lambda: self.decide("clean")),
                           ("3", lambda: self.decide("partial")), ("4", lambda: self.decide("unsure")),
                           ("5", self.skip), ("6", self.back), ("7", self.open_map)):
-            QShortcut(QKeySequence(key), self, activated=func, context=Qt.ApplicationShortcut)
-        iface.addDockWidget(Qt.RightDockWidgetArea, self)
+            QShortcut(QKeySequence(key), self, activated=func, context=_qt_enum("ShortcutContext", "ApplicationShortcut"))
+        iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
         self.layer.startEditing()
         self.show_current()
 
