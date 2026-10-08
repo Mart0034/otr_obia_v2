@@ -125,9 +125,15 @@ def _qt_enum(group_name, name):
 
 
 def _layer(name):
-    found = QgsProject.instance().mapLayersByName(name)
+    project = QgsProject.instance()
+    found = project.mapLayersByName(name)
+    if not found:  # auch Schichten mit leicht anderem Namen (z.B. umbenannt) über die Quelle finden
+        found = [l for l in project.mapLayers().values()
+                 if l.name().lower().startswith(name) or f"layername={name}" in l.source()]
     if not found:
-        raise RuntimeError(f"Schicht '{name}' nicht gefunden - zuerst load_candidate_sites.py ausführen.")
+        have = [l.name() for l in project.mapLayers().values()]
+        raise RuntimeError(f"Schicht '{name}' nicht gefunden - zuerst load_candidate_sites.py ausführen. "
+                           f"Vorhandene Schichten: {have}")
     return found[0]
 
 
@@ -282,15 +288,21 @@ class ReviewPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.show_current()
 
     def closeEvent(self, event):
-        self.layer.commitChanges()
-        if self.drawn is not None and self.drawn.isEditable():
-            self.drawn.commitChanges()
+        # Die Schichten können inzwischen entfernt worden sein (z.B. load_candidate_sites.py
+        # erneut ausgeführt) - dann gibt es nichts mehr zu speichern.
+        for layer in (self.layer, self.drawn):
+            try:
+                if layer is not None and layer.isEditable():
+                    layer.commitChanges()
+            except RuntimeError:
+                pass
         super().closeEvent(event)
 
 
 if IN_QGIS:  # beim Ausführen im QGIS-Editor/Konsole
     try:
         _panel.close()  # noqa: F821  (altes Fenster einer früheren Ausführung)
+        _panel.deleteLater()  # noqa: F821
     except Exception:
         pass
     _panel = ReviewPanel(iface)  # noqa: F821  (iface gibt es in der QGIS-Konsole)
