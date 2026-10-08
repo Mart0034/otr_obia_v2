@@ -90,3 +90,13 @@ def test_a_subset_of_the_multiyear_features_can_be_selected(tmp_path):
                                      ["s2my_bright_late", "s2my_dark_onset"])
     assert got.shape == (3, 3, 2)
     assert got[1, 2, 0] == data[1, 1, 2] and got[1, 2, 1] == data[5, 1, 2]       # late = band index 1, onset = 5
+
+
+def test_a_four_year_list_gives_the_same_early_late_delta_as_the_full_series():
+    full = [0.30, 0.30, 0.30, 0.05, 0.05, 0.05, 0.05, 0.05]            # 2018 .. 2025
+    four_years = [2018, 2019, 2024, 2025]
+    four = [full[0], full[1], full[6], full[7]]
+    a = dict(zip(BAND_NAMES, multiyear_features(_stack([full]), YEARS)[:, 0, 0]))
+    b = dict(zip(BAND_NAMES, multiyear_features(_stack([four]), four_years, min_years=3)[:, 0, 0]))
+    for key in ("s2my_bright_early", "s2my_bright_late", "s2my_bright_delta"):
+        assert b[key] == pytest.approx(a[key])

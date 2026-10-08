@@ -84,7 +84,7 @@ def multiyear_features(year_stack, years, dark_threshold=DARK_THRESHOLD, min_yea
     return out
 
 
-def fetch_for_mine(s2_path, out_path, catalog, first_year, last_year, scenes_per_year, max_cloud, min_years):
+def fetch_for_mine(s2_path, out_path, catalog, years, scenes_per_year, max_cloud, min_years):
     with rasterio.open(s2_path) as ref:
         crs, transform = ref.crs, ref.transform
         width, height = ref.width, ref.height
@@ -93,7 +93,7 @@ def fetch_for_mine(s2_path, out_path, catalog, first_year, last_year, scenes_per
     def read(it, band, resampling):
         return _read_on_grid(it.assets[band].href, crs, transform, width, height, resampling)
 
-    years = list(range(first_year, last_year + 1))
+    years = sorted(years)
     stack, with_data = [], []
     for year in years:
         items = [
@@ -137,6 +137,10 @@ def main(argv=None):
     parser.add_argument("--out-dir", default="data/s2_multiyear", metavar="DIR")
     parser.add_argument("--first-year", type=int, default=2018)
     parser.add_argument("--last-year", type=int, default=2025)
+    parser.add_argument("--years", default=None,
+                        help="Stattdessen eine feste Jahresliste, z.B. 2018,2019,2024,2025 - für die Merkmale "
+                             "early/late/delta reichen die ersten und letzten beiden Jahre und der Download "
+                             "halbiert sich. Dann --min-years 3 setzen.")
     parser.add_argument("--scenes-per-year", type=int, default=3,
                         help="Aufnahmen pro Jahr, aus denen der Median gebildet wird.")
     parser.add_argument("--max-cloud", type=float, default=15, help="Maximaler Wolkenanteil einer Aufnahme (%%).")
@@ -144,10 +148,12 @@ def main(argv=None):
     parser.add_argument("--n-workers", type=int, default=4)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
+    years = ([int(y) for y in args.years.split(",")] if args.years
+             else list(range(args.first_year, args.last_year + 1)))
     catalog = open_catalog()
     return run_for_all_mines(
         args.imagery_dir, args.out_dir, args.n_workers, args.overwrite,
-        lambda s2, out: fetch_for_mine(s2, out, catalog, args.first_year, args.last_year,
+        lambda s2, out: fetch_for_mine(s2, out, catalog, years,
                                        args.scenes_per_year, args.max_cloud, args.min_years),
     )
 
