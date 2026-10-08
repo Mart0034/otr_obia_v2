@@ -152,13 +152,20 @@ def precision_by_rank(summary, steps=(5, 10, 25, 50, 100, 250, 500)):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Geprüfte Kandidaten-Standorte in Labels umwandeln.")
     p.add_argument("--reviewed", required=True, help="candidate_sites.gpkg mit ausgefüllter Spalte 'review'.")
+    p.add_argument("--drawn", default=None,
+                   help="Optional: eigene Datei mit den gezeichneten Polygonen (Schicht drawn_polygons "
+                        "oder die erste Schicht). Nicht nötig, wenn sie in --reviewed liegen.")
     p.add_argument("--out-dir", required=True)
     args = p.parse_args(argv)
     sites = gpd.read_file(args.reviewed, layer="candidate_sites") if args.reviewed.endswith(".gpkg") \
         else gpd.read_file(args.reviewed)
     drawn = None
-    if args.reviewed.endswith(".gpkg") and "drawn_polygons" in set(pyogrio.list_layers(args.reviewed)[:, 0]):
+    if args.drawn:
+        names = list(pyogrio.list_layers(args.drawn)[:, 0])
+        drawn = gpd.read_file(args.drawn, layer="drawn_polygons" if "drawn_polygons" in names else names[0])
+    elif args.reviewed.endswith(".gpkg") and "drawn_polygons" in set(pyogrio.list_layers(args.reviewed)[:, 0]):
         drawn = gpd.read_file(args.reviewed, layer="drawn_polygons")
+    if drawn is not None:
         print(f"Gezeichnete Polygone: {len(drawn)}")
     dump, clean, unsure, summary = split_reviews(sites, drawn=drawn)
     os.makedirs(args.out_dir, exist_ok=True)
