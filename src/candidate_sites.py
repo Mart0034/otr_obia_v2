@@ -221,6 +221,32 @@ def write_sites_gpkg(sites, path):
     empty.to_file(path, layer="drawn_polygons", driver="GPKG", mode="a", geometry_type="Polygon")
 
 
+def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
+                        labels_path=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
+                        exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
+                        sample_every=None, sample_skip=0):
+    """Standortliste aus bewerteten Segmenten (seg: mine_id, dump_proba, geometry) bauen und als
+    GeoPackage + CSV schreiben. Wird vom Kommandozeilen-Skript und - mit den Segmenten direkt aus dem
+    Speicher - von der Pipeline selbst benutzt (--candidate-lists), ohne die Segmentdatei neu zu lesen.
+    exclude_areas: Dateien (mit Komma getrennt) mit Flächen, die nicht mehr angezeigt werden sollen."""
+    labels = gpd.read_file(labels_path) if labels_path else None
+    excl = None
+    if exclude_areas:
+        excl = gpd.GeoDataFrame(pd.concat(
+            [gpd.read_file(f.strip())[["geometry"]].to_crs(seg.crs) for f in exclude_areas.split(",") if f.strip()],
+            ignore_index=True), crs=seg.crs)
+    sites = build_candidate_sites(seg, threshold, area_pct, join_dist_m, min_area_m2, labels, known_dist_m, top,
+                                  max_site_m2, exclude_known, max_urban_frac, rank_by, excl,
+                                  sample_every, sample_skip)
+    write_sites_gpkg(sites, out)
+    csv_path = out.rsplit(".", 1)[0] + ".csv"
+    pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
+    logging.info("%d Standorte -> %s (+ %s)", len(sites), out, csv_path)
+    if len(sites):
+        logging.info("Größenklassen: %s", sites["size_class"].value_counts().to_dict())
+    return sites
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Kandidaten-Standorte aus Segment-Vorhersagen bauen.")
     p.add_argument("--segments", required=True, help="segments_classified.gpkg eines Laufs.")
@@ -267,24 +293,12 @@ def main(argv=None):
     # Laden erfolgt; danach werden alle geladenen Segmente verwendet.
     seg = load_top_segments(args.segments, args.area_pct, args.threshold, fraction_margin=1.0) \
         if args.preselect else gpd.read_file(args.segments)
-    area_pct = 100.0 if args.preselect else args.area_pct
-    labels = gpd.read_file(args.labels) if args.labels else None
-    excl = None
-    if args.exclude_areas:
-        excl = gpd.GeoDataFrame(pd.concat(
-            [gpd.read_file(f.strip())[["geometry"]].to_crs(seg.crs) for f in args.exclude_areas.split(",") if f.strip()],
-            ignore_index=True), crs=seg.crs)
-    sites = build_candidate_sites(seg, args.threshold, area_pct, args.join_dist_m,
-                                  args.min_area_m2, labels, args.known_dist_m, args.top,
-                                  args.max_site_m2, args.exclude_known, args.max_urban_frac, args.rank_by,
-                                  excl, args.sample_every, args.sample_skip)
-    write_sites_gpkg(sites, args.out)
-    csv_path = args.out.rsplit(".", 1)[0] + ".csv"
-    pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
-    logging.info("%d Standorte -> %s (+ %s)", len(sites), args.out, csv_path)
-    if len(sites):
-        by = sites["size_class"].value_counts().to_dict()
-        logging.info("Größenklassen: %s", by)
+    sites_from_segments(
+        seg, args.out, threshold=args.threshold, area_pct=100.0 if args.preselect else args.area_pct,
+        join_dist_m=args.join_dist_m, min_area_m2=args.min_area_m2, labels_path=args.labels,
+        known_dist_m=args.known_dist_m, top=args.top, max_site_m2=args.max_site_m2,
+        exclude_known=args.exclude_known, max_urban_frac=args.max_urban_frac, rank_by=args.rank_by,
+        exclude_areas=args.exclude_areas, sample_every=args.sample_every, sample_skip=args.sample_skip)
     return 0
 
 

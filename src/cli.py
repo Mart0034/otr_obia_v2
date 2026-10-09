@@ -189,6 +189,16 @@ def build_arg_parser(description):
              "--extra-imagery-dir, das nur bewertet wird).",
     )
     parser.add_argument(
+        "--export-min-proba", dest="export_min_proba", type=float, metavar="P",
+        help="Nur Segmente mit dump_proba >= P exportieren (z.B. 0.5). Spart bei Millionen von Segmenten "
+             "den größten Teil der Export- und OSM-Flag-Zeit (die Datei wird auch viel kleiner).",
+    )
+    parser.add_argument(
+        "--candidate-lists", dest="candidate_lists_path", metavar="JSON",
+        help="JSON-Liste von Standortlisten, die direkt im Anschluss aus den Segmenten im Speicher erzeugt "
+             "werden (Parameter wie candidate_sites.py, siehe sites_from_segments()).",
+    )
+    parser.add_argument(
         "--reviewed-imagery-dir", dest="reviewed_imagery_dir", metavar="DIR",
         help="Nur mit --use-cache: Ordner mit Kacheln, in denen nur einzelne Stellen geprüft wurden "
              "(z.B. Steinbrüche). Alles wird bewertet und exportiert, trainiert wird aber nur auf den "
@@ -284,6 +294,8 @@ def resolve_config(base_config, args):
         "extra_labels_path": getattr(args, "extra_labels_path", None),
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
         "reviewed_imagery_dir": getattr(args, "reviewed_imagery_dir", None),
+        "export_min_proba": getattr(args, "export_min_proba", None),
+        "candidate_lists_path": getattr(args, "candidate_lists_path", None),
         "add_labels_path": getattr(args, "add_labels_path", None),
         "hard_negatives_path": getattr(args, "hard_negatives_path", None),
         "hard_negative_factor": getattr(args, "hard_negative_factor", None),

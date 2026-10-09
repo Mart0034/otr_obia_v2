@@ -243,3 +243,19 @@ def test_reviewed_imagery_dir_scores_everything_but_trains_only_on_reviewed_part
     out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
     assert set(out["mine_id"].astype(str)) == {"3"}              # the whole reviewed tile is still scored and exported
     assert len(out) > len(t3)
+
+
+def test_export_filter_and_candidate_lists_in_the_same_run(tmp_path, write_synthetic_raster):
+    import json
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    main(cfg)                                         # full export first, to learn the score range
+    full = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    cut = float(full["dump_proba"].median())
+    specs = [{"out": "sites_a.gpkg", "threshold": cut, "area_pct": 100.0, "min_area_m2": 0.0, "top": 5},
+             {"out": "sites_b.gpkg", "area_pct": 100.0, "sample_every": 2}]
+    (tmp_path / "specs.json").write_text(json.dumps(specs))
+    main(dict(cfg, export_min_proba=cut, candidate_lists_path=str(tmp_path / "specs.json")))
+    out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    assert 0 < len(out) < len(full) and out["dump_proba"].min() >= cut
+    assert (tmp_path / "output" / "sites_a.gpkg").exists() and (tmp_path / "output" / "sites_a.csv").exists()
+    assert (tmp_path / "output" / "sites_b.gpkg").exists()

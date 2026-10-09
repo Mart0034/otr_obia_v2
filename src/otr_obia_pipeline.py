@@ -199,6 +199,8 @@ CONFIG = {
     "extra_imagery_dir": None,
     "extra_labels_path": None,
     "labeled_imagery_dir": None,
+    "export_min_proba": None,                     # nur Segmente ab dieser dump_proba exportieren (None = alle)
+    "candidate_lists_path": None,                 # JSON-Liste von Standortlisten, die gleich mit erzeugt werden
     "reviewed_imagery_dir": None,                 # Kacheln, von denen nur geprüfte Stellen trainiert werden
     "hard_negatives_path": None,                  # bestätigte Fehlalarme (Polygone, mine_id):
                                                    # ihre Segmente zählen im Training mehrfach
@@ -1455,7 +1457,42 @@ def compute_is_poi(result, osm_poi_dir, buffer_m=20):
     return result
 
 
-def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=500):
+ROAD_PARALLEL_MIN_SEGMENTS = 50000
+_ROAD_CTX = None
+
+
+def _road_density_for_mine(osm_roads_dir, mine_id, radius_m, crs, xy):
+    """Straßenlänge (m) im Umkreis radius_m um jeden Segment-Mittelpunkt (xy: n x 2) einer Mine.
+    None, wenn es für die Mine keine (oder leere) Straßendaten gibt."""
+    from shapely.geometry import Point
+    roads_path = os.path.join(osm_roads_dir, f"{mine_id}.gpkg")
+    if not os.path.exists(roads_path):
+        return None
+    roads = gpd.read_file(roads_path)
+    if roads.empty:
+        return None
+    if roads.crs != crs:
+        roads = roads.to_crs(crs)
+    sindex = roads.sindex
+    densities = []
+    for x, y in xy:
+        buf = Point(x, y).buffer(radius_m)
+        candidate_idx = list(sindex.intersection(buf.bounds))
+        if not candidate_idx:
+            densities.append(0.0)
+            continue
+        candidates = roads.iloc[candidate_idx]
+        nearby = candidates[candidates.geometry.intersects(buf)]
+        densities.append(nearby.geometry.intersection(buf).length.sum())
+    return densities
+
+
+def _road_density_job(mine_id):
+    osm_roads_dir, radius_m, crs, groups = _ROAD_CTX
+    return _road_density_for_mine(osm_roads_dir, mine_id, radius_m, crs, groups[mine_id][1])
+
+
+def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=500, n_jobs=1):
     """Fügt zwei rein informative Spalten hinzu:
 
     - road_density_150m: Gesamtlänge (Meter) aller OSM-Straßen (siehe
@@ -1485,28 +1522,24 @@ def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=5
         result["is_road_grid"] = False
         return result
 
-    for mine_id, group in result.groupby("mine_id"):
-        roads_path = os.path.join(osm_roads_dir, f"{mine_id}.gpkg")
-        if not os.path.exists(roads_path):
-            continue
-        roads = gpd.read_file(roads_path)
-        if roads.empty:
-            continue
-        if roads.crs != group.crs:
-            roads = roads.to_crs(group.crs)
-
-        sindex = roads.sindex
-        densities = []
-        for centroid in group.geometry.centroid:
-            buf = centroid.buffer(radius_m)
-            candidate_idx = list(sindex.intersection(buf.bounds))
-            if not candidate_idx:
-                densities.append(0.0)
-                continue
-            candidates = roads.iloc[candidate_idx]
-            nearby = candidates[candidates.geometry.intersects(buf)]
-            densities.append(nearby.geometry.intersection(buf).length.sum())
-        result.loc[group.index, "road_density_150m"] = densities
+    groups = {m: (g.index.values, np.column_stack([g.geometry.centroid.x.values, g.geometry.centroid.y.values]))
+              for m, g in result.groupby("mine_id")}
+    crs = result.crs
+    jobs = sorted(groups, key=lambda m: -len(groups[m][0]))          # größte zuerst
+    n_workers = max(1, min(int(n_jobs or 1), len(jobs)))
+    if n_workers > 1 and len(result) >= ROAD_PARALLEL_MIN_SEGMENTS and "fork" in multiprocessing.get_all_start_methods():
+        global _ROAD_CTX
+        _ROAD_CTX = (osm_roads_dir, radius_m, crs, groups)
+        try:
+            with multiprocessing.get_context("fork").Pool(n_workers) as pool:
+                outputs = pool.map(_road_density_job, jobs, chunksize=1)
+        finally:
+            _ROAD_CTX = None
+    else:
+        outputs = [_road_density_for_mine(osm_roads_dir, m, radius_m, crs, groups[m][1]) for m in jobs]
+    for m, dens in zip(jobs, outputs):
+        if dens is not None:
+            result.loc[groups[m][0], "road_density_150m"] = dens
 
     result["is_road_grid"] = result["road_density_150m"] >= grid_threshold_m
     logger.info(
@@ -1568,6 +1601,12 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
     if export_mines:
         result = result[result["mine_id"].isin(export_mines)].copy()
         logger.info("Export beschränkt auf: %s (%d Segmente).", export_mines, len(result))
+    min_proba = cfg.get("export_min_proba")
+    if min_proba is not None:
+        n_all = len(result)
+        result = result[result["dump_proba"] >= min_proba].copy()
+        logger.info("Export nur ab dump_proba >= %.2f: %d von %d Segmenten (%.1f%%) - die OSM-Flags und der "
+                    "Export laufen nur darüber.", min_proba, len(result), n_all, 100 * len(result) / max(n_all, 1))
     osm_buildings_dir = cfg.get("osm_buildings_dir")
     if osm_buildings_dir:
         result = compute_is_building(result, osm_buildings_dir)
@@ -1580,17 +1619,40 @@ def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
             result, osm_roads_dir,
             radius_m=cfg.get("road_density_radius_m", 150),
             grid_threshold_m=cfg.get("road_grid_threshold_m", 500),
+            n_jobs=cfg.get("n_jobs") or os.cpu_count() or 1,
         )
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
     out_path = os.path.join(cfg["output_dir"], "segments_classified.gpkg")
     result.to_file(out_path, driver="GPKG")
     logger.info("Exportiert nach: %s", out_path)
+    if cfg.get("candidate_lists_path"):
+        write_candidate_lists(result, cfg["candidate_lists_path"], cfg["output_dir"])
     logger.info(
         "In QGIS laden und nach 'dump_proba' einfärben (Graduated, Schwelle "
         "~%.2f, siehe classification_threshold).", threshold,
     )
     return out_path
+
+
+def write_candidate_lists(result, spec_path, output_dir):
+    """Standortlisten direkt aus den (schon im Speicher liegenden) Segmenten bauen. spec_path: JSON-
+    Liste von Einträgen mit den Parametern von candidate_sites.sites_from_segments (z.B. out, threshold,
+    top, rank_by, sample_every, labels_path, exclude_areas ...); relative 'out'-Pfade gelten unterhalb
+    von output_dir. Ein fehlerhafter Eintrag stoppt die übrigen nicht."""
+    import json
+    from candidate_sites import sites_from_segments
+
+    with open(spec_path) as f:
+        specs = json.load(f)
+    for spec in specs:
+        spec = dict(spec)
+        out = spec.pop("out")
+        out = out if os.path.isabs(out) else os.path.join(output_dir, out)
+        try:
+            sites_from_segments(result, out, **spec)
+        except Exception:
+            logger.exception("Standortliste %s fehlgeschlagen.", out)
 
 
 def report_threshold_sweep(result, thresholds=(0.5, 0.6, 0.7, 0.8, 0.9), require_neighbor_below=None,

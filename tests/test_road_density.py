@@ -93,3 +93,21 @@ def test_never_modifies_dump_pred_or_proba(tmp_path):
 
     assert out["dump_pred"].tolist() == [1]
     assert out["dump_proba"].tolist() == [0.9]
+
+
+def test_parallel_road_density_matches_serial(tmp_path, monkeypatch):
+    import numpy as np
+    import otr_obia_pipeline as pipe
+    from shapely.geometry import LineString, box
+    rows = []
+    for m in ("a", "b", "c"):
+        roads = gpd.GeoDataFrame(geometry=[LineString([(0, y), (300, y)]) for y in range(0, 300, 40)], crs="EPSG:32719")
+        roads.to_file(tmp_path / f"{m}.gpkg", driver="GPKG")
+        for i in range(6):
+            rows.append({"mine_id": m, "geometry": box(i * 40, 0, i * 40 + 30, 30)})
+    result = gpd.GeoDataFrame(rows, crs="EPSG:32719")
+    serial = compute_road_density(result, str(tmp_path), n_jobs=1)
+    monkeypatch.setattr(pipe, "ROAD_PARALLEL_MIN_SEGMENTS", 1)
+    parallel = compute_road_density(result, str(tmp_path), n_jobs=3)
+    assert np.allclose(serial["road_density_150m"], parallel["road_density_150m"])
+    assert serial["road_density_150m"].max() > 0
