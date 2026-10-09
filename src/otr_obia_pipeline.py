@@ -199,6 +199,7 @@ CONFIG = {
     "extra_imagery_dir": None,
     "extra_labels_path": None,
     "labeled_imagery_dir": None,
+    "reviewed_imagery_dir": None,                 # Kacheln, von denen nur geprüfte Stellen trainiert werden
     "hard_negatives_path": None,                  # bestätigte Fehlalarme (Polygone, mine_id):
                                                    # ihre Segmente zählen im Training mehrfach
     "hard_negative_factor": 10,                   # ... und zwar so oft
@@ -1837,6 +1838,25 @@ def mark_hard_negatives(feature_df, polygons_gdf, negatives_gdf, min_overlap=0.5
     return mask
 
 
+def restrict_to_reviewed(feature_df, polygons_gdf, hard_mask, tile_ids):
+    """Für Kacheln, in denen nur einzelne Stellen geprüft wurden (z.B. Steinbrüche): im
+    TRAININGS-Datensatz bleiben von diesen Kacheln nur positive Segmente und label=0-Segmente
+    in bestätigten Fehlalarm-Flächen (hard_mask). Alle übrigen label=0-Segmente dort sind
+    UNGEPRÜFT (dort kann eine unbekannte Halde liegen) und dürfen nicht als 'kein Dump' lernen.
+    Gibt (feature_df, polygons_gdf, hard_mask) neu indiziert zurück."""
+    tile_ids = set(map(str, tile_ids))
+    in_tile = feature_df["mine_id"].astype(str).isin(tile_ids).values
+    keep = ~(in_tile & (feature_df["label"].values == 0) & ~np.asarray(hard_mask, dtype=bool))
+    dropped = feature_df.loc[~keep, ["mine_id", "segment_id"]]
+    drop_keys = set(zip(dropped["mine_id"], dropped["segment_id"]))
+    keep_poly = np.array([(m, sid) not in drop_keys
+                          for m, sid in zip(polygons_gdf["mine_id"], polygons_gdf["segment_id"])])
+    logger.info("Nur-geprüfte-Stellen-Kacheln: %d ungeprüfte label=0-Segmente aus dem Training genommen.",
+                int((~keep).sum()))
+    return (feature_df[keep].reset_index(drop=True), polygons_gdf[keep_poly].reset_index(drop=True),
+            np.asarray(hard_mask, dtype=bool)[keep])
+
+
 def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
     """Entfernt aus dem TRAININGS-Datensatz alle label=0-Segmente, die innerhalb
     radius_m um einen Punkt aus points_path liegen (positive Segmente bleiben).
@@ -1896,8 +1916,9 @@ def main(cfg=CONFIG):
 
     extra_dir = cfg.get("extra_imagery_dir")
     labeled_dir = cfg.get("labeled_imagery_dir")
-    extra_ids, labeled_ids = [], []
-    if extra_dir or labeled_dir:
+    reviewed_dir = cfg.get("reviewed_imagery_dir")
+    extra_ids, labeled_ids, reviewed_ids = [], [], []
+    if extra_dir or labeled_dir or reviewed_dir:
         if feature_df is None:
             raise ValueError(
                 "extra_imagery_dir/labeled_imagery_dir brauchen einen vorhandenen Zwischenspeicher: "
@@ -1917,7 +1938,13 @@ def main(cfg=CONFIG):
             ef, ep = build_dataset({**cfg, "imagery_dir": extra_dir})
             extra_ids = sorted(ef["mine_id"].unique())
             new_feats.append(ef); new_polys.append(ep)
-        replaced = extra_ids + labeled_ids
+        if reviewed_dir:
+            logger.info("1d) Segmentiere Kacheln mit geprüften Stellen aus %s (trainiert wird nur auf den "
+                        "geprüften Stellen, bewertet wird alles) ...", reviewed_dir)
+            rf, rp = build_dataset({**cfg, "imagery_dir": reviewed_dir})
+            reviewed_ids = sorted(rf["mine_id"].unique())
+            new_feats.append(rf); new_polys.append(rp)
+        replaced = extra_ids + labeled_ids + reviewed_ids
         # Die Segment-Polygone der neuen Kacheln stehen NICHT im polygons_cache.gpkg
         # (der gehört zum Volllauf) - separat ablegen, damit sich z.B.
         # eval_segment_size.py für diese Kacheln auswerten lässt.
@@ -1929,7 +1956,7 @@ def main(cfg=CONFIG):
             pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(replaced)]] + new_polys, ignore_index=True),
             crs=polygons_gdf.crs,
         )
-        cfg = {**cfg, "export_mines": extra_ids or labeled_ids}
+        cfg = {**cfg, "export_mines": (extra_ids + reviewed_ids) or labeled_ids}
 
     if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
@@ -1968,6 +1995,12 @@ def main(cfg=CONFIG):
     if cfg.get("hard_negatives_path"):
         hard_mask = mark_hard_negatives(train_feat, train_poly, gpd.read_file(cfg["hard_negatives_path"]))
         logger.info("Harte Negative werden im Training %dx gewichtet.", int(cfg.get("hard_negative_factor", 10)))
+    if reviewed_ids:
+        if hard_mask is None:
+            hard_mask = np.zeros(len(train_feat), dtype=bool)
+        train_feat, train_poly, hard_mask = restrict_to_reviewed(train_feat, train_poly, hard_mask, reviewed_ids)
+        if not hard_mask.any():
+            hard_mask = None
     if hard_mask is None:
         clf, feature_cols, scores_df = train_and_evaluate(train_feat, train_poly, cfg)
     else:

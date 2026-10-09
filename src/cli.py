@@ -189,6 +189,13 @@ def build_arg_parser(description):
              "--extra-imagery-dir, das nur bewertet wird).",
     )
     parser.add_argument(
+        "--reviewed-imagery-dir", dest="reviewed_imagery_dir", metavar="DIR",
+        help="Nur mit --use-cache: Ordner mit Kacheln, in denen nur einzelne Stellen geprüft wurden "
+             "(z.B. Steinbrüche). Alles wird bewertet und exportiert, trainiert wird aber nur auf den "
+             "bestätigten Halden (--add-labels-path) und Fehlalarmen (--hard-negatives-path) dort - die "
+             "ungeprüften Flächen zählen nicht als 'kein Dump'.",
+    )
+    parser.add_argument(
         "--add-labels-path", dest="add_labels_path", metavar="PATH",
         help="Zusätzliche Halden-Polygone (GeoPackage, Spalte mine_id = Mine/Kachel), z.B. die "
              "geprüften Funde aus reviewed_to_labels.py. Wird auf den fertigen Datensatz angewendet "
@@ -276,6 +283,7 @@ def resolve_config(base_config, args):
         "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
         "extra_labels_path": getattr(args, "extra_labels_path", None),
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
+        "reviewed_imagery_dir": getattr(args, "reviewed_imagery_dir", None),
         "add_labels_path": getattr(args, "add_labels_path", None),
         "hard_negatives_path": getattr(args, "hard_negatives_path", None),
         "hard_negative_factor": getattr(args, "hard_negative_factor", None),

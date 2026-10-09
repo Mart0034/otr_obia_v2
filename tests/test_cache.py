@@ -206,3 +206,40 @@ def test_drop_ignored_negatives_accepts_several_files(tmp_path):
         gpd.GeoDataFrame(geometry=[Point(x, 5)], crs="EPSG:32719").to_crs(4326).to_file(tmp_path / name, driver="GeoJSON")
     kept, _ = drop_ignored_negatives(feats, polygons, f"{tmp_path / 'a.geojson'},{tmp_path / 'b.geojson'}", 50)
     assert kept["segment_id"].tolist() == [3]
+
+
+def test_reviewed_imagery_dir_scores_everything_but_trains_only_on_reviewed_parts(tmp_path, write_synthetic_raster):
+    from unittest.mock import patch
+    import otr_obia_pipeline as pipe
+
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    main(cfg)  # cache from mines 1 and 2
+
+    rev = tmp_path / "rev"
+    rev.mkdir()
+    write_synthetic_raster(rev / "3.tif", seed=3)
+    # a confirmed dump and a confirmed clean site, both in tile 3
+    add = gpd.GeoDataFrame({"mine_id": [3]}, geometry=[box(500050, 5599850, 500150, 5599950)], crs="EPSG:32632")
+    neg = gpd.GeoDataFrame({"mine_id": [3]}, geometry=[box(500350, 5599550, 500450, 5599650)], crs="EPSG:32632")
+    add.to_file(tmp_path / "add.gpkg", driver="GPKG")
+    neg.to_file(tmp_path / "neg.gpkg", driver="GPKG")
+    cfg2 = dict(cfg, reviewed_imagery_dir=str(rev), add_labels_path=str(tmp_path / "add.gpkg"),
+                hard_negatives_path=str(tmp_path / "neg.gpkg"), hard_negative_factor=3)
+    seen = {}
+    real = pipe.train_and_evaluate
+
+    def spy(train_feat, *a, **k):
+        seen["tile3"] = train_feat[train_feat["mine_id"].astype(str) == "3"]
+        seen["n_mines"] = train_feat["mine_id"].nunique()
+        return real(train_feat, *a, **k)
+
+    with patch.object(pipe, "train_and_evaluate", spy):
+        main(cfg2)
+
+    t3 = seen["tile3"]
+    assert len(t3) > 0 and seen["n_mines"] == 3
+    assert (t3["label"] == 1).sum() > 0                         # reviewed dump trains
+    assert len(t3) < 30                                          # but not the whole tile (20+ unreviewed segments dropped)
+    out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    assert set(out["mine_id"].astype(str)) == {"3"}              # the whole reviewed tile is still scored and exported
+    assert len(out) > len(t3)
