@@ -32,7 +32,7 @@ from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
 
 from fetch_s2_timeseries import BRIGHTNESS_BANDS, COLLECTION, _dedupe_by_date, to_reflectance, valid_mask
-from fetch_sentinel1 import _read_on_grid, open_catalog, run_for_all_mines, select_evenly
+from fetch_sentinel1 import _read_on_grid, open_catalog, parallel_map, run_for_all_mines, select_evenly
 
 BAND_NAMES = ["s2my_bright_early", "s2my_bright_late", "s2my_bright_delta", "s2my_bright_slope",
               "s2my_dark_years_frac", "s2my_dark_onset"]
@@ -84,7 +84,7 @@ def multiyear_features(year_stack, years, dark_threshold=DARK_THRESHOLD, min_yea
     return out
 
 
-def fetch_for_mine(s2_path, out_path, catalog, years, scenes_per_year, max_cloud, min_years):
+def fetch_for_mine(s2_path, out_path, catalog, years, scenes_per_year, max_cloud, min_years, read_threads=3):
     with rasterio.open(s2_path) as ref:
         crs, transform = ref.crs, ref.transform
         width, height = ref.width, ref.height
@@ -94,24 +94,32 @@ def fetch_for_mine(s2_path, out_path, catalog, years, scenes_per_year, max_cloud
         return _read_on_grid(it.assets[band].href, crs, transform, width, height, resampling)
 
     years = sorted(years)
-    stack, with_data = [], []
-    for year in years:
+
+    def choose(year):
         items = [
             it for it in catalog.search(
                 collections=[COLLECTION], bbox=bbox, datetime=f"{year}-01-01/{year}-12-31",
             ).items()
             if it.properties.get("eo:cloud_cover", 100) <= max_cloud
         ]
-        chosen = select_evenly(_dedupe_by_date(items), scenes_per_year)
-        scenes = []
-        for it in chosen:
-            baseline = it.properties.get("s2:processing_baseline", "04.00")
-            bands = [to_reflectance(read(it, b, Resampling.average), baseline) for b in BRIGHTNESS_BANDS]
-            with np.errstate(all="ignore"):
-                bright = np.mean(bands, axis=0)
-            bright[~valid_mask(read(it, "SCL", Resampling.nearest))] = np.nan
-            bright[~(bright > 0)] = np.nan
-            scenes.append(bright)
+        return select_evenly(_dedupe_by_date(items), scenes_per_year)
+
+    chosen_by_year = parallel_map(choose, years, read_threads)
+
+    def read_scene(it):
+        baseline = it.properties.get("s2:processing_baseline", "04.00")
+        bands = [to_reflectance(read(it, b, Resampling.average), baseline) for b in BRIGHTNESS_BANDS]
+        with np.errstate(all="ignore"):
+            bright = np.mean(bands, axis=0)
+        bright[~valid_mask(read(it, "SCL", Resampling.nearest))] = np.nan
+        bright[~(bright > 0)] = np.nan
+        return bright
+
+    flat = [it for chosen in chosen_by_year for it in chosen]
+    bright_all = iter(parallel_map(read_scene, flat, read_threads))
+    stack, with_data = [], []
+    for year, chosen in zip(years, chosen_by_year):
+        scenes = [next(bright_all) for _ in chosen]
         if scenes:
             with np.errstate(all="ignore"):
                 stack.append(np.nanmedian(np.stack(scenes), axis=0))
@@ -146,7 +154,11 @@ def main(argv=None):
     parser.add_argument("--max-cloud", type=float, default=15, help="Maximaler Wolkenanteil einer Aufnahme (%%).")
     parser.add_argument("--min-years", type=int, default=4, help="Mindestzahl Jahre mit gültigen Daten pro Pixel.")
     parser.add_argument("--n-workers", type=int, default=4)
+    parser.add_argument("--read-threads", type=int, default=3,
+                        help="Parallele Lesezugriffe innerhalb einer Mine (Jahre/Szenen).")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Auch Minen erneut versuchen, die beim letzten Mal endgültig fehlschlugen.")
     args = parser.parse_args(argv)
     years = ([int(y) for y in args.years.split(",")] if args.years
              else list(range(args.first_year, args.last_year + 1)))
@@ -154,7 +166,9 @@ def main(argv=None):
     return run_for_all_mines(
         args.imagery_dir, args.out_dir, args.n_workers, args.overwrite,
         lambda s2, out: fetch_for_mine(s2, out, catalog, years,
-                                       args.scenes_per_year, args.max_cloud, args.min_years),
+                                       args.scenes_per_year, args.max_cloud, args.min_years,
+                                       args.read_threads),
+        retry_failed=args.retry_failed,
     )
 
 

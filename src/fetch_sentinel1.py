@@ -30,6 +30,7 @@ import glob
 import logging
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -70,9 +71,7 @@ def combine_scenes(scenes):
         return 10 * np.log10(median)
 
 
-def _read_on_grid(href, dst_crs, dst_transform, width, height, resampling=Resampling.average):
-    """Liest nur den benötigten Ausschnitt einer (Cloud-Optimized-)Aufnahme
-    und bringt ihn direkt aufs Zielraster."""
+def _read_on_grid_once(href, dst_crs, dst_transform, width, height, resampling):
     with rasterio.open(href) as src:
         with WarpedVRT(
             src, crs=dst_crs, transform=dst_transform, width=width, height=height,
@@ -82,7 +81,33 @@ def _read_on_grid(href, dst_crs, dst_transform, width, height, resampling=Resamp
             return vrt.read(1)
 
 
-def fetch_for_mine(s2_path, out_path, catalog, start, end, max_scenes):
+def _read_on_grid(href, dst_crs, dst_transform, width, height, resampling=Resampling.average,
+                  retries=3, retry_delay=2.0):
+    """Liest nur den benötigten Ausschnitt einer (Cloud-Optimized-)Aufnahme
+    und bringt ihn direkt aufs Zielraster. Kurze Netzwerkaussetzer (OSError,
+    dazu gehört auch rasterios RasterioIOError) werden mit wachsender Pause
+    wiederholt - sonst verliert ein einziger Aussetzer die ganze Mine."""
+    for attempt in range(retries):
+        try:
+            return _read_on_grid_once(href, dst_crs, dst_transform, width, height, resampling)
+        except OSError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(retry_delay * (attempt + 1))
+
+
+def parallel_map(fn, items, n_threads):
+    """fn auf alle items anwenden, mit bis zu n_threads Threads (Download ist
+    I/O-gebunden); Ergebnisreihenfolge = Eingabereihenfolge, Fehler werden
+    weitergereicht."""
+    items = list(items)
+    if n_threads <= 1 or len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=min(n_threads, len(items))) as pool:
+        return list(pool.map(fn, items))
+
+
+def fetch_for_mine(s2_path, out_path, catalog, start, end, max_scenes, read_threads=3):
     with rasterio.open(s2_path) as ref:
         crs, transform = ref.crs, ref.transform
         width, height = ref.width, ref.height
@@ -95,13 +120,11 @@ def fetch_for_mine(s2_path, out_path, catalog, start, end, max_scenes):
         raise RuntimeError(f"keine Sentinel-1-Aufnahmen zwischen {start} und {end} gefunden")
     chosen = select_evenly(items, max_scenes)
 
-    bands = []
-    for band in S1_BANDS:
-        scenes = [
-            _read_on_grid(it.assets[band].href, crs, transform, width, height)
-            for it in chosen
-        ]
-        bands.append(combine_scenes(scenes))
+    jobs = [(band, it) for band in S1_BANDS for it in chosen]
+    arrays = parallel_map(
+        lambda j: _read_on_grid(j[1].assets[j[0]].href, crs, transform, width, height),
+        jobs, read_threads)
+    bands = [combine_scenes(arrays[i * len(chosen):(i + 1) * len(chosen)]) for i in range(len(S1_BANDS))]
 
     profile = {
         "driver": "GTiff", "height": height, "width": width, "count": len(S1_BANDS),
@@ -156,15 +179,39 @@ def main(argv=None):
                         help="Maximale Anzahl Aufnahmen pro Mine für den Median.")
     parser.add_argument("--n-workers", type=int, default=4,
                         help="Anzahl Minen, die gleichzeitig heruntergeladen werden.")
+    parser.add_argument("--read-threads", type=int, default=3,
+                        help="Parallele Lesezugriffe innerhalb einer Mine (Szenen/Bänder).")
     parser.add_argument("--overwrite", action="store_true",
                         help="Bereits vorhandene Dateien neu erzeugen.")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="Auch Minen erneut versuchen, die beim letzten Mal endgültig "
+                             "fehlschlugen (z.B. keine Aufnahmen vorhanden).")
     args = parser.parse_args(argv)
 
     catalog = open_catalog()
     return run_for_all_mines(
         args.imagery_dir, args.out_dir, args.n_workers, args.overwrite,
-        lambda s2, out: fetch_for_mine(s2, out, catalog, args.start, args.end, args.max_scenes),
+        lambda s2, out: fetch_for_mine(s2, out, catalog, args.start, args.end, args.max_scenes,
+                                       args.read_threads),
+        retry_failed=args.retry_failed,
     )
+
+
+def _tune_gdal_http():
+    """GDAL-Netzwerkeinstellungen für viele kleine Bereichsabfragen auf Cloud-
+    Optimized-GeoTIFFs (nur Defaults - bereits gesetzte Umgebungsvariablen
+    gewinnen): gebündelte/parallele HTTP-Anfragen, kein Verzeichnis-Listing
+    beim Öffnen, Wiederholungen bei Aussetzern."""
+    for key, value in (
+        ("GDAL_HTTP_MULTIPLEX", "YES"),
+        ("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"),
+        ("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"),
+        ("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.TIF,.tiff"),
+        ("GDAL_HTTP_MAX_RETRY", "3"),
+        ("GDAL_HTTP_RETRY_DELAY", "2"),
+        ("VSI_CACHE", "TRUE"),
+    ):
+        os.environ.setdefault(key, value)
 
 
 def open_catalog():
@@ -173,6 +220,7 @@ def open_catalog():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
                         datefmt="%H:%M:%S")
     _ascii_safe_gdal_paths()
+    _tune_gdal_http()
 
     import planetary_computer
     import pystac_client
@@ -180,31 +228,94 @@ def open_catalog():
     return pystac_client.Client.open(STAC_URL, modifier=planetary_computer.sign_inplace)
 
 
-def run_for_all_mines(imagery_dir, out_dir, n_workers, overwrite, fetch_fn):
+def _fail_marker(out):
+    return out + ".failed"
+
+
+def _tile_done(out, overwrite, retry_failed):
+    """True, wenn die Mine nicht erneut geladen werden muss: Ausgabe vorhanden
+    oder (ohne retry_failed) beim letzten Mal endgültig fehlgeschlagen."""
+    if overwrite:
+        return False
+    if os.path.exists(out):
+        return True
+    return os.path.exists(_fail_marker(out)) and not retry_failed
+
+
+def _fmt_dur(seconds):
+    seconds = int(seconds)
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m" if seconds >= 3600 else f"{seconds // 60}m{seconds % 60:02d}s"
+
+
+def fetch_one(path, out, fetch_fn):
+    """Eine Mine laden - atomar: erst in <out>.part schreiben, dann umbenennen,
+    damit ein abgebrochener Lauf nie eine halbe Datei hinterlässt, die beim
+    nächsten Mal als 'fertig' gilt. RuntimeError (= die Daten gibt es nicht,
+    z.B. keine Aufnahmen) wird als endgültig gemerkt (<out>.failed); andere
+    Fehler (Netzwerk, Speicher) gelten als vorübergehend und werden beim
+    nächsten Lauf erneut versucht. Gibt (Meldung, Dauer in s) zurück."""
+    t0 = time.time()
+    part = out + ".part"
+    try:
+        if os.path.exists(_fail_marker(out)):
+            os.remove(_fail_marker(out))
+        msg = fetch_fn(path, part)
+        os.replace(part, out)
+        return msg, time.time() - t0
+    except BaseException as e:
+        if os.path.exists(part):
+            os.remove(part)
+        if isinstance(e, RuntimeError):
+            with open(_fail_marker(out), "w") as f:
+                f.write(str(e))
+        raise
+
+
+def run_for_all_mines(imagery_dir, out_dir, n_workers, overwrite, fetch_fn, retry_failed=False):
     """Ruft fetch_fn(s2_pfad, ausgabe_pfad) für jedes Minenbild auf, parallel
     in Threads. Bereits vorhandene Ausgaben werden übersprungen (außer bei
-    overwrite), Fehler einzelner Minen stoppen die übrigen nicht. fetch_fn
-    gibt einen kurzen Text für das Log zurück."""
+    overwrite), ebenso Minen, die endgültig fehlschlugen (außer bei
+    retry_failed); Fehler einzelner Minen stoppen die übrigen nicht. Ausgaben
+    werden atomar geschrieben (siehe fetch_one), das Log zeigt Dauer pro Mine
+    und eine Restzeit-Schätzung. fetch_fn gibt einen kurzen Text für das Log zurück."""
     os.makedirs(out_dir, exist_ok=True)
+    for stale in glob.glob(os.path.join(out_dir, "*.part")):
+        os.remove(stale)   # Reste eines abgebrochenen Laufs
     paths = sorted(glob.glob(os.path.join(imagery_dir, "*.tif")))
     todo = []
+    skipped_failed = 0
     for p in paths:
         out = os.path.join(out_dir, os.path.basename(p))
-        if os.path.exists(out) and not overwrite:
+        if _tile_done(out, overwrite, retry_failed):
+            skipped_failed += (not os.path.exists(out))
             continue
         todo.append((p, out))
-    logger.info("%d Minenbilder gefunden, %d müssen noch geladen werden.", len(paths), len(todo))
+    logger.info("%d Minenbilder gefunden, %d müssen noch geladen werden%s.", len(paths), len(todo),
+                f" ({skipped_failed} übersprungen, weil dort keine Daten vorhanden sind - "
+                f"--retry-failed zum erneuten Versuch)" if skipped_failed else "")
 
     failed = []
+    t_start, done, busy = time.time(), 0, 0.0
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(fetch_fn, p, out): p for p, out in todo}
+        futures = {pool.submit(fetch_one, p, out, fetch_fn): p for p, out in todo}
         for fut in as_completed(futures):
             name = os.path.basename(futures[fut])
+            done += 1
             try:
-                logger.info("  %s: %s", name, fut.result())
+                msg, dur = fut.result()
+                busy += dur
+                elapsed = time.time() - t_start
+                eta = elapsed / done * (len(todo) - done)
+                logger.info("  [%d/%d] %s: %s (%.0f s, noch ca. %s)", done, len(todo), name, msg, dur,
+                            _fmt_dur(eta))
             except Exception as e:
-                logger.error("  %s: fehlgeschlagen (%s)", name, e)
+                logger.error("  [%d/%d] %s: fehlgeschlagen (%s)", done, len(todo), name, e)
                 failed.append(name)
+    if todo:
+        wall = time.time() - t_start
+        logger.info("Fertig in %s: %d Minen, im Schnitt %.0f s pro Mine (%d parallel; jede Mine einzeln "
+                    "im Schnitt %.0f s - ist das deutlich mehr als bei n_workers=1, bremst der Server).",
+                    _fmt_dur(wall), done, wall / max(done, 1), n_workers, busy / max(done, 1))
 
     if failed:
         logger.warning("%d Minen fehlgeschlagen: %s", len(failed), failed)
