@@ -18,7 +18,7 @@ def test_merge_appends_new_rounds_and_removes_duplicates(tmp_path):
     a, b, c = box(0, 0, 1, 1), box(5, 5, 6, 6), box(9, 9, 10, 10)
     _gdf([("t1", a)]).to_file(base / "labels_reviewed_dump_all.gpkg", driver="GPKG")
     _gdf([("t1", b)]).to_file(base / "negatives_all_clean.gpkg", driver="GPKG")
-    _gdf([("t1", c)]).to_file(base / "ignore_reviewed_all.geojson", driver="GeoJSON")
+    gpd.GeoDataFrame(geometry=[c], crs="EPSG:32719").to_file(base / "ignore_reviewed_all.geojson", driver="GeoJSON")  # old: no mine_id
     _gdf([("t1", a), ("t2", c)]).to_file(new / "labels_reviewed_dump.gpkg", driver="GPKG")      # a is a duplicate
     _gdf([("t3", b)]).to_file(new / "negatives_reviewed_clean.gpkg", driver="GPKG")
     # no ignore file in the new round -> fine

@@ -27,7 +27,9 @@ def _read(path):
 
 
 def concat_dedup(frames, crs=None):
-    frames = [f[["mine_id", "geometry"]].to_crs(crs or f.crs) for f in frames if f is not None and len(f)]
+    # ältere Sammeldateien (z.B. ignore_reviewed_all.geojson) haben nur Geometrien, keine mine_id
+    frames = [f.assign(mine_id=f["mine_id"] if "mine_id" in f.columns else "")[["mine_id", "geometry"]].to_crs(crs or f.crs)
+              for f in frames if f is not None and len(f)]
     if not frames:
         return gpd.GeoDataFrame({"mine_id": []}, geometry=[], crs=crs)
     out = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
@@ -60,7 +62,7 @@ def merge(base_dir, suffix, out_suffix, new_dirs, eval_labels=None, tiles_out=No
             os.remove(path)
         ev.to_file(path, driver="GPKG")
         report["eval"] = (len(gpd.read_file(eval_labels)), len(ev))
-    tiles = sorted(set(pd.concat([merged[k]["mine_id"] for k in merged]).astype(str)))
+    tiles = sorted(set(pd.concat([merged[k]["mine_id"] for k in merged]).astype(str)) - {""})
     if tiles_out:
         with open(tiles_out, "w") as f:
             f.write("\n".join(tiles) + "\n")
