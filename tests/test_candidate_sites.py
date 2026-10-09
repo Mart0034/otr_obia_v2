@@ -173,3 +173,20 @@ def test_preselect_reader_loads_only_the_best_segments_per_mine_and_gives_the_sa
     full = build_candidate_sites(seg, area_pct=5.0)
     fast = build_candidate_sites(part, area_pct=100.0)
     assert sorted(full["max_proba"]) == pytest.approx(sorted(fast["max_proba"]))
+
+
+def test_sample_every_keeps_original_ranks_and_skips_reviewed_ones():
+    import numpy as np
+    from shapely.geometry import box
+    import geopandas as gpd
+    from candidate_sites import build_candidate_sites
+    n = 60
+    seg = gpd.GeoDataFrame(
+        {"mine_id": ["m"] * n, "dump_proba": np.linspace(0.99, 0.5, n)},
+        geometry=[box(i * 1000, 0, i * 1000 + 50, 50) for i in range(n)], crs="EPSG:32719")
+    full = build_candidate_sites(seg, threshold=0.0, area_pct=100.0, rank_by="max_proba")
+    samp = build_candidate_sites(seg, threshold=0.0, area_pct=100.0, rank_by="max_proba",
+                                 sample_every=5, sample_skip=10)
+    assert list(samp["rank"]) == [15, 20, 25, 30, 35, 40, 45, 50, 55, 60][:len(samp)]
+    assert list(samp["site_id"]) == [f"S{r:04d}" for r in samp["rank"]]
+    assert set(samp["site_id"]) <= set(full["site_id"])

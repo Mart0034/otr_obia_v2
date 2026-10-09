@@ -94,7 +94,8 @@ def _split_big(g, join_dist_m, max_area_m2, crs):
 
 def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                           labels=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
-                          exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None):
+                          exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
+                          sample_every=None, sample_skip=0):
     """seg: Segmente mit mine_id, dump_proba, geometry (projiziertes CRS in Metern).
     Gibt ein GeoDataFrame mit einem Standort pro Zeile zurück, nach Rang sortiert.
     max_site_m2: größere Standorte werden in ihre Kerne zerlegt (0 = aus).
@@ -162,6 +163,11 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
         sites = sites.head(top)
     sites.insert(0, "rank", np.arange(1, len(sites) + 1))
     sites.insert(1, "site_id", [f"S{r:04d}" for r in sites["rank"]])
+    if sample_every and sample_every > 1:
+        # Stichprobe: Ränge <= sample_skip (schon geprüft) weglassen, danach jeder sample_every-te.
+        # rank/site_id behalten ihren Wert aus der vollen Liste -> Trefferquote je Rang bleibt auswertbar.
+        keep = (sites["rank"] > sample_skip) & ((sites["rank"] - sample_skip) % sample_every == 0)
+        sites = sites[keep].reset_index(drop=True)
     sites["size_class"] = [_size_class(a) for a in sites["area_m2"]]
 
     pts = sites.geometry.representative_point()
@@ -228,6 +234,11 @@ def main(argv=None):
                    help="Segmente bis zu diesem Abstand gehören zum selben Standort.")
     p.add_argument("--min-area-m2", type=float, default=0.0, help="Kleinere Standorte weglassen.")
     p.add_argument("--top", type=int, default=None, help="Nur die besten N Standorte.")
+    p.add_argument("--sample-every", type=int, default=None,
+                   help="Nur jeden N-ten Standort der Rangliste ausgeben (Stichprobe, um die Trefferquote "
+                        "über viele Ränge mit wenig Prüfaufwand zu schätzen). Mit --top = Tiefe der Liste.")
+    p.add_argument("--sample-skip", type=int, default=0,
+                   help="Zusammen mit --sample-every: die ersten N Ränge auslassen (schon geprüft).")
     p.add_argument("--labels", default=None,
                    help="Bekannte Halden (GeoPackage); markiert Standorte nahe bekannter Halden.")
     p.add_argument("--known-dist-m", type=float, default=50.0)
@@ -266,7 +277,7 @@ def main(argv=None):
     sites = build_candidate_sites(seg, args.threshold, area_pct, args.join_dist_m,
                                   args.min_area_m2, labels, args.known_dist_m, args.top,
                                   args.max_site_m2, args.exclude_known, args.max_urban_frac, args.rank_by,
-                                  excl)
+                                  excl, args.sample_every, args.sample_skip)
     write_sites_gpkg(sites, args.out)
     csv_path = args.out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
