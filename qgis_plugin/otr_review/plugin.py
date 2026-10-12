@@ -38,6 +38,7 @@ class OtrReviewPlugin:
         icon = make_icon()
         for text, func in (("Kandidatenliste laden …", self.load_list),
                            ("Review-Fenster öffnen", self.open_panel),
+                           ("Beispielbilder verwalten …", self.manage_examples),
                            ("Einstellungen …", self.open_settings)):
             action = QAction(icon, text, self.iface.mainWindow())
             action.triggered.connect(lambda _=False, f=func: f())
@@ -95,6 +96,13 @@ class OtrReviewPlugin:
             QMessageBox.warning(self.iface.mainWindow(), "OTR Review",
                                 f"Das Fenster ließ sich nicht öffnen: {exc}\n\nBitte diese Meldung weitergeben.")
             raise
+
+    def manage_examples(self):
+        if self.panel is not None and self.panel.isVisible():
+            self.panel.manage_examples()
+        else:
+            QMessageBox.information(self.iface.mainWindow(), "OTR Review",
+                                    "Zuerst das Review-Fenster öffnen (Kandidatenliste laden).")
 
     def open_settings(self):
         if self.panel is not None and self.panel.isVisible():

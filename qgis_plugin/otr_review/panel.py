@@ -10,8 +10,11 @@ from .core import (DEFAULT_MODEL, ai_overview, fmt_overview, KEY_SETTING, OLD_PR
                    banner, clean_settings, cost_of, fmt_cost, human_followup, load_settings, result_from_fields,
                    verdict_to_review)
 from .engine import AiEngine, feature_context
+from .examples import DEFAULT_CAPTIONS, ExampleStore
+from .examples_dialog import ExamplesDialog
+from .render import image_png
 from .layers import ensure_ai_fields, layer_by_name
-from .qtcompat import (QCheckBox, QComboBox, QDesktopServices, QDockWidget, QFrame, QGridLayout, QGroupBox,
+from .qtcompat import (QCheckBox, QComboBox, QDesktopServices, QDockWidget, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
                        QInputDialog, QKeySequence, QLabel, QLineEdit, QProgressBar, QPushButton,
                        QScrollArea, QShortcut, QSpinBox, QTextBrowser, QTimer, QUrl, QVBoxLayout, QWidget, enum,
                        exec_dialog, qt)
@@ -49,7 +52,11 @@ class OtrPanel(QDockWidget):
         self.shown = None          # fid, dessen Ergebnis gerade angezeigt wird
         self.pending = None        # {"fid", "res"}: Ergebnis wartet auf Annehmen/Ablehnen
         self.total = {"n": 0, "usd": 0.0, "unknown": False}
-        self.engine = AiEngine(iface, lambda: self.settings, lambda: self.context.text(), self._site_info)
+        import os as _os
+        from qgis.core import QgsApplication
+        self.examples = ExampleStore(_os.path.join(QgsApplication.qgisSettingsDirPath(), "otr_review", "examples"))
+        self.engine = AiEngine(iface, lambda: self.settings, lambda: self.context.text(), self._site_info,
+                               lambda cfg: self.examples.active(cfg["max_examples"]))
 
         # ---- Schicht vorbereiten (Spalten, Bearbeitungsmodus), Warteschlange
         ensure_ai_fields(layer)
@@ -72,6 +79,7 @@ class OtrPanel(QDockWidget):
         self.timer.start()
         self.show_current()
         self._refresh_stats()
+        self.ex_manage.setText(f"Beispiele ({len(self.examples.list())}) …")
 
     # =====================================================================================
     # Aufbau
@@ -157,10 +165,22 @@ class OtrPanel(QDockWidget):
             b.hide()
         ai.addWidget(self.accept_btn, 7, 0)
         ai.addWidget(self.deny_btn, 7, 1)
+        ex_row = QHBoxLayout()
+        self.ex_dump = QPushButton("★ Beispiel: Dump")
+        self.ex_dump.setToolTip("Dieses Bild (wie die KI es sieht) als bestätigte Reifenhalde merken - wird mit jeder Anfrage mitgeschickt")
+        self.ex_dump.clicked.connect(lambda _=False: self.save_example("dump"))
+        self.ex_not = QPushButton("★ Beispiel: Kein Dump")
+        self.ex_not.setToolTip("Dieses Bild als bestätigt keine Halde merken (z.B. Erdhaufen) - gegen Fehlalarme")
+        self.ex_not.clicked.connect(lambda _=False: self.save_example("not_dump"))
+        self.ex_manage = QPushButton("Beispiele …")
+        self.ex_manage.clicked.connect(lambda _=False: self.manage_examples())
+        for b in (self.ex_dump, self.ex_not, self.ex_manage):
+            ex_row.addWidget(b)
+        ai.addLayout(ex_row, 8, 0, 1, 2)
         self.auto = QCheckBox("Auto: aktuellen + nächste Standorte gleich einschätzen")
         self.auto.setChecked(self.settings["auto_next"])
         self.auto.toggled.connect(self._auto_toggled)
-        ai.addWidget(self.auto, 8, 0, 1, 2)
+        ai.addWidget(self.auto, 9, 0, 1, 2)
         col.addWidget(box)
 
         # ---- Stapel
@@ -647,6 +667,39 @@ class OtrPanel(QDockWidget):
                 self._write(fid, value, ai_note(res))
         self.save_to_file(quiet=True)
         self.out.setText(f"Angenommen: review = {value}" if accepted else "Abgelehnt (review bleibt leer)")
+
+    # ---- Beispielbilder -----------------------------------------------------------------
+    def save_example(self, kind):
+        """Das Bild des aktuellen Standorts (wie die KI es sieht) als Beispiel speichern."""
+        fid = self.queue.current
+        if fid is None:
+            return
+        feature = self.feats[fid]
+        site = self._site_info(fid)["site_id"]
+        px = self.settings["example_px"]
+
+        def rendered(image, _mpp):
+            default = self.note.currentText().strip() or DEFAULT_CAPTIONS[kind]
+            text, ok = QInputDialog.getText(self, "Beispiel speichern",
+                                            "Kurze Beschreibung für die KI (z.B. 'dirt heaps on a waste dump slope'):",
+                                            text=default)
+            if not ok:
+                return
+            self.examples.add(image_png(image, px), kind, text, site)
+            n = len(self.examples.list())
+            self.notify(f"Beispiel gespeichert ({'Dump' if kind == 'dump' else 'Kein Dump'}), insgesamt {n}. "
+                        f"Es geht ab jetzt mit jeder Anfrage mit (höchstens {self.settings['max_examples']}).")
+            self.ex_manage.setText(f"Beispiele ({n}) …")
+
+        try:
+            self.engine.render_image(self.layer, feature, rendered)
+        except Exception as exc:
+            self.notify(f"Beispiel nicht gespeichert: {exc}")
+
+    def manage_examples(self):
+        dlg = ExamplesDialog(self, self.examples)
+        exec_dialog(dlg)
+        self.ex_manage.setText(f"Beispiele ({len(self.examples.list())}) …")
 
     def to_note(self):
         res = self.results.get(self.queue.current)

@@ -31,6 +31,14 @@ parallel, with a cost limit (default $1; settings).
 `src/reviewed_to_labels.py` keeps `auto_clean` sites out of the hard negatives (they become ignore zones) unless you
 pass `--trust-ai-clean`.
 
+## Reference pictures (examples)
+*★ Beispiel: Dump* / *★ Beispiel: Kein Dump* save the picture of the current site (exactly what the AI sees: satellite
+layer, outline, ring, scale bar) as a human-confirmed example, with a short caption. Up to 6 examples (half dumps, half
+non-dumps, newest first; settings) are sent with every request before the new picture, marked as confirmed by a human.
+Typical use: save 2-3 clear tire dumps and 2-3 dirt-heap false alarms. They sit in the prompt cache, so they cost about
++50 % on a Haiku check. *Beispiele ...* lists them with thumbnails (rename, switch off, delete). Stored in the QGIS profile
+folder `otr_review/examples`.
+
 ## Development
 Logic without Qt lives in `otr_review/core.py` (tests: `tests/test_otr_core.py`). The Qt part is smoke-tested in a
 headless QGIS (needs `python3-qgis`, runs against QGIS 3.34/Qt5):

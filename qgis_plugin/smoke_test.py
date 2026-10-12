@@ -104,9 +104,10 @@ CALLS = []
 
 
 def fake_call_api(payload, api_key, timeout=90, opener=None):
-    text = payload["messages"][0]["content"][1]["text"]
+    content = payload["messages"][0]["content"]
+    text = content[-1]["text"]
     CALLS.append(payload)
-    assert payload["messages"][0]["content"][0]["source"]["data"], "kein Bild"
+    assert [b for b in content if b["type"] == "image"][-1]["source"]["data"], "kein Bild"
     p = 0.04 if "Zone radius 100 m" in text else 0.45        # Wüsten-Umkreis; die Umgebung selbst wird der KI nicht genannt
     body = {"label": "clean_desert" if p < 0.1 else "clean_yard", "confidence": 0.9, "dump_probability": p,
             "dump_location": "none" if p < 0.1 else "nearby", "reason": "The zone shows bare sand."}
@@ -131,7 +132,7 @@ from otr_review.plugin import OtrReviewPlugin                            # noqa:
 
 plugin = OtrReviewPlugin(iface)
 plugin.initGui()
-check(len(iface.menu) == 3 and len(iface.toolbar) == 1, "Menü (3 Einträge) und Werkzeugleiste")
+check(len(iface.menu) == 4 and len(iface.toolbar) == 1, "Menü (4 Einträge) und Werkzeugleiste")
 layer, msgs = load_candidate_sites(iface, path)
 check(layer.isValid() and layer.featureCount() == 8, f"Schicht geladen (8 Standorte), Meldungen: {msgs}")
 check(QgsProject.instance().mapLayersByName("drawn_polygons"), "Zeichenschicht geladen")
@@ -193,8 +194,8 @@ check(res["reason"].startswith("Bare sand"), "Füllwort 'The zone shows' entfern
 check(panel.banner.text().startswith("No dump"), f"Kasten: {panel.banner.text()}")
 check(layer.getFeature(cur)["ai_decision"] == "pending", "Ergebnis in der Datei gespeichert (pending)")
 check(CALLS[-1].get("system")[0].get("cache_control"), "Prompt-Cache aktiv")
-check(any("Zone radius 100 m" in c["messages"][0]["content"][1]["text"] for c in CALLS), "Wüsten-Umkreis 100 m")
-texts = [c["messages"][0]["content"][1]["text"] for c in CALLS]
+check(any("Zone radius 100 m" in c["messages"][0]["content"][-1]["text"] for c in CALLS), "Wüsten-Umkreis 100 m")
+texts = [c["messages"][0]["content"][-1]["text"] for c in CALLS]
 check(all("image scale" in t and "per pixel" in t for t in texts), "Maßstab (m je Pixel) steht im Text an die KI")
 check(not any("location:" in t or "mining operation" in t for t in texts), "die Umgebung (Betrieb/Wüste) wird der KI NICHT genannt")
 panel.decide_ai(True)
@@ -307,6 +308,48 @@ png = image_png(img)
 open(os.path.join(tmp, "site.png"), "wb").write(png)
 check(len(png) > 1000 and img.width() >= 256, f"Standort gerendert ({img.width()}x{img.height()}), {tmp}/site.png")
 print("   BILD:", os.path.join(tmp, "site.png"))
+
+print("Beispielbilder:")
+from otr_review.examples import ExampleStore                             # noqa: E402
+from otr_review.examples_dialog import ExamplesDialog                    # noqa: E402
+from qgis.PyQt.QtWidgets import QInputDialog                             # noqa: E402
+panel.examples = ExampleStore(os.path.join(tmp, "examples"))
+QInputDialog.getText = staticmethod(lambda *a, **k: ("rows of tires" if "Dump" in str(k.get("text", "")) or True else "x", True))
+panel.skip() if panel.queue.current is None else None
+panel.save_example("dump")
+wait_until(lambda: len(panel.examples.list()) == 1, what="Beispiel 1 gespeichert")
+panel.save_example("not_dump")
+wait_until(lambda: len(panel.examples.list()) == 2, what="Beispiel 2 gespeichert")
+ex = panel.examples.list()
+check({e["kind"] for e in ex} == {"dump", "not_dump"} and all(e["enabled"] for e in ex), "zwei Beispiele (Dump / Kein Dump) gespeichert")
+check(len(panel.examples.png_bytes(ex[0]["id"])) > 1000, "Beispielbild ist ein echtes PNG")
+CALLS.clear()
+panel.results.clear()
+panel.errors.clear()
+cur = panel.queue.current
+panel.classify()
+wait_until(lambda: cur in panel.results or cur in panel.errors, what="Ergebnis mit Beispielen")
+content = CALLS[-1]["messages"][0]["content"]
+imgs = [b for b in content if b["type"] == "image"]
+check(len(imgs) == 3, f"Anfrage enthält 2 Beispiele + das neue Bild ({len(imgs)} Bilder)")
+check(content[1]["text"].startswith("Reference example 1") and "CONFIRMED" in content[1]["text"], "Beispiele stehen vor dem neuen Bild, mit Beschriftung")
+check(sum(1 for b in content if b.get("cache_control")) == 1 and content[-3].get("cache_control"), "Cache-Haltepunkt am Ende der Beispiele")
+check(content[-1]["text"].startswith("Classify"), "das neue Bild steht zuletzt")
+dlg = ExamplesDialog(iface.mainWindow(), panel.examples)
+check(dlg.table.rowCount() == 2, "Verwaltungsfenster listet die Beispiele")
+panel.examples.set_enabled(ex[0]["id"], False)
+CALLS.clear(); panel.results.clear(); panel.shown = None
+panel.classify()
+wait_until(lambda: cur in panel.results or cur in panel.errors, what="Ergebnis ohne ein Beispiel")
+check(len([b for b in CALLS[-1]["messages"][0]["content"] if b["type"] == "image"]) == 2, "ausgeschaltetes Beispiel wird nicht mitgeschickt")
+panel.store_settings(core.clean_settings({**panel.settings, "use_examples": False}))
+CALLS.clear(); panel.shown = None
+panel.classify()
+wait_until(lambda: cur in panel.results or cur in panel.errors, what="Ergebnis ohne Beispiele")
+check(len([b for b in CALLS[-1]["messages"][0]["content"] if b["type"] == "image"]) == 1, "Einstellung 'Beispiele aus' schickt keine mit")
+panel.store_settings(core.clean_settings({**panel.settings, "use_examples": True}))
+panel.examples.delete(ex[1]["id"])
+check(len(panel.examples.list()) == 1, "Beispiel gelöscht")
 
 print("Einstellungen:")
 panel.store_settings(core.clean_settings({**panel.settings, "max_tokens": 1234, "prefetch": 2}))

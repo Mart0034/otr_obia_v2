@@ -115,6 +115,9 @@ DEFAULT_SETTINGS = {
     "batch_n": 500,               # zuletzt benutzte Stapelgröße
     "batch_parallel": 10,         # gleichzeitige Standorte im Stapel (rendern + Anfrage)
     "batch_render_parallel": 4,   # davon gleichzeitig im Hintergrund gerendert (nur render_mode = clean)
+    "use_examples": True,         # gespeicherte Beispielbilder (von dir bestätigt) mit jeder Anfrage mitschicken
+    "max_examples": 6,            # höchstens so viele (ausgewogen: Hälfte Dump, Hälfte Kein Dump)
+    "example_px": 768,            # Kantenlänge der gespeicherten Beispielbilder (kleiner = billiger)
     "tell_context": False,        # der KI die Umgebung (Betrieb/Wüste) im Text nennen (Standard aus, siehe zone_note)
     "highlight_fill": False,      # clean-Bild: Standort nur umranden (Standard) statt gelb füllen - verdeckt die Reifen nicht
     "render_mode": "clean",       # clean: nur Satellitenbild + Umriss/Umkreis (schnell, nichts verdeckt den Boden);
@@ -126,7 +129,7 @@ DEFAULT_SETTINGS = {
 _LIMITS = {"radius_inside": (0, 500, float), "radius_near": (0, 500, float), "radius_desert": (0, 500, float),
            "max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
            "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int), "prefetch": (0, 16, int),
-           "spot_check_every": (1, 100, int), "batch_n": (1, 100000, int), "batch_parallel": (1, 24, int), "batch_render_parallel": (1, 12, int),
+           "spot_check_every": (1, 100, int), "max_examples": (0, 12, int), "example_px": (256, 1568, int), "batch_n": (1, 100000, int), "batch_parallel": (1, 24, int), "batch_render_parallel": (1, 12, int),
            "batch_budget_usd": (0, 1000, float), "auto_clean_p": (0, 0.5, float)}
 
 
@@ -171,7 +174,8 @@ def clean_settings(raw):
         out["effort"] = raw["effort"]
     if raw.get("thinking") in ("default", "off"):
         out["thinking"] = raw["thinking"]
-    for key in ("draw_ring", "auto_next", "auto_radius", "prompt_cache", "auto_clean", "tell_context", "highlight_fill"):
+    for key in ("draw_ring", "auto_next", "auto_radius", "prompt_cache", "auto_clean", "tell_context", "highlight_fill",
+                "use_examples"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
     return out
@@ -238,20 +242,63 @@ def thinking_param(model, mode, effort=""):
     return {"type": "between_tools"} if "sonnet-5-5" in model else {"type": "disabled"}
 
 
+EXAMPLE_KINDS = {"dump": "CONFIRMED TIRE DUMP", "not_dump": "CONFIRMED NOT A DUMP"}
+
+
+def example_blocks(examples, cache=False):
+    """Inhaltsblöcke für die Referenzbilder, die VOR dem eigentlichen Bild stehen. Jedes Beispiel ist ein dict
+    mit b64, kind ('dump' / 'not_dump'), caption. Reihenfolge und Text sind stabil (nach id sortiert), damit der
+    Cache greift; der Cache-Haltepunkt sitzt am Ende der Beispiele (System-Prompt + Beispiele werden gelesen,
+    nur das neue Bild kostet voll)."""
+    if not examples:
+        return []
+    blocks = [{"type": "text", "text": (
+        "Reference examples follow. Each was checked by a human reviewer. Use them to calibrate what tires and "
+        "what look-alikes (dirt and rock heaps, shadows) look like at this scale. The new view may look different "
+        "from all of them: judge what it shows, do not copy a label.")}]
+    for n, ex in enumerate(examples, 1):
+        label = EXAMPLE_KINDS.get(ex.get("kind"), "EXAMPLE")
+        caption = str(ex.get("caption", "")).strip()
+        blocks.append({"type": "text", "text": f"Reference example {n} - {label}" + (f": {caption}" if caption else "")})
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": ex["b64"]}})
+    end = {"type": "text", "text": "End of reference examples. Now classify the NEW view below."}
+    if cache:
+        end["cache_control"] = {"type": "ephemeral"}
+    blocks.append(end)
+    return blocks
+
+
+def pick_examples(entries, max_n):
+    """Wählt aus den aktiven Beispielen höchstens max_n aus, ausgewogen zwischen 'dump' und 'not_dump'
+    (abwechselnd, neueste zuerst), füllt mit der anderen Art auf, wenn eine Art zu wenige hat. Ergebnis nach
+    id sortiert (stabil für den Cache)."""
+    if max_n <= 0:
+        return []
+    pools = {k: sorted([e for e in entries if e.get("kind") == k], key=lambda e: e["id"], reverse=True)
+             for k in ("dump", "not_dump")}
+    out, order = [], ["dump", "not_dump"]
+    while len(out) < max_n and (pools["dump"] or pools["not_dump"]):
+        for k in order:
+            if pools[k] and len(out) < max_n:
+                out.append(pools[k].pop(0))
+    return sorted(out, key=lambda e: e["id"])
+
+
 def build_payload(image_b64, media_type="image/png", context="", model=DEFAULT_MODEL, max_tokens=400,
-                  system=None, temperature=None, effort="", thinking="default", cache=False):
+                  system=None, temperature=None, effort="", thinking="default", cache=False, examples=None):
     """Anfrage-Körper für die Messages-API (reine Funktion, testbar)."""
     text = "Classify what is visible in this map view."
     if context.strip():
         text += f"\nContext: {context.strip()}"
+    target = [{"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+              {"type": "text", "text": text}]
+    content = example_blocks(examples, cache) + target if examples else target
     payload = {
         "model": model,
         "max_tokens": max_tokens,
         "system": ([{"type": "text", "text": system or SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
                    if cache else (system or SYSTEM_PROMPT)),
-        "messages": [{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
-            {"type": "text", "text": text}]}],
+        "messages": [{"role": "user", "content": content}],
     }
     if temperature is not None:
         payload["temperature"] = temperature

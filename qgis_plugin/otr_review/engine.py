@@ -20,11 +20,12 @@ class AiEngine:
     render_mode 'clean' rendert ebenfalls im Hintergrund (mehrere Standorte gleichzeitig, `rendering` zählt
     sie); 'visible' blockiert QGIS kurz je Standort."""
 
-    def __init__(self, iface, get_settings, get_extra_context, get_site_info):
+    def __init__(self, iface, get_settings, get_extra_context, get_site_info, get_examples=None):
         self.iface = iface
         self.get_settings = get_settings          # -> aktuelle Einstellungen (dict)
         self.get_extra_context = get_extra_context  # -> Zusatzinfo-Text des Fensters
         self.get_site_info = get_site_info        # fid -> {"site_id", "rank"}
+        self.get_examples = get_examples or (lambda cfg: [])   # cfg -> Beispielbilder für die Anfrage
         self.inflight = set()                     # Standorte in Arbeit (Rendern + Anfrage)
         self.rendering = 0                        # davon gerade beim Rendern
         self.tasks = {}
@@ -56,7 +57,8 @@ class AiEngine:
                                               self.get_extra_context()) if t)
                 payload = build_payload(base64.b64encode(image_png(image, cfg["max_image_px"])).decode("ascii"),
                                         "image/png", extra, cfg["model"], cfg["max_tokens"], cfg["system_prompt"],
-                                        cfg["temperature"], cfg["effort"], cfg["thinking"], cfg["prompt_cache"])
+                                        cfg["temperature"], cfg["effort"], cfg["thinking"], cfg["prompt_cache"],
+                                        self.get_examples(cfg) if cfg.get("use_examples") else None)
                 self._send(fid, payload, key, cfg, gen, meta, callback)
             except Exception as exc:
                 fail(exc)
@@ -80,6 +82,23 @@ class AiEngine:
                     send(canvas.grab().toImage(), None)
         except Exception as exc:
             fail(exc)
+
+    def render_image(self, layer, feature, callback):
+        """Bild eines Standorts genau so rendern, wie die KI es sieht (für 'Als Beispiel speichern');
+        callback(image, m_per_px) im Hauptthread."""
+        cfg = dict(self.get_settings())
+        radius = radius_for(feature_context(feature), cfg)
+        canvas = self.iface.mapCanvas()
+        if radius > 0 and cfg["render_mode"] == "clean":
+            def rendered(image, m_per_px):
+                if image is None:
+                    image, m_per_px = render_selected(canvas, layer, feature, cfg, radius)
+                callback(image, m_per_px)
+            start_render_clean(canvas, layer, feature, cfg, radius, rendered)
+        elif radius > 0:
+            callback(*render_selected(canvas, layer, feature, cfg, radius))
+        else:
+            callback(canvas.grab().toImage(), None)
 
     def _send(self, fid, payload, key, cfg, gen, meta, callback):
         info = self.get_site_info(fid)
