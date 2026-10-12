@@ -175,6 +175,33 @@ def start_render_clean(canvas, layer, feature, cfg, radius_m, on_done):
     job.start()
 
 
+def render_view_clean(canvas, max_px=768):
+    """Den gerade sichtbaren Kartenausschnitt (nur Satellitenbild, kein Umriss) mit Maßstabsbalken rendern -
+    für Beispielbilder von beliebigen Stellen, die keine Standorte sind. Gibt (Bild, Meter je Pixel) zurück;
+    (None, None), wenn kein Satellitenbild sichtbar ist."""
+    layers = raster_layers(canvas)
+    if not layers:
+        return None, None
+    base = canvas.mapSettings()
+    ms = QgsMapSettings()
+    ms.setLayers(layers)
+    ms.setDestinationCrs(base.destinationCrs())
+    ms.setExtent(base.visibleExtent())
+    ext = base.visibleExtent()
+    w_px, h_px = image_size(ext.width(), ext.height(), max_px)
+    ms.setOutputSize(QSize(w_px, h_px))
+    ms.setBackgroundColor(QColor("white"))
+    job = QgsMapRendererSequentialJob(ms)
+    job.start()
+    job.waitForFinished()
+    image = job.renderedImage()
+    to_metric = QgsCoordinateTransform(base.destinationCrs(), QgsCoordinateReferenceSystem("EPSG:32719"), QgsProject.instance())
+    width_m = to_metric.transformBoundingBox(ext).width()
+    m_per_px = width_m / w_px
+    paint_scale_bar(image, m_per_px)
+    return image, m_per_px
+
+
 def image_png(image, max_edge=MAX_EDGE_PX):
     """QImage als PNG-Bytes (auf max_edge begrenzt)."""
     if max(image.width(), image.height()) > max_edge:

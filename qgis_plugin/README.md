@@ -14,6 +14,12 @@ One plugin instead of three console scripts (`qgis/load_candidate_sites.py`, `qg
 Review keys 1-7 as before. Below: AI check (with result box, accept / deny, token and cost line),
 the Auto checkbox (current + next N sites are checked ahead), batch analysis and the settings button.
 
+## Testing the AI on chosen sites
+*Test auf Auswahl* checks the sites selected on the map without changing anything. To select e.g. all known dumps: open the
+attribute table of `candidate_sites`, click *Select features using an expression* and use `"review" IN ('dump','partial')`;
+dirt-heap false alarms: `"review" = 'clean' AND "ai_dump_p" >= 0.5`. The report lists, per earlier verdict, how many reach the dump
+limit and how many fall under the possible limit.
+
 ## Batch analysis and automatic clean
 *Stapel starten* checks the next N (default 500) unreviewed sites that have no AI result yet, several requests in
 parallel, with a cost limit (default $1; settings).
@@ -36,7 +42,7 @@ pass `--trust-ai-clean`.
 layer, outline, ring, scale bar) as a human-confirmed example, with a short caption. Up to 6 examples (half dumps, half
 non-dumps, newest first; settings) are sent with every request before the new picture, marked as confirmed by a human.
 Typical use: save 2-3 clear tire dumps and 2-3 dirt-heap false alarms. They sit in the prompt cache, so they cost about
-+50 % on a Haiku check. *Beispiele ...* lists them with thumbnails (rename, switch off, delete). Stored in the QGIS profile
++50 % on a Haiku check. The *Quelle* box above the buttons chooses what is saved: the site(s) you selected on the map with QGIS's selection tool (up to 4, otherwise the site the review queue is on), or the *Kartenausschnitt* - exactly the area you are looking at (satellite layer only, with scale bar), so any spot, e.g. a field of dirt heaps, can become an example. *Beispiele ...* lists them with thumbnails (rename, switch off, delete). Stored in the QGIS profile
 folder `otr_review/examples`.
 
 ## Development

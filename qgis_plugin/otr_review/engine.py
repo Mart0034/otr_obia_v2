@@ -6,7 +6,7 @@ import time
 from qgis.core import QgsApplication, QgsTask
 
 from .core import (build_payload, log_row, parse_reply, prompt_id, radius_for, run_check, zone_note)
-from .render import image_png, render_selected, start_render_clean
+from .render import image_png, render_selected, render_view_clean, start_render_clean
 
 
 def feature_context(feature):
@@ -99,6 +99,14 @@ class AiEngine:
             callback(*render_selected(canvas, layer, feature, cfg, radius))
         else:
             callback(canvas.grab().toImage(), None)
+
+    def render_view(self, callback):
+        """Den sichtbaren Kartenausschnitt wie für die KI rendern (Beispielbild von einer beliebigen Stelle)."""
+        cfg = dict(self.get_settings())
+        image, m_per_px = render_view_clean(self.iface.mapCanvas(), cfg["example_px"])
+        if image is None:
+            image, m_per_px = self.iface.mapCanvas().grab().toImage(), None
+        callback(image, m_per_px)
 
     def _send(self, fid, payload, key, cfg, gen, meta, callback):
         info = self.get_site_info(fid)

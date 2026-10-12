@@ -165,6 +165,13 @@ class OtrPanel(QDockWidget):
             b.hide()
         ai.addWidget(self.accept_btn, 7, 0)
         ai.addWidget(self.deny_btn, 7, 1)
+        self.ex_source = QComboBox()
+        self.ex_source.addItems(["Quelle: Standort (in der Karte markiert, sonst aktueller)",
+                                 "Quelle: Kartenausschnitt (was ich gerade sehe)"])
+        self.ex_source.setToolTip("Standort: das Bild des markierten Standorts (Auswahlwerkzeug in QGIS) bzw. des Standorts, "
+                                  "an dem die Warteschlange gerade steht. Kartenausschnitt: genau der sichtbare Bereich - "
+                                  "damit lässt sich jede Stelle (z.B. ein Erdhaufen-Feld) als Beispiel speichern.")
+        ai.addWidget(self.ex_source, 8, 0, 1, 2)
         ex_row = QHBoxLayout()
         self.ex_dump = QPushButton("★ Beispiel: Dump")
         self.ex_dump.setToolTip("Dieses Bild (wie die KI es sieht) als bestätigte Reifenhalde merken - wird mit jeder Anfrage mitgeschickt")
@@ -176,11 +183,11 @@ class OtrPanel(QDockWidget):
         self.ex_manage.clicked.connect(lambda _=False: self.manage_examples())
         for b in (self.ex_dump, self.ex_not, self.ex_manage):
             ex_row.addWidget(b)
-        ai.addLayout(ex_row, 8, 0, 1, 2)
+        ai.addLayout(ex_row, 9, 0, 1, 2)
         self.auto = QCheckBox("Auto: aktuellen + nächste Standorte gleich einschätzen")
         self.auto.setChecked(self.settings["auto_next"])
         self.auto.toggled.connect(self._auto_toggled)
-        ai.addWidget(self.auto, 9, 0, 1, 2)
+        ai.addWidget(self.auto, 10, 0, 1, 2)
         col.addWidget(box)
 
         # ---- Stapel
@@ -670,31 +677,52 @@ class OtrPanel(QDockWidget):
 
     # ---- Beispielbilder -----------------------------------------------------------------
     def save_example(self, kind):
-        """Das Bild des aktuellen Standorts (wie die KI es sieht) als Beispiel speichern."""
-        fid = self.queue.current
-        if fid is None:
-            return
-        feature = self.feats[fid]
-        site = self._site_info(fid)["site_id"]
+        """Beispielbild speichern. Quelle 'Standort': die in der Karte markierten Standorte (höchstens 4), sonst der
+        aktuelle der Warteschlange; Quelle 'Kartenausschnitt': genau der sichtbare Bereich."""
         px = self.settings["example_px"]
-
-        def rendered(image, _mpp):
-            default = self.note.currentText().strip() or DEFAULT_CAPTIONS[kind]
-            text, ok = QInputDialog.getText(self, "Beispiel speichern",
-                                            "Kurze Beschreibung für die KI (z.B. 'dirt heaps on a waste dump slope'):",
-                                            text=default)
-            if not ok:
+        kind_text = "Dump" if kind == "dump" else "Kein Dump"
+        default = self.note.currentText().strip() or DEFAULT_CAPTIONS[kind]
+        jobs = []                                    # (Quelle-Beschreibung, render-Funktion)
+        if self.ex_source.currentIndex() == 1:
+            jobs.append(("Kartenausschnitt", lambda cb: self.engine.render_view(cb)))
+        else:
+            fids = [f for f in self.layer.selectedFeatureIds() if f in self.feats][:4]
+            if not fids and self.queue.current is not None:
+                fids = [self.queue.current]
+            if not fids:
+                self.notify("Kein Standort: in der Karte einen Standort markieren (Auswahlwerkzeug) oder oben "
+                            "'Kartenausschnitt' als Quelle wählen.")
                 return
-            self.examples.add(image_png(image, px), kind, text, site)
-            n = len(self.examples.list())
-            self.notify(f"Beispiel gespeichert ({'Dump' if kind == 'dump' else 'Kein Dump'}), insgesamt {n}. "
-                        f"Es geht ab jetzt mit jeder Anfrage mit (höchstens {self.settings['max_examples']}).")
-            self.ex_manage.setText(f"Beispiele ({n}) …")
+            for fid in fids:
+                site = self._site_info(fid)["site_id"]
+                jobs.append((site, lambda cb, fid=fid: self.engine.render_image(self.layer, self.feats[fid], cb)))
+        text, ok = QInputDialog.getText(self, "Beispiel speichern",
+                                        f"Kurze Beschreibung für die KI ({kind_text}; z.B. 'dirt heaps on a waste dump slope'):",
+                                        text=default)
+        if not ok:
+            return
+        saved = []
 
-        try:
-            self.engine.render_image(self.layer, feature, rendered)
-        except Exception as exc:
-            self.notify(f"Beispiel nicht gespeichert: {exc}")
+        def run(i):
+            if i >= len(jobs):
+                n = len(self.examples.list())
+                self.notify(f"{len(saved)} Beispiel(e) gespeichert ({kind_text}: {', '.join(saved)}), insgesamt {n}. "
+                            f"Sie gehen ab jetzt mit jeder Anfrage mit (höchstens {self.settings['max_examples']}).")
+                self.ex_manage.setText(f"Beispiele ({n}) …")
+                return
+            name, render = jobs[i]
+
+            def rendered(image, _mpp):
+                self.examples.add(image_png(image, px), kind, text, "" if name == "Kartenausschnitt" else name)
+                saved.append(name)
+                run(i + 1)
+
+            try:
+                render(rendered)
+            except Exception as exc:
+                self.notify(f"Beispiel nicht gespeichert: {exc}")
+
+        run(0)
 
     def manage_examples(self):
         dlg = ExamplesDialog(self, self.examples)

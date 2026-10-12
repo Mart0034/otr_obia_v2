@@ -351,6 +351,53 @@ panel.store_settings(core.clean_settings({**panel.settings, "use_examples": True
 panel.examples.delete(ex[1]["id"])
 check(len(panel.examples.list()) == 1, "Beispiel gelöscht")
 
+print("Beispiel aus markiertem Standort / Kartenausschnitt:")
+for old in panel.examples.list():
+    panel.examples.delete(old["id"])
+two = [f for f in layer.getFeatures() if f["site_id"] in ("S0003", "S0005")]
+layer.selectByIds([f.id() for f in two])
+panel.ex_source.setCurrentIndex(0)
+panel.save_example("not_dump")
+wait_until(lambda: len(panel.examples.list()) == 2, what="2 Beispiele aus der Auswahl")
+check(sorted(e["site_id"] for e in panel.examples.list()) == ["S0003", "S0005"], "markierte Standorte werden Beispiele (mit ihrer site_id)")
+layer.removeSelection()
+panel.ex_source.setCurrentIndex(1)
+iface.canvas.setLayers([layer, raster])
+iface.canvas.setExtent(raster.extent())
+panel.save_example("dump")
+wait_until(lambda: len(panel.examples.list()) == 3, what="Beispiel aus Kartenausschnitt")
+view_ex = [e for e in panel.examples.list() if e["kind"] == "dump"][0]
+check(view_ex["site_id"] == "", "Kartenausschnitt-Beispiel hat keine site_id")
+from qgis.PyQt.QtGui import QImage                                       # noqa: E402
+im = QImage.fromData(panel.examples.png_bytes(view_ex["id"]))
+check(im.width() == 768, f"Kartenausschnitt (nur Satellitenbild) als 768-px-PNG gespeichert ({im.width()}x{im.height()})")
+for old in panel.examples.list():
+    panel.examples.delete(old["id"])
+panel.ex_source.setCurrentIndex(0)
+layer.removeSelection()
+panel.queue.todo.clear()                                                 # kein aktueller Standort mehr (wie nach dem Durchgehen aller 500)
+panel.save_example("dump")
+check(len(panel.examples.list()) == 0 and "Kein Standort" in panel.last.text(), "ohne Auswahl und ohne aktuellen Standort: freundlicher Hinweis, nichts gespeichert")
+
+print("Test auf Auswahl mit Gruppen:")
+for f in layer.getFeatures():
+    if f["site_id"] in ("S0001", "S0004"):
+        layer.changeAttributeValue(f.id(), layer.fields().indexOf("review"), "dump")
+    if f["site_id"] in ("S0002", "S0007"):
+        layer.changeAttributeValue(f.id(), layer.fields().indexOf("review"), "clean")
+layer.commitChanges(False)
+layer.selectByIds([f.id() for f in layer.getFeatures() if f["site_id"] in ("S0001", "S0002", "S0004", "S0007")])
+shown = []
+QMessageBox.exec = lambda self: shown.append(self.text())
+if hasattr(QMessageBox, "exec_"):
+    QMessageBox.exec_ = QMessageBox.exec
+panel.feats = {f.id(): f for f in layer.getFeatures()}
+panel.start_batch("test")
+wait_until(lambda: panel.batch is None, timeout=40, what="Test mit Gruppen")
+report = [t for t in shown if "Je bisherigem Urteil" in t]
+check(bool(report) and "dump" in report[0] and "clean" in report[0], "Testbericht fasst je bisherigem Urteil zusammen (dump / clean)")
+print("   ", report[0].splitlines()[1:4])
+
 print("Einstellungen:")
 panel.store_settings(core.clean_settings({**panel.settings, "max_tokens": 1234, "prefetch": 2}))
 check(core.load_settings(__import__("qgis.core", fromlist=["QgsSettings"]).QgsSettings().value(core.PREFS_KEY))["max_tokens"] == 1234,

@@ -200,7 +200,15 @@ class BatchRunner:
         would = [r for r in rows if auto_clean_ok(
             {"ok": True, "dump_probability": r[2], "dump_location": "" if r[4] == "-" else r[4], "label": r[3]},
             "open_desert", cfg)]
-        lines = [f"{len(rows)} Standorte eingeschätzt.",
+        groups = {}
+        for r in rows:
+            groups.setdefault(r[1], []).append(r[2])
+        by_group = ["Je bisherigem Urteil (Anzahl · davon >= Dump-Grenze · davon < Möglich-Grenze · Median):"]
+        for name, ps in sorted(groups.items()):
+            ps_sorted = sorted(ps)
+            by_group.append(f"  {name:8} {len(ps):3d} · {sum(1 for x in ps if x >= cfg['thr_dump']):3d} · "
+                            f"{sum(1 for x in ps if x < cfg['thr_possible']):3d} · {ps_sorted[len(ps_sorted) // 2]:.0%}")
+        lines = [f"{len(rows)} Standorte eingeschätzt.", *by_group, "",
                  f"Kleinste Halden-Wahrscheinlichkeit: {rows[0][2]:.0%}",
                  f"Höchstens {cfg['auto_clean_p']:.0%}: {len(low)}  (davon würden als Auto-Clean gelten: {len(would)})", "",
                  "Niedrigste Werte (Standort, bisheriges Urteil, p, Label, Ort):"]
