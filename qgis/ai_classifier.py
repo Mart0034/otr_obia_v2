@@ -17,6 +17,8 @@ in den QGIS-Einstellungen (Klartext im Profil - auf geteilten Rechnern nicht nut
     Zusatzinfo    optionaler Hinweis, z.B. "Sentinel-2, 10 m" oder "Satellitenbild 0.5 m"
     ⚙             Einstellungen: Modell, max. Tokens, Temperatur, Prompt, Umkreis, Bildgröße,
                   Zeitlimit, Log-Datei (werden gespeichert)
+    Auto          Haken "Auto": nach Annehmen (oder nach deinem Urteil im Review-Fenster) wird
+                  der nächste Standort sofort eingeschätzt; nach Ablehnen wartet er auf dein Urteil
     ✔ / ✖         Annehmen schreibt das KI-Urteil als `review` (Dump -> dump bzw. partial, Halde
                   nur in der Umgebung -> unsure, sonst clean) ins gpkg und springt im Review-
                   Fenster weiter; Ablehnen lässt `review` leer. Beides landet in den neuen
@@ -88,6 +90,7 @@ DEFAULT_SETTINGS = {
     "draw_ring": True,
     "timeout_s": 90,
     "log_path": LOG_PATH,
+    "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
 _LIMITS = {"max_tokens": (16, 8192, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
            "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int)}
@@ -112,8 +115,9 @@ def clean_settings(raw):
     for key in ("model", "system_prompt", "log_path"):
         if isinstance(raw.get(key), str) and raw[key].strip():
             out[key] = raw[key].strip() if key != "system_prompt" else raw[key]
-    if isinstance(raw.get("draw_ring"), bool):
-        out["draw_ring"] = raw["draw_ring"]
+    for key in ("draw_ring", "auto_next"):
+        if isinstance(raw.get(key), bool):
+            out[key] = raw[key]
     return out
 
 
@@ -248,7 +252,7 @@ try:  # außerhalb von QGIS (Tests) nicht verfügbar
     from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsField,
                            QgsMapRendererSequentialJob, QgsMapSettings, QgsProject, QgsRectangle,
                            QgsSettings, QgsTask)
-    from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QSize, Qt, QVariant
+    from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QSize, Qt, QTimer, QVariant
     from qgis.PyQt.QtGui import QColor, QPainter, QPen, QPolygonF
     from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget,
                                      QDoubleSpinBox, QFormLayout, QGridLayout, QInputDialog, QLabel,
@@ -484,11 +488,44 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         grid.addWidget(self.accept_btn, 6, 0)
         grid.addWidget(self.deny_btn, 6, 1)
         self.pending = None                    # {"layer", "fid", "res"} bis angenommen/abgelehnt
+        self.busy = False                      # Anfrage läuft
+        self.last_fid = None                   # zuletzt eingeschätzter Standort
+        self.auto = QCheckBox("Auto: nächsten Standort gleich einschätzen")
+        self.auto.setChecked(self.settings["auto_next"])
+        self.auto.toggled.connect(self._auto_toggled)
+        grid.addWidget(self.auto, 9, 0, 1, 2)
+        self.timer = QTimer(self)              # prüft, ob im Review-Fenster ein neuer Standort dran ist
+        self.timer.setInterval(600)
+        self.timer.timeout.connect(self._auto_tick)
+        self.timer.start()
         gear = QPushButton("⚙ Einstellungen")
         gear.clicked.connect(lambda _=False: self.open_settings())
         grid.addWidget(gear, 8, 0, 1, 2)
         self.setWidget(body)
         iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
+
+    def _auto_toggled(self, on):
+        self.settings["auto_next"] = bool(on)
+        self._store()
+
+    def _auto_tick(self):
+        """Auto-Modus: ist im Review-Fenster ein anderer Standort dran als der zuletzt eingeschätzte
+        und wartet kein Ergebnis auf Annehmen/Ablehnen, wird er eingeschätzt. Nach 'Ablehnen' bleibt
+        derselbe Standort dran - erst nach deinem Urteil im Review-Fenster geht es weiter."""
+        if not self.auto.isChecked() or self.busy or self.pending is not None:
+            return
+        panel = globals().get("_review_panel")
+        try:
+            fid = panel.queue.current
+        except Exception:
+            return
+        if fid is not None and fid != self.last_fid and not panel.awaiting_draw:
+            self.last_fid = fid                # auch bei Fehlern kein Dauer-Wiederholen
+            try:
+                self.classify()
+            except Exception as exc:
+                self.busy = False
+                self.out.setText(f"Fehler: {exc}")
 
     def _store(self):
         QgsSettings().setValue(PREFS_KEY, json.dumps(self.settings))
@@ -567,12 +604,15 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.accept_btn.hide()
         self.deny_btn.hide()
         target = (layer, feature.id()) if feature is not None else None
+        self.last_fid = feature.id() if feature is not None else None
+        self.busy = True
         self.out.setText("Frage Claude ...")
 
         def work(task):
             return call_api(payload, key, timeout=cfg["timeout_s"])
 
         def done(exception, result=None):
+            self.busy = False
             self.go.setEnabled(True)
             if exception is not None or result is None:
                 self.banner.hide()

@@ -127,3 +127,10 @@ def test_ai_note_has_label_probability_and_reason():
     r = {"label": "clean_road", "dump_probability": 0.04, "reason": "Haul road\nwith  tracks."}
     assert ai.ai_note(r) == "AI: clean_road, dump 0.04 - Haul road with tracks."
     assert ai.ai_note({"label": "dump", "dump_probability": 0.9, "reason": ""}) == "AI: dump, dump 0.90"
+
+
+def test_auto_next_setting_defaults_off_and_roundtrips():
+    assert ai.DEFAULT_SETTINGS["auto_next"] is False
+    s = ai.clean_settings({"auto_next": True})
+    assert s["auto_next"] is True and ai.load_settings(json.dumps(s))["auto_next"] is True
+    assert ai.clean_settings({"auto_next": "yes"})["auto_next"] is False
