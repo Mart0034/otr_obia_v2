@@ -453,3 +453,17 @@ def test_render_mode_and_batch_parallelism_settings():
     assert ai.clean_settings({"render_mode": "weird"})["render_mode"] == "clean"
     assert ai.clean_settings({"batch_parallel": 99, "batch_render_parallel": 99}) ["batch_parallel"] == 24
     assert ai.clean_settings({"batch_render_parallel": 0})["batch_render_parallel"] == 1
+
+
+def test_queue_resort_by_ai_probability():
+    q = ai.ReviewQueue([(1, 1, ""), (2, 2, ""), (3, 3, ""), (4, 4, "")])
+    probs = {2: 0.3, 4: 0.9}
+    q.resort(probs.get)
+    assert list(q.todo) == [4, 2, 1, 3]          # mit Ergebnis zuerst (hoch -> niedrig), dann nach Rang
+    q.resort(None)
+    assert list(q.todo) == [1, 2, 3, 4]
+
+
+def test_sort_by_ai_setting_is_kept():
+    assert ai.load_settings('{"sort_by_ai": true}')["sort_by_ai"] is True
+    assert ai.load_settings("")["sort_by_ai"] is False

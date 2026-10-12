@@ -124,6 +124,7 @@ DEFAULT_SETTINGS = {
                                   # visible: alle sichtbaren Schichten wie im Kartenfenster
     "batch_budget_usd": 1.0,      # Stapel stoppt, wenn die geschätzten Kosten das erreichen (0 = kein Limit)
     "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
+    "sort_by_ai": False,          # Warteschlange: Standorte mit KI-Ergebnis zuerst, hohe Wahrscheinlichkeit vorne
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
 _LIMITS = {"radius_inside": (0, 500, float), "radius_near": (0, 500, float), "radius_desert": (0, 500, float),
@@ -175,7 +176,7 @@ def clean_settings(raw):
     if raw.get("thinking") in ("default", "off"):
         out["thinking"] = raw["thinking"]
     for key in ("draw_ring", "auto_next", "auto_radius", "prompt_cache", "auto_clean", "tell_context", "highlight_fill",
-                "use_examples"):
+                "use_examples", "sort_by_ai"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
     return out
@@ -606,6 +607,7 @@ class ReviewQueue:
         leeres review = noch ungeprüft."""
         ordered = sorted(items, key=lambda it: it[1])
         self.total = len(ordered)
+        self.rank = {it[0]: it[1] for it in ordered}
         self.reviews = {it[0]: (it[2] or "") for it in ordered}
         self.notes = {it[0]: ((it[3] if len(it) > 3 else "") or "") for it in ordered}
         self.todo = deque(it[0] for it in ordered if not it[2])
@@ -614,6 +616,14 @@ class ReviewQueue:
     @property
     def current(self):
         return self.todo[0] if self.todo else None
+
+    def resort(self, ai_p=None):
+        """Offene Standorte neu ordnen. ai_p: Funktion fid -> KI-Wahrscheinlichkeit (oder None); dann kommen Standorte mit
+        Ergebnis zuerst (höchste Wahrscheinlichkeit vorne), danach die übrigen nach Rang. Ohne ai_p: wieder nach Rang."""
+        def key(fid):
+            p = ai_p(fid) if ai_p else None
+            return (0, -p, self.rank[fid]) if p is not None else (1, 0.0, self.rank[fid])
+        self.todo = deque(sorted(self.todo, key=key))
 
     @property
     def done(self):

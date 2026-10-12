@@ -68,7 +68,8 @@ class OtrPanel(QDockWidget):
         self._build_ui()
         for key, func in (("1", lambda: self.decide("dump")), ("2", lambda: self.decide("clean")),
                           ("3", lambda: self.decide("partial")), ("4", lambda: self.decide("unsure")),
-                          ("5", self.skip), ("6", self.back), ("7", self.open_map)):
+                          ("5", self.skip), ("6", self.back), ("7", self.open_map),
+                          ("8", lambda: self.decide_ai(True)), ("9", lambda: self.decide_ai(False))):
             QShortcut(QKeySequence(key), self, activated=func, context=qt("ShortcutContext", "ApplicationShortcut"))
         iface.addDockWidget(qt("DockWidgetArea", "RightDockWidgetArea"), self)
         if not layer.isEditable():
@@ -77,6 +78,8 @@ class OtrPanel(QDockWidget):
         self.timer.setInterval(300)
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start()
+        if self.settings["sort_by_ai"]:
+            self._apply_order()
         self.show_current()
         self._refresh_stats()
         self.ex_manage.setText(f"Beispiele ({len(self.examples.list())}) …")
@@ -156,8 +159,8 @@ class OtrPanel(QDockWidget):
         self.cost = QLabel("")
         self.cost.setStyleSheet("color: gray; font-size: 11px;")
         ai.addWidget(self.cost, 6, 0, 1, 2)
-        self.accept_btn = QPushButton("✔ Annehmen (ins gpkg)")
-        self.deny_btn = QPushButton("✖ Ablehnen")
+        self.accept_btn = QPushButton("8  ✔ Annehmen (ins gpkg)")
+        self.deny_btn = QPushButton("9  ✖ Ablehnen")
         self.accept_btn.clicked.connect(lambda _=False: self.decide_ai(True))
         self.deny_btn.clicked.connect(lambda _=False: self.decide_ai(False))
         for b in (self.accept_btn, self.deny_btn):
@@ -188,6 +191,12 @@ class OtrPanel(QDockWidget):
         self.auto.setChecked(self.settings["auto_next"])
         self.auto.toggled.connect(self._auto_toggled)
         ai.addWidget(self.auto, 10, 0, 1, 2)
+        self.sort_ai = QCheckBox("Reihenfolge: Treffer zuerst (KI-% hoch → niedrig)")
+        self.sort_ai.setToolTip("Offene Standorte mit KI-Ergebnis kommen zuerst, der mit der höchsten Dump-Wahrscheinlichkeit vorn; "
+                                "Standorte ohne Ergebnis folgen nach Rang. Wird auch nach jeder Stapel-Analyse neu geordnet.")
+        self.sort_ai.setChecked(self.settings["sort_by_ai"])
+        self.sort_ai.toggled.connect(self._sort_toggled)
+        ai.addWidget(self.sort_ai, 11, 0, 1, 2)
         col.addWidget(box)
 
         # ---- Stapel
@@ -277,6 +286,23 @@ class OtrPanel(QDockWidget):
     def _auto_toggled(self, on):
         self.settings["auto_next"] = bool(on)
         self._store()
+
+    def _ai_p(self, fid):
+        v = self._fld(self._feat(fid), "ai_dump_p")
+        try:
+            return None if v is None else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _apply_order(self):
+        self.queue.resort(self._ai_p if self.settings["sort_by_ai"] else None)
+
+    def _sort_toggled(self, on):
+        self.settings["sort_by_ai"] = bool(on)
+        self._store()
+        self._apply_order()
+        self.shown = None
+        self.show_current()
 
     def _key(self, ask=True):
         key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -775,6 +801,8 @@ class OtrPanel(QDockWidget):
         self._commit()
         self.save_to_file(quiet=True)
         self.shown = None
+        if self.settings["sort_by_ai"]:
+            self._apply_order()
         self.show_current()
         self._refresh_stats()
 
