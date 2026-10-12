@@ -70,6 +70,11 @@ frequently beside a haul road or waste-rock area. Confusers: roads and haul road
 piles and pit shadows, equipment yards and workshops, towns and buildings, snow patches, \
 dark rock or desert colour variation, water, vegetation.
 
+Tire storage yards and stockpiles count as dumps: stacks or rows of tires, even neat ones, \
+on bare ground or inside an equipment yard. Pipes, containers, vehicles and buildings do not. \
+The project prefers false alarms to missed dumps: if dark round objects that could be tires are \
+visible anywhere in the zone, dump_probability must be at least 0.4, and dump_location says where.
+
 Classify the view with exactly one label from: %s.
 Use "dump" only if tires are plausibly visible; use "unsure" if the image resolution is too \
 coarse or the view is ambiguous. Also say where the dump (if any) is: "inside" the highlighted \
@@ -87,7 +92,7 @@ The reason must be telegraphic: only what is visible and why it decides the labe
 
 
 # prompt_id() früherer Standard-Prompts (vor dem Kürzen der Begründung)
-LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802"}
+LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802", "e05849c1"}
 
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
@@ -106,6 +111,8 @@ DEFAULT_SETTINGS = {
     "log_path": LOG_PATH,
     "price_in": 0.0,              # USD je Mio. Eingabe-Token; 0 = Preistabelle des Modells
     "price_out": 0.0,
+    "thr_dump": 0.5,              # ab dieser Wahrscheinlichkeit: "Dump found"
+    "thr_possible": 0.2,          # ab hier "Possible dump" (Recall-Vorrang), darunter "No dump"
     "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
@@ -134,6 +141,12 @@ def clean_settings(raw):
             out[key] = raw[key].strip() if key != "system_prompt" else raw[key]
     if prompt_id(out["system_prompt"]) in LEGACY_PROMPT_IDS:   # früherer Standard-Prompt -> neuer Standard
         out["system_prompt"] = SYSTEM_PROMPT
+    for key in ("thr_dump", "thr_possible"):
+        try:
+            out[key] = max(0.0, min(1.0, float(raw[key])))
+        except (KeyError, TypeError, ValueError):
+            pass
+    out["thr_possible"] = min(out["thr_possible"], out["thr_dump"])
     for key in ("price_in", "price_out"):
         try:
             out[key] = max(0.0, min(1000.0, float(raw[key])))
@@ -315,14 +328,20 @@ def run_check(payload, api_key, timeout=90, opener=urllib.request.urlopen, sleep
     return resp
 
 
-def banner(result):
-    """(Text, Farbe) des Ergebnis-Kastens: 'Dump found (93%)' / 'No dump (04%)' - die Prozentzahl ist
-    die Wahrscheinlichkeit, dass eine Halde vorhanden ist; ab 50 % gilt 'Dump found'."""
+def banner(result, thr_dump=0.5, thr_possible=0.2):
+    """(Text, Farbe) des Ergebnis-Kastens. Die Prozentzahl ist die Wahrscheinlichkeit, dass eine Halde
+    vorhanden ist: ab thr_dump 'Dump found' (rot), ab thr_possible 'Possible dump' (orange - Recall
+    hat Vorrang, solche Standorte sollen nicht als 'kein Dump' durchrutschen), darunter 'No dump'."""
     if not result.get("ok", True):
         return "No answer (unreadable)", "#6d6d6d"
     p = result["dump_probability"]
-    text = "Dump found" if p >= 0.5 else "No dump"
-    return f"{text} ({round(p * 100):02d}%)", ("#c62828" if p >= 0.5 else "#2e7d32")
+    if p >= thr_dump:
+        text, color = "Dump found", "#c62828"
+    elif p >= thr_possible:
+        text, color = "Possible dump", "#d9822b"
+    else:
+        text, color = "No dump", "#2e7d32"
+    return f"{text} ({round(p * 100):02d}%)", color
 
 
 def ai_note(result):
@@ -331,13 +350,17 @@ def ai_note(result):
     return f"AI: {result['label']}, dump {result['dump_probability']:.2f}" + (f" - {reason}" if reason else "")
 
 
-def verdict_to_review(result):
+def verdict_to_review(result, thr_dump=0.5, thr_possible=0.2):
     """KI-Ergebnis -> Wert der Spalte `review`: dump / partial / unsure / clean.
-    Halde nur teilweise im Umriss = partial; Halde nur in der Umgebung (Beinahe-Treffer) = unsure,
-    damit der Umriss nicht fälschlich als 'clean' ins Training geht."""
-    if result["dump_probability"] < 0.5:
+    Halde nur teilweise im Umriss = partial; Halde nur in der Umgebung (Beinahe-Treffer) = unsure.
+    'clean' nur, wenn die KI sich wirklich sicher ist (unter thr_possible UND keine Halde gesehen):
+    jeder Zweifel wird 'unsure', damit ein Umriss mit Halde nicht als Fehlalarm ins Training geht."""
+    p, where = result["dump_probability"], result.get("dump_location", "")
+    if p >= thr_dump:
+        return {"partial": "partial", "nearby": "unsure"}.get(where, "dump")
+    if p < thr_possible and where in ("", "none"):
         return "clean"
-    return {"partial": "partial", "nearby": "unsure"}.get(result.get("dump_location", ""), "dump")
+    return "unsure"
 
 
 AI_FIELDS = (("ai_label", "string"), ("ai_dump_p", "double"), ("ai_decision", "string"))
@@ -567,6 +590,16 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
         self.prefetch.setToolTip("Nur im Auto-Modus: so viele Standorte vor dem aktuellen werden parallel schon "
                                  "eingeschätzt (0 = aus). Übersprungene/selbst entschiedene kosten trotzdem eine Anfrage.")
         form.addRow("Vorab einschätzen (Standorte)", self.prefetch)
+        self.thr_dump = QDoubleSpinBox()
+        self.thr_dump.setRange(0.0, 1.0)
+        self.thr_dump.setSingleStep(0.05)
+        self.thr_dump.setValue(settings["thr_dump"])
+        self.thr_possible = QDoubleSpinBox()
+        self.thr_possible.setRange(0.0, 1.0)
+        self.thr_possible.setSingleStep(0.05)
+        self.thr_possible.setValue(settings["thr_possible"])
+        form.addRow("Ab hier 'Dump found'", self.thr_dump)
+        form.addRow("Ab hier 'Possible dump'", self.thr_possible)
         self.price_in = QDoubleSpinBox()
         self.price_in.setRange(0.0, 1000.0)
         self.price_in.setDecimals(3)
@@ -604,7 +637,8 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
             "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(),
             "max_image_px": self.px.value(), "min_view_m": self.min_view.value(),
             "draw_ring": self.ring.isChecked(), "timeout_s": self.timeout.value(),
-            "prefetch": self.prefetch.value(), "price_in": self.price_in.value(), "price_out": self.price_out.value(), "log_path": self.log_path.text()})
+            "prefetch": self.prefetch.value(), "thr_dump": self.thr_dump.value(),
+            "thr_possible": self.thr_possible.value(), "price_in": self.price_in.value(), "price_out": self.price_out.value(), "log_path": self.log_path.text()})
 
 
 class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
@@ -884,7 +918,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             self.out.setText(f"Fehler: {self.errors.get(fid, '?')}")
             return
         self.last_result = res
-        text, color = banner(res)
+        text, color = banner(res, self.settings["thr_dump"], self.settings["thr_possible"])
         self.banner.setText(text)
         self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
                                   "font-weight: bold; border-radius: 6px; padding: 6px;")
@@ -957,7 +991,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         except Exception as exc:
             self.out.setText(f"Speichern fehlgeschlagen: {exc}")
             return
-        value = verdict_to_review(res)
+        value = verdict_to_review(res, self.settings["thr_dump"], self.settings["thr_possible"])
         panel = globals().get("_review_panel")
         in_queue = False
         if accepted:

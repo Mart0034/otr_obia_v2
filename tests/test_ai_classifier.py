@@ -266,3 +266,27 @@ def test_usage_is_read_and_summed_over_the_retry():
 def test_price_override_settings_are_clamped():
     assert ai.clean_settings({"price_in": -5, "price_out": "x"})["price_in"] == 0.0
     assert ai.clean_settings({"price_in": 3, "price_out": 15})["price_out"] == 15.0
+
+
+def test_banner_has_a_possible_dump_band_for_recall():
+    assert ai.banner({"dump_probability": 0.30}) == ("Possible dump (30%)", "#d9822b")
+    assert ai.banner({"dump_probability": 0.19})[0] == "No dump (19%)"
+    assert ai.banner({"dump_probability": 0.50})[0] == "Dump found (50%)"
+    assert ai.banner({"dump_probability": 0.30}, thr_dump=0.5, thr_possible=0.35)[0] == "No dump (30%)"
+
+
+def test_clean_is_only_entered_when_the_ai_is_sure_and_saw_nothing():
+    f = ai.verdict_to_review
+    assert f({"dump_probability": 0.05, "dump_location": "none"}) == "clean"
+    assert f({"dump_probability": 0.05, "dump_location": ""}) == "clean"
+    assert f({"dump_probability": 0.30, "dump_location": "nearby"}) == "unsure"     # your yard case
+    assert f({"dump_probability": 0.05, "dump_location": "nearby"}) == "unsure"
+    assert f({"dump_probability": 0.30, "dump_location": "none"}) == "unsure"
+    assert f({"dump_probability": 0.9, "dump_location": "inside"}) == "dump"
+
+
+def test_thresholds_are_validated_and_prompt_counts_yards_as_dumps():
+    s = ai.clean_settings({"thr_dump": 0.4, "thr_possible": 0.7})
+    assert s["thr_possible"] == 0.4                       # never above thr_dump
+    assert "storage yards" in ai.SYSTEM_PROMPT and "at least 0.4" in ai.SYSTEM_PROMPT
+    assert ai.prompt_id(ai.SYSTEM_PROMPT) not in ai.LEGACY_PROMPT_IDS
