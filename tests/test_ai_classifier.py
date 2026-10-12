@@ -290,3 +290,25 @@ def test_thresholds_are_validated_and_prompt_counts_yards_as_dumps():
     assert s["thr_possible"] == 0.4                       # never above thr_dump
     assert "storage yards" in ai.SYSTEM_PROMPT and "at least 0.4" in ai.SYSTEM_PROMPT
     assert ai.prompt_id(ai.SYSTEM_PROMPT) not in ai.LEGACY_PROMPT_IDS
+
+
+def test_radius_follows_context_when_auto_and_falls_back_otherwise():
+    cfg = ai.clean_settings({"radius_m": 50, "radius_inside": 200, "radius_near": 100, "radius_desert": 40})
+    assert ai.radius_for("inside_op", cfg) == 200 and ai.radius_for("near_op", cfg) == 100
+    assert ai.radius_for("open_desert", cfg) == 40
+    assert ai.radius_for("", cfg) == 50 and ai.radius_for("mystery", cfg) == 50
+    cfg["auto_radius"] = False
+    assert ai.radius_for("inside_op", cfg) == 50
+
+
+def test_context_radius_defaults_and_validation():
+    d = ai.DEFAULT_SETTINGS
+    assert (d["radius_inside"], d["radius_near"], d["radius_desert"], d["auto_radius"]) == (200.0, 100.0, 50.0, True)
+    assert ai.clean_settings({"radius_inside": 9999})["radius_inside"] == 500.0
+
+
+def test_zone_note_describes_radius_and_surroundings():
+    assert "200 m" in ai.zone_note("inside_op", 200) and "mining operation" in ai.zone_note("inside_op", 200)
+    assert "open desert" in ai.zone_note("open_desert", 50)
+    assert ai.zone_note("", 50) == "Zone radius 50 m"
+    assert "radius is given in the message" in ai.SYSTEM_PROMPT

@@ -286,11 +286,14 @@ def write_sites_gpkg(sites, path):
 def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                         labels_path=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
                         exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
-                        sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3):
+                        sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3,
+                        operations=None, near_op_m=250.0):
     """Standortliste aus bewerteten Segmenten (seg: mine_id, dump_proba, geometry) bauen und als
     GeoPackage + CSV schreiben. Wird vom Kommandozeilen-Skript und - mit den Segmenten direkt aus dem
     Speicher - von der Pipeline selbst benutzt (--candidate-lists), ohne die Segmentdatei neu zu lesen.
-    exclude_areas: Dateien (mit Komma getrennt) mit Flächen, die nicht mehr angezeigt werden sollen."""
+    exclude_areas: Dateien (mit Komma getrennt) mit Flächen, die nicht mehr angezeigt werden sollen.
+    operations: Umrisse von Minen/Steinbrüchen (Dateien mit Komma getrennt): ergänzt die Spalten
+    `context` (inside_op / near_op / open_desert) und `op_dist_m` (siehe site_context.py)."""
     labels = gpd.read_file(labels_path) if labels_path else None
     excl = None
     if exclude_areas:
@@ -300,6 +303,9 @@ def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0
     sites = build_candidate_sites(seg, threshold, area_pct, join_dist_m, min_area_m2, labels, known_dist_m, top,
                                   max_site_m2, exclude_known, max_urban_frac, rank_by, excl,
                                   sample_every, sample_skip, trim_overlaps, min_keep_frac)
+    if operations:
+        from site_context import add_context, load_operations
+        sites = add_context(sites, load_operations(operations.split(","), sites.crs), near_op_m)
     write_sites_gpkg(sites, out)
     csv_path = out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
@@ -351,6 +357,10 @@ def main(argv=None):
     p.add_argument("--keep-overlaps", action="store_true",
                    help="Überlappende Standorte (Nachbar-Kacheln) NICHT bereinigen. Standard: der besser "
                         "bewertete behält die Fläche, vom schlechteren wird sie abgezogen.")
+    p.add_argument("--operations", default=None,
+                   help="Umrisse von Minen/Steinbrüchen (Dateien mit Komma getrennt): ergänzt `context` "
+                        "(inside_op / near_op / open_desert) für den automatischen KI-Umkreis in QGIS.")
+    p.add_argument("--near-op-m", type=float, default=250.0, help="Bis zu diesem Abstand zum Umriss: near_op.")
     p.add_argument("--min-keep-frac", type=float, default=0.3,
                    help="Bleibt von einem überlappten Standort weniger als dieser Anteil übrig, fällt er weg.")
     args = p.parse_args(argv)
@@ -366,7 +376,8 @@ def main(argv=None):
         known_dist_m=args.known_dist_m, top=args.top, max_site_m2=args.max_site_m2,
         exclude_known=args.exclude_known, max_urban_frac=args.max_urban_frac, rank_by=args.rank_by,
         exclude_areas=args.exclude_areas, sample_every=args.sample_every, sample_skip=args.sample_skip,
-        trim_overlaps=not args.keep_overlaps, min_keep_frac=args.min_keep_frac)
+        trim_overlaps=not args.keep_overlaps, min_keep_frac=args.min_keep_frac,
+        operations=args.operations, near_op_m=args.near_op_m)
     return 0
 
 

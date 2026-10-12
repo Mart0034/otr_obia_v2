@@ -11,6 +11,9 @@ Rechts erscheint das Fenster "KI". Der Key wird aus der Umgebungsvariable
 ANTHROPIC_API_KEY gelesen; sonst fragt das Fenster einmal danach und merkt ihn sich
 in den QGIS-Einstellungen (Klartext im Profil - auf geteilten Rechnern nicht nutzen).
 
+    Umkreis       Hat die Liste die Spalte `context` (site_context.py bzw. candidate_sites.py
+                  --operations), wählt das Fenster den Umkreis je Standort: im Betrieb 200 m, am
+                  Rand 100 m, in der offenen Wüste 50 m (Einstellungen). Sonst gilt der feste Wert.
     Einschätzen   rendert den aktuellen Standort (Review-Fenster bzw. in candidate_sites
                   markiert) plus Umkreis (Standard 50 m, einstellbar), zeichnet den Umkreis
                   gestrichelt ein und schickt das Bild; ohne Standort den sichtbaren Ausschnitt
@@ -61,7 +64,7 @@ dumps of discarded giant mining tires (OTR tires) in northern Chile, in satellit
 
 You are shown a screenshot of a GIS map. A yellow/highlighted polygon, if present, \
 marks the candidate site under review. A dashed cyan line, if present, marks the zone \
-around the polygon (normally 50 m). Judge everything inside the dashed line: the polygon \
+around the polygon (its radius is given in the message). Judge everything inside the dashed line: the polygon \
 itself and its surroundings. Ignore what lies outside the dashed line.
 
 What a tire dump usually looks like: a compact area of dark, speckled or ring-like texture \
@@ -92,7 +95,7 @@ The reason must be telegraphic: only what is visible and why it decides the labe
 
 
 # prompt_id() früherer Standard-Prompts (vor dem Kürzen der Begründung)
-LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802", "e05849c1"}
+LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802", "e05849c1", "495a90d6"}
 
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
@@ -103,7 +106,11 @@ DEFAULT_SETTINGS = {
     "thinking": "default",        # default | off (off = möglichst wenig/kein Thinking)
     "temperature": None,          # None = API-Standard
     "system_prompt": SYSTEM_PROMPT,
-    "radius_m": BUFFER_M,
+    "radius_m": BUFFER_M,         # Umkreis, wenn der Standort keine Spalte `context` hat (oder Auto aus)
+    "auto_radius": True,          # Umkreis nach der Spalte `context` (site_context.py) wählen
+    "radius_inside": 200.0,       # im Betriebsgelände einer Mine/eines Steinbruchs: Anlagen mit ansehen
+    "radius_near": 100.0,         # am Rand eines Betriebs
+    "radius_desert": 50.0,        # offene Wüste: knapp halten
     "max_image_px": 1024,         # Kantenlänge des gerenderten Bildes
     "min_view_m": MIN_SIDE_M,
     "draw_ring": True,
@@ -116,7 +123,8 @@ DEFAULT_SETTINGS = {
     "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
-_LIMITS = {"max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
+_LIMITS = {"radius_inside": (0, 500, float), "radius_near": (0, 500, float), "radius_desert": (0, 500, float),
+           "max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
            "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int), "prefetch": (0, 16, int)}
 
 
@@ -156,7 +164,7 @@ def clean_settings(raw):
         out["effort"] = raw["effort"]
     if raw.get("thinking") in ("default", "off"):
         out["thinking"] = raw["thinking"]
-    for key in ("draw_ring", "auto_next"):
+    for key in ("draw_ring", "auto_next", "auto_radius"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
     return out
@@ -172,6 +180,24 @@ def load_settings(text):
 def prompt_id(prompt):
     """Kurze Kennung des Prompts fürs Log (zum Vergleichen verschiedener Prompts)."""
     return hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:8]
+
+
+def radius_for(context, cfg):
+    """Umkreis (m) für einen Standort: nach seiner Umgebung (`context` aus site_context.py), sonst der
+    feste Wert aus dem Fenster. Eine unbekannte/fehlende Umgebung zählt wie 'kein context'."""
+    if cfg.get("auto_radius"):
+        key = {"inside_op": "radius_inside", "near_op": "radius_near", "open_desert": "radius_desert"}.get(context)
+        if key:
+            return float(cfg[key])
+    return float(cfg["radius_m"])
+
+
+def zone_note(context, radius_m):
+    """Zeile für die KI: Größe und Art der Umgebung (hilft ihr, Anlagen von Halden zu unterscheiden)."""
+    where = {"inside_op": "inside a mining operation (expect facilities, roads, yards)",
+             "near_op": "at the edge of a mining operation",
+             "open_desert": "open desert away from mines (equipment and facilities are unlikely)"}.get(context, "")
+    return f"Zone radius {radius_m:.0f} m" + (f"; location: {where}" if where else "")
 
 
 def padded_box(xmin, ymin, xmax, ymax, radius=BUFFER_M, min_side=MIN_SIDE_M):
@@ -493,13 +519,13 @@ def _render_site(canvas, layer, feature, radius_m, max_px=1024, min_side=MIN_SID
     return image
 
 
-def _render_selected(canvas, layer, feature, cfg):
+def _render_selected(canvas, layer, feature, cfg, radius_m):
     """Wie _render_site, aber mit dem Standort als ausgewählt (gelb) - auch wenn er nicht der gerade
     im Review-Fenster aktive ist (Vorab-Einschätzung); die alte Auswahl wird danach wiederhergestellt."""
     saved = layer.selectedFeatureIds()
     layer.selectByIds([feature.id()])
     try:
-        return _render_site(canvas, layer, feature, float(cfg["radius_m"]), cfg["max_image_px"],
+        return _render_site(canvas, layer, feature, float(radius_m), cfg["max_image_px"],
                             cfg["min_view_m"], cfg["draw_ring"])
     finally:
         layer.selectByIds(saved)
@@ -565,6 +591,17 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
         self.radius.setValue(int(settings["radius_m"]))
         self.radius.setSuffix(" m")
         form.addRow("Umkreis", self.radius)
+        self.auto_radius = QCheckBox("Umkreis automatisch nach Umgebung (Spalte context)")
+        self.auto_radius.setChecked(settings["auto_radius"])
+        form.addRow(self.auto_radius)
+        self.r_inside, self.r_near, self.r_desert = (QSpinBox(), QSpinBox(), QSpinBox())
+        for spin, key, label in ((self.r_inside, "radius_inside", "  Umkreis im Betrieb (inside_op)"),
+                                 (self.r_near, "radius_near", "  Umkreis am Rand (near_op)"),
+                                 (self.r_desert, "radius_desert", "  Umkreis offene Wüste (open_desert)")):
+            spin.setRange(0, 500)
+            spin.setValue(int(settings[key]))
+            spin.setSuffix(" m")
+            form.addRow(label, spin)
         self.ring = QCheckBox("Umkreis gestrichelt einzeichnen (Prompt erwähnt die Linie)")
         self.ring.setChecked(settings["draw_ring"])
         form.addRow(self.ring)
@@ -634,7 +671,9 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
             "effort": EFFORTS[self.effort.currentIndex()],
             "thinking": "off" if self.thinking.currentIndex() == 1 else "default",
             "temperature": self.temp.value() if self.use_temp.isChecked() else None,
-            "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(),
+            "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(), "auto_radius": self.auto_radius.isChecked(),
+            "radius_inside": self.r_inside.value(), "radius_near": self.r_near.value(),
+            "radius_desert": self.r_desert.value(),
             "max_image_px": self.px.value(), "min_view_m": self.min_view.value(),
             "draw_ring": self.ring.isChecked(), "timeout_s": self.timeout.value(),
             "prefetch": self.prefetch.value(), "thr_dump": self.thr_dump.value(),
@@ -827,12 +866,16 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         in self.results[fid]. payload: fertige Anfrage (Fallback: Kartenausschnitt statt Standort)."""
         cfg = self.settings
         fid = feature.id() if feature is not None else "canvas"
+        context, radius = "", float(cfg["radius_m"])
+        if feature is not None:
+            context = feature["context"] if feature.fields().indexOf("context") >= 0 and feature["context"] else ""
+            radius = radius_for(context, cfg)
         if payload is None:
-            image = _render_selected(self.iface.mapCanvas(), layer, feature, cfg) \
-                if cfg["radius_m"] > 0 else self.iface.mapCanvas().grab().toImage()
+            image = _render_selected(self.iface.mapCanvas(), layer, feature, cfg, radius) \
+                if radius > 0 else self.iface.mapCanvas().grab().toImage()
             payload = build_payload(base64.b64encode(_image_png(image, cfg["max_image_px"])).decode("ascii"),
-                                    "image/png", self.context.text(), cfg["model"], cfg["max_tokens"],
-                                    cfg["system_prompt"], cfg["temperature"], cfg["effort"], cfg["thinking"])
+                                    "image/png", "; ".join(t for t in (zone_note(context, radius), self.context.text()) if t),
+                                    cfg["model"], cfg["max_tokens"], cfg["system_prompt"], cfg["temperature"], cfg["effort"], cfg["thinking"])
         info = {"site_id": "", "rank": ""} if fid == "canvas" else self._site_info(fid)
         gen = self.generation
         self.inflight.add(fid)
@@ -849,6 +892,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                 self.errors[fid] = str(exception)
             else:
                 res = parse_reply(result)
+                res["radius_m"], res["context"] = radius, context
                 self.results[fid] = res
                 self._add_total(res)
                 try:
@@ -856,7 +900,8 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                                               "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]),
                                               "label": res["label"], "confidence": res["confidence"],
                                               "dump_probability": res["dump_probability"],
-                                              "dump_location": res["dump_location"], "reason": res["reason"]})
+                                              "dump_location": res["dump_location"], "reason": res["reason"],
+                                              "radius_m": radius, "context": context})
                 except OSError:
                     pass
             if fid == "canvas":
@@ -934,8 +979,10 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             self.deny_btn.setEnabled(True)
             self.accept_btn.show()
             self.deny_btn.show()
+        zone = f"{res['radius_m']:.0f} m" + (f" ({res['context']})" if res.get("context") else "")
         self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
-                         f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
+                         f"<br>Halde: {res['dump_location'] or '-'} &nbsp; <small>Zone: {zone}</small>"
+                         f"<br>{res['reason']}")
 
     def classify(self):
         """Knopf 'Einschätzen': aktuellen Standort (neu) einschätzen, auch wenn schon ein Ergebnis da ist."""
