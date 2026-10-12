@@ -79,9 +79,13 @@ Reply with ONLY a JSON object:
 "dump_location": "inside|partial|nearby|none", "reason": "<one or two sentences>"}""" % ", ".join(LABELS)
 
 
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
+
 DEFAULT_SETTINGS = {
     "model": DEFAULT_MODEL,
-    "max_tokens": 400,
+    "max_tokens": 2048,           # Thinking zählt mit: zu klein = Antwort bleibt leer
+    "effort": "",                 # "" = API-Standard des Modells; low / medium / high / xhigh / max
+    "thinking": "default",        # default | off (off = möglichst wenig/kein Thinking)
     "temperature": None,          # None = API-Standard
     "system_prompt": SYSTEM_PROMPT,
     "radius_m": BUFFER_M,
@@ -92,7 +96,7 @@ DEFAULT_SETTINGS = {
     "log_path": LOG_PATH,
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
-_LIMITS = {"max_tokens": (16, 8192, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
+_LIMITS = {"max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
            "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int)}
 
 
@@ -115,6 +119,10 @@ def clean_settings(raw):
     for key in ("model", "system_prompt", "log_path"):
         if isinstance(raw.get(key), str) and raw[key].strip():
             out[key] = raw[key].strip() if key != "system_prompt" else raw[key]
+    if raw.get("effort") in EFFORTS:
+        out["effort"] = raw["effort"]
+    if raw.get("thinking") in ("default", "off"):
+        out["thinking"] = raw["thinking"]
     for key in ("draw_ring", "auto_next"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
@@ -148,8 +156,18 @@ def image_size(width_m, height_m, max_px=1024):
     return max(1, round(max_px * width_m / height_m)), max_px
 
 
+def thinking_param(model, mode, effort=""):
+    """Wert für `thinking` in der Anfrage. "default" = weglassen (die Claude-5-Modelle denken dann
+    selbst, und das Thinking zählt zu max_tokens). "off": Sonnet 5.5 kennt nur "between_tools" (kein
+    Thinking vorab), die übrigen "disabled"; Opus 5.5 lässt sich nicht abschalten, und bei effort
+    xhigh/max lehnt die API das Abschalten ab - dann wird `thinking` weggelassen."""
+    if mode != "off" or effort in ("xhigh", "max") or "opus-5-5" in model:
+        return None
+    return {"type": "between_tools"} if "sonnet-5-5" in model else {"type": "disabled"}
+
+
 def build_payload(image_b64, media_type="image/png", context="", model=DEFAULT_MODEL, max_tokens=400,
-                  system=None, temperature=None):
+                  system=None, temperature=None, effort="", thinking="default"):
     """Anfrage-Körper für die Messages-API (reine Funktion, testbar)."""
     text = "Classify what is visible in this map view."
     if context.strip():
@@ -164,6 +182,11 @@ def build_payload(image_b64, media_type="image/png", context="", model=DEFAULT_M
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    if effort:
+        payload["output_config"] = {"effort": effort}
+    think = thinking_param(model, thinking, effort)
+    if think is not None:
+        payload["thinking"] = think
     return payload
 
 
@@ -189,14 +212,28 @@ def parse_reply(response):
         dump_p = max(0.0, min(1.0, float(data["dump_probability"])))
     except (KeyError, TypeError, ValueError):      # älterer Prompt ohne das Feld
         dump_p = conf if label == "dump" else (1.0 - conf if label.startswith("clean") else 0.5)
-    return {"label": label, "confidence": conf, "dump_probability": dump_p,
+    return {"ok": bool(data), "stop_reason": response.get("stop_reason", ""),
+            "label": label, "confidence": conf, "dump_probability": dump_p,
             "dump_location": str(data.get("dump_location", "")),
             "reason": str(data.get("reason", text.strip() if not data else ""))}
+
+
+def run_check(payload, api_key, timeout=90, opener=urllib.request.urlopen):
+    """Anfrage senden; endet sie wegen max_tokens ohne lesbare Antwort (Thinking hat die Tokens
+    verbraucht), einmal mit dem 4-fachen Limit (höchstens 32000) wiederholen."""
+    resp = call_api(payload, api_key, timeout, opener)
+    if not parse_reply(resp)["ok"] and resp.get("stop_reason") == "max_tokens":
+        bigger = dict(payload, max_tokens=min(32000, payload["max_tokens"] * 4))
+        resp = call_api(bigger, api_key, timeout, opener)
+        resp["_retried_with"] = bigger["max_tokens"]
+    return resp
 
 
 def banner(result):
     """(Text, Farbe) des Ergebnis-Kastens: 'Dump found (93%)' / 'No dump (04%)' - die Prozentzahl ist
     die Wahrscheinlichkeit, dass eine Halde vorhanden ist; ab 50 % gilt 'Dump found'."""
+    if not result.get("ok", True):
+        return "No answer (unreadable)", "#6d6d6d"
     p = result["dump_probability"]
     text = "Dump found" if p >= 0.5 else "No dump"
     return f"{text} ({round(p * 100):02d}%)", ("#c62828" if p >= 0.5 else "#2e7d32")
@@ -378,6 +415,14 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
         self.max_tokens.setRange(*_LIMITS["max_tokens"][:2])
         self.max_tokens.setValue(settings["max_tokens"])
         form.addRow("Max. Ausgabe-Tokens", self.max_tokens)
+        self.effort = QComboBox()
+        self.effort.addItems(["(Standard)", "low", "medium", "high", "xhigh", "max"])
+        self.effort.setCurrentIndex(EFFORTS.index(settings["effort"]))
+        form.addRow("Effort (Denktiefe)", self.effort)
+        self.thinking = QComboBox()
+        self.thinking.addItems(["default (Modell entscheidet)", "off (kein / wenig Thinking)"])
+        self.thinking.setCurrentIndex(1 if settings["thinking"] == "off" else 0)
+        form.addRow("Thinking", self.thinking)
         self.use_temp = QCheckBox("Temperatur setzen (sonst API-Standard)")
         self.use_temp.setChecked(settings["temperature"] is not None)
         self.temp = QDoubleSpinBox()
@@ -432,6 +477,8 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
     def values(self):
         return clean_settings({
             "model": self.model.currentText(), "max_tokens": self.max_tokens.value(),
+            "effort": EFFORTS[self.effort.currentIndex()],
+            "thinking": "off" if self.thinking.currentIndex() == 1 else "default",
             "temperature": self.temp.value() if self.use_temp.isChecked() else None,
             "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(),
             "max_image_px": self.px.value(), "min_view_m": self.min_view.value(),
@@ -596,7 +643,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         png = _image_png(image, cfg["max_image_px"])
         payload = build_payload(base64.b64encode(png).decode("ascii"), "image/png",
                                 self.context.text(), cfg["model"], cfg["max_tokens"],
-                                cfg["system_prompt"], cfg["temperature"])
+                                cfg["system_prompt"], cfg["temperature"], cfg["effort"], cfg["thinking"])
         info = self._site_info()
         self.go.setEnabled(False)
         self.banner.hide()
@@ -609,7 +656,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.out.setText("Frage Claude ...")
 
         def work(task):
-            return call_api(payload, key, timeout=cfg["timeout_s"])
+            return run_check(payload, key, timeout=cfg["timeout_s"])
 
         def done(exception, result=None):
             self.busy = False
@@ -625,16 +672,21 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
                                       "font-weight: bold; border-radius: 6px; padding: 6px;")
             self.banner.show()
-            if target is not None:
+            if target is not None and res["ok"]:
                 self.pending = {"layer": target[0], "fid": target[1], "res": res}
                 self.accept_btn.setEnabled(True)
                 self.deny_btn.setEnabled(True)
                 self.accept_btn.show()
                 self.deny_btn.show()
+            if not res["ok"]:
+                self.out.setText(f"Antwort nicht lesbar (stop_reason: {res['stop_reason'] or '?'}). "
+                                 "Bei max_tokens: Limit in den Einstellungen erhöhen oder Thinking aus / "
+                                 f"Effort niedriger.<br>{res['reason'] or '(leer)'}")
+                return
             self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
                              f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
             try:
-                log_row(cfg["log_path"], {**info, "model": payload["model"], "prompt_id": prompt_id(cfg["system_prompt"]), "label": res["label"],
+                log_row(cfg["log_path"], {**info, "model": payload["model"], "effort": cfg["effort"], "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]), "label": res["label"],
                                    "confidence": res["confidence"], "dump_probability": res["dump_probability"], "dump_location": res["dump_location"],
                                    "reason": res["reason"]})
             except OSError:

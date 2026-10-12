@@ -27,7 +27,7 @@ def test_payload_has_image_context_and_model():
 def test_parse_plain_and_fenced_json():
     r = ai.parse_reply(_resp('```json\n{"label": "Dump", "confidence": 0.8, '
                              '"dump_location": "inside", "reason": "dark piles"}\n```'))
-    assert r == {"label": "dump", "confidence": 0.8, "dump_probability": 0.8,
+    assert r == {"ok": True, "stop_reason": "", "label": "dump", "confidence": 0.8, "dump_probability": 0.8,
                  "dump_location": "inside", "reason": "dark piles"}
 
 
@@ -81,7 +81,7 @@ def test_clean_settings_defaults_clamps_and_garbage():
     assert ai.clean_settings(None) == ai.DEFAULT_SETTINGS
     s = ai.clean_settings({"max_tokens": 10**6, "radius_m": "abc", "max_image_px": 10, "temperature": 5,
                            "system_prompt": "  ", "model": " m ", "draw_ring": "yes"})
-    assert s["max_tokens"] == 8192 and s["radius_m"] == 50.0 and s["max_image_px"] == 256
+    assert s["max_tokens"] == 32000 and s["radius_m"] == 50.0 and s["max_image_px"] == 256
     assert s["temperature"] == 1.0 and s["system_prompt"] == ai.SYSTEM_PROMPT
     assert s["model"] == "m" and s["draw_ring"] is True
 
@@ -134,3 +134,47 @@ def test_auto_next_setting_defaults_off_and_roundtrips():
     s = ai.clean_settings({"auto_next": True})
     assert s["auto_next"] is True and ai.load_settings(json.dumps(s))["auto_next"] is True
     assert ai.clean_settings({"auto_next": "yes"})["auto_next"] is False
+
+
+def test_thinking_param_per_model():
+    f = ai.thinking_param
+    assert f("claude-haiku-5-5", "default") is None
+    assert f("claude-haiku-5-5", "off") == {"type": "disabled"}
+    assert f("claude-sonnet-5-5", "off") == {"type": "between_tools"}
+    assert f("claude-opus-5-5", "off") is None                      # lässt sich nicht abschalten
+    assert f("claude-haiku-5-5", "off", "xhigh") is None            # API lehnt das ab
+
+
+def test_payload_carries_effort_and_thinking_only_when_set():
+    p = ai.build_payload("x", model="claude-haiku-5-5", effort="low", thinking="off")
+    assert p["output_config"] == {"effort": "low"} and p["thinking"] == {"type": "disabled"}
+    q = ai.build_payload("x")
+    assert "output_config" not in q and "thinking" not in q
+
+
+def test_parse_flags_unreadable_replies_and_banner_says_so():
+    r = ai.parse_reply({"content": [{"type": "thinking", "thinking": "hmm"}], "stop_reason": "max_tokens"})
+    assert r["ok"] is False and r["stop_reason"] == "max_tokens"
+    assert ai.banner(r)[0] == "No answer (unreadable)"
+    assert ai.parse_reply(_resp('{"label": "dump", "confidence": 1}'))["ok"] is True
+
+
+def test_run_check_retries_once_with_bigger_limit_when_thinking_ate_the_tokens():
+    calls = []
+    empty = {"content": [{"type": "thinking", "thinking": "..."}], "stop_reason": "max_tokens"}
+    good = dict(_resp('{"label": "dump", "confidence": 0.9, "dump_probability": 0.9}'), stop_reason="end_turn")
+
+    def opener(req, timeout):
+        body = json.loads(req.data)
+        calls.append(body["max_tokens"])
+        return io.BytesIO(json.dumps(empty if len(calls) == 1 else good).encode())
+
+    out = ai.run_check({"max_tokens": 400}, "k", opener=opener)
+    assert calls == [400, 1600] and out["_retried_with"] == 1600 and ai.parse_reply(out)["ok"]
+
+
+def test_settings_effort_and_thinking_validation():
+    s = ai.clean_settings({"effort": "xhigh", "thinking": "off", "max_tokens": 2048})
+    assert (s["effort"], s["thinking"]) == ("xhigh", "off")
+    s = ai.clean_settings({"effort": "turbo", "thinking": "maybe"})
+    assert (s["effort"], s["thinking"]) == ("", "default") and ai.DEFAULT_SETTINGS["max_tokens"] == 2048
