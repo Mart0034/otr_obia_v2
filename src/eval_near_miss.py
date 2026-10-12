@@ -91,7 +91,7 @@ def main(argv=None):
         for pct in args.area_pct:
             seg = load_top_segments(args.segments, pct, None, fraction_margin=1.0)
             labels = labels.to_crs(seg.crs)
-            flagged = select_seeds(seg, None, pct)
+            flagged = select_seeds(seg, None, 100.0)   # Vorauswahl (je Mine top pct %) ist beim Laden schon erfolgt
             logger.info("Top %.1f%% Fläche je Mine: %d Segmente markiert.", pct, len(flagged))
             tab = summarize(labels, nearest_distances(labels, flagged, same_mine=True))
             tab.insert(0, "markierung", f"top {pct:g}% Fläche je Mine")
