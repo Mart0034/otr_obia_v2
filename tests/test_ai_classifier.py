@@ -178,3 +178,43 @@ def test_settings_effort_and_thinking_validation():
     assert (s["effort"], s["thinking"]) == ("xhigh", "off")
     s = ai.clean_settings({"effort": "turbo", "thinking": "maybe"})
     assert (s["effort"], s["thinking"]) == ("", "default") and ai.DEFAULT_SETTINGS["max_tokens"] == 2048
+
+
+def _err(code):
+    return urllib.error.HTTPError(ai.API_URL, code, "x", {}, io.BytesIO(b'{"error": {"message": "slow down"}}'))
+
+
+def test_rate_limit_is_retried_with_backoff_then_succeeds():
+    seq, sleeps = [_err(429), _err(529)], []
+    good = dict(_resp('{"label": "dump", "confidence": 1, "dump_probability": 1}'), stop_reason="end_turn")
+
+    def opener(req, timeout):
+        if seq:
+            raise seq.pop(0)
+        return io.BytesIO(json.dumps(good).encode())
+
+    out = ai.run_check({"max_tokens": 100}, "k", opener=opener, sleep=sleeps.append)
+    assert ai.parse_reply(out)["ok"] and sleeps == [2, 4]
+
+
+def test_other_errors_and_exhausted_retries_are_not_retried_forever():
+    sleeps = []
+
+    def always_429(req, timeout):
+        raise _err(429)
+    with pytest.raises(RuntimeError, match="429"):
+        ai.run_check({"max_tokens": 100}, "k", opener=always_429, sleep=sleeps.append)
+    assert sleeps == [2, 4, 8]
+    sleeps.clear()
+
+    def bad_key(req, timeout):
+        raise _err(401)
+    with pytest.raises(RuntimeError, match="401"):
+        ai.run_check({"max_tokens": 100}, "k", opener=bad_key, sleep=sleeps.append)
+    assert sleeps == []
+
+
+def test_prefetch_setting_defaults_to_four_and_is_clamped():
+    assert ai.DEFAULT_SETTINGS["prefetch"] == 4
+    assert ai.clean_settings({"prefetch": 99})["prefetch"] == 16
+    assert ai.clean_settings({"prefetch": 0})["prefetch"] == 0

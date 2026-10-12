@@ -17,8 +17,10 @@ in den QGIS-Einstellungen (Klartext im Profil - auf geteilten Rechnern nicht nut
     Zusatzinfo    optionaler Hinweis, z.B. "Sentinel-2, 10 m" oder "Satellitenbild 0.5 m"
     ⚙             Einstellungen: Modell, max. Tokens, Temperatur, Prompt, Umkreis, Bildgröße,
                   Zeitlimit, Log-Datei (werden gespeichert)
-    Auto          Haken "Auto": nach Annehmen (oder nach deinem Urteil im Review-Fenster) wird
-                  der nächste Standort sofort eingeschätzt; nach Ablehnen wartet er auf dein Urteil
+    Auto          Haken "Auto": der aktuelle Standort wird sofort eingeschätzt, dazu (Einstellung
+                  "Vorab einschätzen", Standard 4) die nächsten Standorte der Warteschlange schon im
+                  Voraus und parallel - bis du dort bist, liegt das Ergebnis meist fertig vor.
+                  Nach Ablehnen wartet der Standort auf dein Urteil im Review-Fenster
     ✔ / ✖         Annehmen schreibt das KI-Urteil als `review` (Dump -> dump bzw. partial, Halde
                   nur in der Umgebung -> unsure, sonst clean) ins gpkg und springt im Review-
                   Fenster weiter; Ablehnen lässt `review` leer. Beides landet in den neuen
@@ -39,6 +41,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -94,10 +97,11 @@ DEFAULT_SETTINGS = {
     "draw_ring": True,
     "timeout_s": 90,
     "log_path": LOG_PATH,
+    "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
 _LIMITS = {"max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
-           "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int)}
+           "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int), "prefetch": (0, 16, int)}
 
 
 def clean_settings(raw):
@@ -218,13 +222,24 @@ def parse_reply(response):
             "reason": str(data.get("reason", text.strip() if not data else ""))}
 
 
-def run_check(payload, api_key, timeout=90, opener=urllib.request.urlopen):
+def _call_retrying(payload, api_key, timeout, opener, sleep, tries=4):
+    """call_api mit Wiederholung bei Überlastung/Ratenlimit (429, 529, 503): 2, 4, 8 s Pause."""
+    for attempt in range(tries):
+        try:
+            return call_api(payload, api_key, timeout, opener)
+        except RuntimeError as exc:
+            if attempt == tries - 1 or not re.match(r"API-Fehler (429|503|529)", str(exc)):
+                raise
+            sleep(2 ** (attempt + 1))
+
+
+def run_check(payload, api_key, timeout=90, opener=urllib.request.urlopen, sleep=time.sleep):
     """Anfrage senden; endet sie wegen max_tokens ohne lesbare Antwort (Thinking hat die Tokens
     verbraucht), einmal mit dem 4-fachen Limit (höchstens 32000) wiederholen."""
-    resp = call_api(payload, api_key, timeout, opener)
+    resp = _call_retrying(payload, api_key, timeout, opener, sleep)
     if not parse_reply(resp)["ok"] and resp.get("stop_reason") == "max_tokens":
         bigger = dict(payload, max_tokens=min(32000, payload["max_tokens"] * 4))
-        resp = call_api(bigger, api_key, timeout, opener)
+        resp = _call_retrying(bigger, api_key, timeout, opener, sleep)
         resp["_retried_with"] = bigger["max_tokens"]
     return resp
 
@@ -384,6 +399,18 @@ def _render_site(canvas, layer, feature, radius_m, max_px=1024, min_side=MIN_SID
     return image
 
 
+def _render_selected(canvas, layer, feature, cfg):
+    """Wie _render_site, aber mit dem Standort als ausgewählt (gelb) - auch wenn er nicht der gerade
+    im Review-Fenster aktive ist (Vorab-Einschätzung); die alte Auswahl wird danach wiederhergestellt."""
+    saved = layer.selectedFeatureIds()
+    layer.selectByIds([feature.id()])
+    try:
+        return _render_site(canvas, layer, feature, float(cfg["radius_m"]), cfg["max_image_px"],
+                            cfg["min_view_m"], cfg["draw_ring"])
+    finally:
+        layer.selectByIds(saved)
+
+
 def _image_png(image, max_edge=MAX_EDGE_PX):
     """QImage als PNG-Bytes (auf max_edge begrenzt)."""
     if max(image.width(), image.height()) > max_edge:
@@ -456,6 +483,12 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
         self.timeout.setValue(settings["timeout_s"])
         self.timeout.setSuffix(" s")
         form.addRow("Zeitlimit API", self.timeout)
+        self.prefetch = QSpinBox()
+        self.prefetch.setRange(*_LIMITS["prefetch"][:2])
+        self.prefetch.setValue(settings["prefetch"])
+        self.prefetch.setToolTip("Nur im Auto-Modus: so viele Standorte vor dem aktuellen werden parallel schon "
+                                 "eingeschätzt (0 = aus). Übersprungene/selbst entschiedene kosten trotzdem eine Anfrage.")
+        form.addRow("Vorab einschätzen (Standorte)", self.prefetch)
         self.log_path = QLineEdit(settings["log_path"])
         form.addRow("Log-Datei", self.log_path)
         self.prompt = QPlainTextEdit(settings["system_prompt"])
@@ -483,7 +516,7 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
             "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(),
             "max_image_px": self.px.value(), "min_view_m": self.min_view.value(),
             "draw_ring": self.ring.isChecked(), "timeout_s": self.timeout.value(),
-            "log_path": self.log_path.text()})
+            "prefetch": self.prefetch.value(), "log_path": self.log_path.text()})
 
 
 class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
@@ -535,14 +568,20 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         grid.addWidget(self.accept_btn, 6, 0)
         grid.addWidget(self.deny_btn, 6, 1)
         self.pending = None                    # {"layer", "fid", "res"} bis angenommen/abgelehnt
-        self.busy = False                      # Anfrage läuft
-        self.last_fid = None                   # zuletzt eingeschätzter Standort
+        self.results = {}                      # fid -> geparstes Ergebnis (auch vorab eingeschätzte)
+        self.errors = {}                       # fid -> Fehlertext (kein automatisches Wiederholen)
+        self.inflight = set()                  # fids mit laufender Anfrage
+        self.tasks = {}                        # Referenzen auf laufende QgsTasks
+        self.shown = None                      # fid, dessen Ergebnis gerade angezeigt wird
+        self.generation = 0                    # steigt bei Einstellungsänderung: alte Antworten verfallen
         self.auto = QCheckBox("Auto: nächsten Standort gleich einschätzen")
         self.auto.setChecked(self.settings["auto_next"])
         self.auto.toggled.connect(self._auto_toggled)
+        self.model.currentTextChanged.connect(lambda _t: self._ui_changed())
+        self.radius.valueChanged.connect(lambda _v: self._ui_changed())
         grid.addWidget(self.auto, 9, 0, 1, 2)
         self.timer = QTimer(self)              # prüft, ob im Review-Fenster ein neuer Standort dran ist
-        self.timer.setInterval(600)
+        self.timer.setInterval(300)
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start()
         gear = QPushButton("⚙ Einstellungen")
@@ -551,28 +590,54 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.setWidget(body)
         iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
 
+    def _ui_changed(self):
+        """Modell oder Umkreis im Fenster geändert: Einstellungen anpassen, alte Ergebnisse verwerfen."""
+        self.settings["model"] = self.model.currentText().strip() or DEFAULT_MODEL
+        self.settings["radius_m"] = float(self.radius.value())
+        self.generation += 1
+        self.results.clear()
+        self.errors.clear()
+        self.shown = None
+
     def _auto_toggled(self, on):
         self.settings["auto_next"] = bool(on)
         self._store()
 
     def _auto_tick(self):
-        """Auto-Modus: ist im Review-Fenster ein anderer Standort dran als der zuletzt eingeschätzte
-        und wartet kein Ergebnis auf Annehmen/Ablehnen, wird er eingeschätzt. Nach 'Ablehnen' bleibt
-        derselbe Standort dran - erst nach deinem Urteil im Review-Fenster geht es weiter."""
-        if not self.auto.isChecked() or self.busy or self.pending is not None:
+        """Auto-Modus: zeigt das (ggf. schon vorab eingetroffene) Ergebnis des aktuellen Standorts und
+        stößt Anfragen für den aktuellen sowie die nächsten `prefetch` Standorte der Warteschlange an
+        (höchstens eine Bildberechnung pro Takt, die Anfragen selbst laufen parallel im Hintergrund).
+        Nach 'Ablehnen' bleibt derselbe Standort dran: er wird nicht erneut eingeschätzt."""
+        if not self.auto.isChecked():
             return
         panel = globals().get("_review_panel")
         try:
-            fid = panel.queue.current
+            todo = list(panel.queue.todo)
+            if panel.awaiting_draw or not todo:
+                return
         except Exception:
             return
-        if fid is not None and fid != self.last_fid and not panel.awaiting_draw:
-            self.last_fid = fid                # auch bei Fehlern kein Dauer-Wiederholen
+        self._refresh_view()
+        key = self._key_quiet()
+        if not key:
+            return
+        n = self.settings["prefetch"]
+        for fid in todo[:n + 1]:
+            if fid in self.results or fid in self.errors or fid in self.inflight:
+                continue
+            if len(self.inflight) >= n + 1:
+                break
             try:
-                self.classify()
+                self._start(panel.layer, panel.feats[fid], key)
             except Exception as exc:
-                self.busy = False
-                self.out.setText(f"Fehler: {exc}")
+                self.errors[fid] = str(exc)
+            self._refresh_view()
+            break                                  # ein Render pro Takt, Oberfläche bleibt flüssig
+
+    def _key_quiet(self):
+        """API-Key ohne Dialog (Umgebung/Einstellungen); leer, wenn keiner da ist."""
+        return (os.environ.get("ANTHROPIC_API_KEY", "").strip()
+                or str(QgsSettings().value(SETTINGS_KEY, "") or "").strip())
 
     def _store(self):
         QgsSettings().setValue(PREFS_KEY, json.dumps(self.settings))
@@ -583,6 +648,10 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         dlg = SettingsDialog(self, clean_settings(self.settings))
         if dlg.exec():
             self.settings = dlg.values()
+            self.generation += 1               # alte/laufende Antworten gelten nicht mehr
+            self.results.clear()
+            self.errors.clear()
+            self.shown = None
             self.model.setEditText(self.settings["model"])
             self.radius.setValue(int(self.settings["radius_m"]))
             self._store()
@@ -601,12 +670,11 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                 settings.setValue(SETTINGS_KEY, key)
         return key
 
-    def _site_info(self):
-        """site_id/Rang/Urteil aus dem Review-Fenster, falls es läuft."""
+    def _site_info(self, fid=None):
+        """site_id/Rang des Standorts (Review-Fenster), falls es läuft."""
         panel = globals().get("_review_panel")
         try:
-            fid = panel.queue.current
-            f = panel.feats[fid]
+            f = panel.feats[panel.queue.current if fid is None else fid]
             return {"site_id": f["site_id"], "rank": f["rank"]}
         except Exception:
             return {"site_id": "", "rank": ""}
@@ -624,76 +692,133 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                 return layer, sel[0]
         return None, None
 
-    def classify(self):
-        key = self._key()
-        if not key:
-            self.out.setText("Kein API-Key.")
-            return
-        cfg = self.settings = clean_settings({**self.settings, "model": self.model.currentText(),
-                                              "radius_m": self.radius.value()})
-        self._store()
-        canvas = self.iface.mapCanvas()
-        layer, feature = self._target()
-        image = None
-        if feature is not None and self.radius.value() > 0:
-            image = _render_site(canvas, layer, feature, float(self.radius.value()), cfg["max_image_px"],
-                                 cfg["min_view_m"], cfg["draw_ring"])
-        if image is None:                      # kein Standort gewählt: sichtbaren Ausschnitt nehmen
-            image = canvas.grab().toImage()
-        png = _image_png(image, cfg["max_image_px"])
-        payload = build_payload(base64.b64encode(png).decode("ascii"), "image/png",
-                                self.context.text(), cfg["model"], cfg["max_tokens"],
-                                cfg["system_prompt"], cfg["temperature"], cfg["effort"], cfg["thinking"])
-        info = self._site_info()
-        self.go.setEnabled(False)
-        self.banner.hide()
-        self.pending = None
-        self.accept_btn.hide()
-        self.deny_btn.hide()
-        target = (layer, feature.id()) if feature is not None else None
-        self.last_fid = feature.id() if feature is not None else None
-        self.busy = True
-        self.out.setText("Frage Claude ...")
+    def _start(self, layer, feature, key, payload=None):
+        """Bild rendern (Hauptthread) und die Anfrage im Hintergrund losschicken; das Ergebnis landet
+        in self.results[fid]. payload: fertige Anfrage (Fallback: Kartenausschnitt statt Standort)."""
+        cfg = self.settings
+        fid = feature.id() if feature is not None else "canvas"
+        if payload is None:
+            image = _render_selected(self.iface.mapCanvas(), layer, feature, cfg) \
+                if cfg["radius_m"] > 0 else self.iface.mapCanvas().grab().toImage()
+            payload = build_payload(base64.b64encode(_image_png(image, cfg["max_image_px"])).decode("ascii"),
+                                    "image/png", self.context.text(), cfg["model"], cfg["max_tokens"],
+                                    cfg["system_prompt"], cfg["temperature"], cfg["effort"], cfg["thinking"])
+        info = {"site_id": "", "rank": ""} if fid == "canvas" else self._site_info(fid)
+        gen = self.generation
+        self.inflight.add(fid)
 
         def work(task):
             return run_check(payload, key, timeout=cfg["timeout_s"])
 
         def done(exception, result=None):
-            self.busy = False
-            self.go.setEnabled(True)
+            self.inflight.discard(fid)
+            self.tasks.pop(fid, None)
+            if gen != self.generation:         # Einstellungen inzwischen geändert: Antwort verwerfen
+                return
             if exception is not None or result is None:
-                self.banner.hide()
-                self.out.setText(f"Fehler: {exception}")
-                return
-            res = parse_reply(result)
-            self.last_result = res
-            text, color = banner(res)
-            self.banner.setText(text)
-            self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
-                                      "font-weight: bold; border-radius: 6px; padding: 6px;")
-            self.banner.show()
-            if target is not None and res["ok"]:
-                self.pending = {"layer": target[0], "fid": target[1], "res": res}
-                self.accept_btn.setEnabled(True)
-                self.deny_btn.setEnabled(True)
-                self.accept_btn.show()
-                self.deny_btn.show()
-            if not res["ok"]:
-                self.out.setText(f"Antwort nicht lesbar (stop_reason: {res['stop_reason'] or '?'}). "
-                                 "Bei max_tokens: Limit in den Einstellungen erhöhen oder Thinking aus / "
-                                 f"Effort niedriger.<br>{res['reason'] or '(leer)'}")
-                return
-            self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
-                             f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
-            try:
-                log_row(cfg["log_path"], {**info, "model": payload["model"], "effort": cfg["effort"], "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]), "label": res["label"],
-                                   "confidence": res["confidence"], "dump_probability": res["dump_probability"], "dump_location": res["dump_location"],
-                                   "reason": res["reason"]})
-            except OSError:
-                pass
+                self.errors[fid] = str(exception)
+            else:
+                res = parse_reply(result)
+                self.results[fid] = res
+                try:
+                    log_row(cfg["log_path"], {**info, "model": payload["model"], "effort": cfg["effort"],
+                                              "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]),
+                                              "label": res["label"], "confidence": res["confidence"],
+                                              "dump_probability": res["dump_probability"],
+                                              "dump_location": res["dump_location"], "reason": res["reason"]})
+                except OSError:
+                    pass
+            if fid == "canvas":
+                self._show("canvas", None)
+            else:
+                self._refresh_view()
 
-        self.task = QgsTask.fromFunction("Claude Einschätzung", work, on_finished=done)
-        QgsApplication.taskManager().addTask(self.task)
+        task = QgsTask.fromFunction("Claude Einschätzung", work, on_finished=done)
+        self.tasks[fid] = task
+        QgsApplication.taskManager().addTask(task)
+
+    def _refresh_view(self):
+        """Zeigt zum aktuellen Standort das Ergebnis (falls da), den Fehler oder 'Frage Claude ...'."""
+        layer, feature = self._target()
+        if feature is None:
+            return
+        fid = feature.id()
+        if fid == self.shown:
+            return
+        if fid in self.results or fid in self.errors:
+            self._show(fid, layer)
+        else:
+            self.pending = None
+            for b in (self.accept_btn, self.deny_btn, self.banner):
+                b.hide()
+            self.out.setText("Frage Claude ..." if fid in self.inflight else "")
+
+    def _show(self, fid, layer):
+        """Ergebnis (oder Fehler) von fid in Kasten und Text anzeigen; bei lesbarem Ergebnis auch
+        Annehmen/Ablehnen anbieten."""
+        self.shown = fid
+        self.pending = None
+        self.accept_btn.hide()
+        self.deny_btn.hide()
+        res = self.results.get(fid)
+        if res is None:
+            self.banner.hide()
+            self.out.setText(f"Fehler: {self.errors.get(fid, '?')}")
+            return
+        self.last_result = res
+        text, color = banner(res)
+        self.banner.setText(text)
+        self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
+                                  "font-weight: bold; border-radius: 6px; padding: 6px;")
+        self.banner.show()
+        if not res["ok"]:
+            self.out.setText(f"Antwort nicht lesbar (stop_reason: {res['stop_reason'] or '?'}). "
+                             "Bei max_tokens: Limit in den Einstellungen erhöhen oder Thinking aus / "
+                             f"Effort niedriger.<br>{res['reason'] or '(leer)'}")
+            return
+        if layer is not None:
+            self.pending = {"layer": layer, "fid": fid, "res": res}
+            self.accept_btn.setEnabled(True)
+            self.deny_btn.setEnabled(True)
+            self.accept_btn.show()
+            self.deny_btn.show()
+        self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
+                         f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
+
+    def classify(self):
+        """Knopf 'Einschätzen': aktuellen Standort (neu) einschätzen, auch wenn schon ein Ergebnis da ist."""
+        key = self._key()
+        if not key:
+            self.out.setText("Kein API-Key.")
+            return
+        self.settings = clean_settings({**self.settings, "model": self.model.currentText(),
+                                        "radius_m": self.radius.value()})
+        self._store()
+        layer, feature = self._target()
+        fid = feature.id() if feature is not None else "canvas"
+        if fid in self.inflight:
+            return
+        self.results.pop(fid, None)
+        self.errors.pop(fid, None)
+        self.shown = None
+        self.pending = None
+        for b in (self.accept_btn, self.deny_btn, self.banner):
+            b.hide()
+        self.out.setText("Frage Claude ...")
+        try:
+            if feature is None:                # kein Standort gewählt: sichtbaren Ausschnitt nehmen
+                canvas = self.iface.mapCanvas()
+                cfg = self.settings
+                png = _image_png(canvas.grab().toImage(), cfg["max_image_px"])
+                payload = build_payload(base64.b64encode(png).decode("ascii"), "image/png", self.context.text(),
+                                        cfg["model"], cfg["max_tokens"], cfg["system_prompt"], cfg["temperature"],
+                                        cfg["effort"], cfg["thinking"])
+                self._start(None, None, key, payload)
+            else:
+                self._start(layer, feature, key)
+        except Exception as exc:
+            self.errors[fid] = str(exc)
+            self._show(fid, layer)
 
     def decide_ai(self, accepted):
         """Annehmen: KI-Urteil als review in die Schicht (über das Review-Fenster, falls offen);
