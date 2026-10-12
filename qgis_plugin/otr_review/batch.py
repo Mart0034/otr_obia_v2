@@ -143,7 +143,14 @@ class BatchRunner:
         if self.stop_reason:
             head += f" ({self.stop_reason})"
         errors = self.counts.get("Fehler", 0) + self.counts.get("unlesbar", 0)
-        text = (head + "<br>" + fmt_overview(o) + (f"<br>{errors} ohne Ergebnis (Fehler/unlesbar)" if errors else "")
+        if self.mode == "test":
+            low = min((r[2] for r in self.rows), default=None)
+            body = (f"{o['n']} Standorte: Dump {o['dump']} · Möglich {o['possible']} · Kein Dump {o['none']}"
+                    + (f" · niedrigste Wahrscheinlichkeit {low:.0%}" if low is not None else "")
+                    + "<br><b>Nichts wurde geändert.</b>")
+        else:
+            body = fmt_overview(o)
+        text = (head + "<br>" + body + (f"<br>{errors} ohne Ergebnis (Fehler/unlesbar)" if errors else "")
                 + f"<br>Kosten {fmt_cost(self.cost)}")
         if self.mode == "test" and self.rows:
             self._show_test_report()
