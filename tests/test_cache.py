@@ -259,3 +259,42 @@ def test_export_filter_and_candidate_lists_in_the_same_run(tmp_path, write_synth
     assert 0 < len(out) < len(full) and out["dump_proba"].min() >= cut
     assert (tmp_path / "output" / "sites_a.gpkg").exists() and (tmp_path / "output" / "sites_a.csv").exists()
     assert (tmp_path / "output" / "sites_b.gpkg").exists()
+
+
+def test_tile_cache_skips_recomputation_and_notices_changes(tmp_path, write_synthetic_raster):
+    import otr_obia_pipeline as pipe
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    cfg = dict(cfg, use_cache=False, tile_cache_dir=str(tmp_path / "tiles"))
+    calls = []
+    real = pipe._process_one_mine_uncached
+
+    def spy(path, *a, **k):
+        calls.append(path.split("/")[-1])
+        return real(path, *a, **k)
+
+    with patch("otr_obia_pipeline._process_one_mine_uncached", spy):
+        f1, p1 = pipe.build_dataset(cfg)
+        assert sorted(calls) == ["1.tif", "2.tif"]
+        calls.clear()
+        f2, p2 = pipe.build_dataset(cfg)                         # everything from the cache
+        assert calls == []
+        assert f1.equals(f2) and len(p1) == len(p2)
+        write_synthetic_raster(tmp_path / "imagery" / "2.tif", seed=9)   # tile 2 changes on disk
+        pipe.build_dataset(cfg)
+        assert calls == ["2.tif"]                                # only the changed tile is recomputed
+        calls.clear()
+        pipe.build_dataset(dict(cfg, compactness=cfg["compactness"] + 1))   # a setting changes -> all again
+        assert sorted(calls) == ["1.tif", "2.tif"]
+    # old entries of the same tile are cleaned up: one file per tile remains
+    assert len(list((tmp_path / "tiles").glob("*.pkl"))) == 2
+
+
+def test_unreadable_tile_cache_entry_is_recomputed(tmp_path, write_synthetic_raster):
+    import otr_obia_pipeline as pipe
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    cfg = dict(cfg, use_cache=False, tile_cache_dir=str(tmp_path / "tiles"))
+    pipe.build_dataset(cfg)
+    for f in (tmp_path / "tiles").glob("*.pkl"):
+        f.write_bytes(b"garbage")
+    feats, polys = pipe.build_dataset(cfg)                       # must not raise
+    assert len(feats) > 0

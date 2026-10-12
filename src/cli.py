@@ -83,6 +83,12 @@ def build_arg_parser(description):
              "1 = aus. Das Ergebnis ist identisch, nur schneller.",
     )
     parser.add_argument(
+        "--tile-cache-dir", dest="tile_cache_dir", metavar="DIR",
+        help="Ordner für einen Merkmals-Zwischenspeicher pro Kachel: eine Kachel wird nur neu segmentiert und "
+             "berechnet, wenn sich ihre Datei, ihre Radar-/Höhen-/Mehrjahresdateien oder die Einstellungen "
+             "ändern. Spart bei jedem Lauf mit neuen Reviews die Merkmalsberechnung der Steinbruch-Kacheln.",
+    )
+    parser.add_argument(
         "--use-cache", dest="use_cache", action="store_true", default=None,
         help="Zwischengespeicherten Segment-Datensatz aus einem vorherigen "
              "Lauf wiederverwenden (aus output_dir), statt Segmentierung "
@@ -290,6 +296,7 @@ def resolve_config(base_config, args):
         "n_jobs": args.n_jobs,
         "feature_workers": args.feature_workers,
         "use_cache": args.use_cache,
+        "tile_cache_dir": getattr(args, "tile_cache_dir", None),
         "extra_imagery_dir": getattr(args, "extra_imagery_dir", None),
         "extra_labels_path": getattr(args, "extra_labels_path", None),
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),

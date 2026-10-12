@@ -121,6 +121,11 @@ CONFIG = {
     "feature_workers": None,                      # Prozesse für die Merkmals-
                                                    # berechnung EINER großen Mine
                                                    # (None = alle CPU-Kerne)
+    # Optional: Ordner für einen Merkmals-Zwischenspeicher PRO KACHEL (siehe _process_one_mine). Eine Kachel
+    # wird nur neu segmentiert/berechnet, wenn sich ihre Datei, ihre Radar-/Höhen-/Mehrjahresdateien oder
+    # die Einstellungen ändern - das Training mit neuen Reviews braucht die Merkmale nicht neu (bei den
+    # Steinbruch-Kacheln sonst ~12 Minuten je Lauf). None = aus.
+    "tile_cache_dir": None,
     "use_cache": False,                           # zwischengespeicherten
                                                    # Segment-Datensatz aus
                                                    # output_dir wiederverwenden
@@ -951,7 +956,70 @@ def load_dem_for_mine(s2_path, dem_dir, shape, tpi_window_px):
     return terrain_features(data[0], px_x, px_y, tpi_window_px, lat=lat[0], lon=lon[0])
 
 
+TILE_CACHE_VERSION = "tile-cache-1"      # hochzählen, wenn sich die Merkmalsberechnung im Code ändert
+
+
+def _file_sig(path):
+    """(Größe, mtime) einer Datei als Text; 'none' wenn es sie nicht gibt."""
+    try:
+        st = os.stat(path)
+        return f"{st.st_size}:{st.st_mtime_ns}"
+    except OSError:
+        return "none"
+
+
+def tile_cache_key(path, cfg, target_crs):
+    """Schlüssel eines Kachel-Zwischenspeichers: alles, was die Merkmale dieser Kachel beeinflusst
+    (Kachel-Datei, ihre Zusatz-Dateien in s1/dem/s2t/s2my/s1t, Label-/Grenzdateien, Einstellungen)."""
+    import hashlib
+    import json
+    base = os.path.basename(path)
+    parts = {
+        "version": TILE_CACHE_VERSION, "tile": [base, _file_sig(path)], "crs": str(target_crs),
+        "cfg": {k: cfg.get(k) for k in (
+            "band_names", "n_segments_per_mine", "compactness", "target_segment_px", "max_segments_per_mine",
+            "min_overlap_ratio", "texture_band", "mine_id_field", "mine_boundary_id_field",
+            "mine_boundary_buffer_m", "dem_tpi_window_px", "labels_path", "mine_boundary_path")},
+        "s2my_names": select_s2my_names(cfg) if cfg.get("s2my_dir") else None,
+        "labels_sig": _file_sig(cfg["labels_path"]) if cfg.get("labels_path") else None,
+        "boundary_sig": _file_sig(cfg["mine_boundary_path"]) if cfg.get("mine_boundary_path") else None,
+        "extra": {k: (cfg[k], _file_sig(os.path.join(cfg[k], base)))
+                  for k in ("s1_dir", "dem_dir", "s2t_dir", "s2my_dir", "s1t_dir") if cfg.get(k)},
+    }
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20]
+
+
 def _process_one_mine(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=None):
+    """Mit Kachel-Zwischenspeicher (cfg["tile_cache_dir"]): liegt zu dieser Kachel schon ein Ergebnis mit
+    passendem Schlüssel vor, wird es geladen statt neu berechnet; sonst wird es berechnet und abgelegt.
+    Ein unlesbarer Eintrag wird neu berechnet (nie ein Fehler)."""
+    cache_dir = cfg.get("tile_cache_dir")
+    if not cache_dir:
+        return _process_one_mine_uncached(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf)
+    os.makedirs(cache_dir, exist_ok=True)
+    entry = os.path.join(cache_dir, f"{os.path.splitext(os.path.basename(path))[0]}.{tile_cache_key(path, cfg, target_crs)}.pkl")
+    if os.path.exists(entry):
+        try:
+            result = pd.read_pickle(entry)
+            logger.info("Kachel '%s' aus dem Zwischenspeicher geladen.", os.path.basename(path))
+            return result
+        except Exception:
+            logger.warning("Zwischenspeicher %s unlesbar - Kachel wird neu berechnet.", entry)
+    result = _process_one_mine_uncached(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf)
+    tmp = f"{entry}.part{os.getpid()}"
+    pd.to_pickle(result, tmp)
+    os.replace(tmp, entry)
+    prefix = os.path.splitext(os.path.basename(path))[0] + "."
+    for old in os.listdir(cache_dir):             # Einträge früherer Schlüssel derselben Kachel aufräumen
+        if old.startswith(prefix) and old.endswith(".pkl") and os.path.join(cache_dir, old) != entry:
+            try:
+                os.remove(os.path.join(cache_dir, old))
+            except OSError:
+                pass
+    return result
+
+
+def _process_one_mine_uncached(path, cfg, labels_gdf, target_crs, mine_boundaries_gdf=None):
     """Verarbeitet eine einzelne Mine vollständig (Segmentierung, Merkmale,
     Labeling). Eigene Top-Level-Funktion, damit sie in build_dataset()
     parallel in mehreren Prozessen laufen kann - jede Mine ist unabhängig
