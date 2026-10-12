@@ -7,6 +7,7 @@ Modus "test": die in QGIS markierten Standorte (z.B. alle mit review = dump / pa
 eingeschätzt, ohne etwas zu ändern - zeigt, ob die KI echte Halden je unter die Auto-Clean-Grenze stellt.
 """
 
+import time
 from collections import Counter
 
 from .core import ai_note, ai_overview, auto_clean_ok, batch_outcome, fmt_cost, fmt_overview
@@ -28,6 +29,7 @@ class BatchRunner:
         self.rows = []                      # (site_id, bisheriges Urteil, p, label, Ort) im Testmodus
         self.stop_reason = ""
         self.since_commit = 0
+        self.t_render, self.t_api, self.t_start = [], [], time.time()
         self.timer = QTimer(panel)
         self.timer.setInterval(120)
         self.timer.timeout.connect(self._tick)
@@ -66,18 +68,26 @@ class BatchRunner:
         if not self.stop_reason and self.consecutive_errors >= 5:
             self.stop_reason = f"5 Fehler in Folge ({self.last_error})"
             self.todo.clear()
-        if self.todo and len(p.engine.inflight) < self.cfg["batch_parallel"]:
+        launched = 0
+        while (self.todo and len(p.engine.inflight) < self.cfg["batch_parallel"] and launched < 3
+               and (self.cfg["render_mode"] != "clean" or p.engine.rendering < self.cfg["batch_render_parallel"])):
             fid = self.todo.pop(0)
+            launched += 1
             try:
                 p.engine.submit(p.layer, p.feats[fid], self.key, self._on_result)
             except Exception as exc:
                 self._on_result(fid, None, str(exc), {})
+            if self.cfg["render_mode"] != "clean":      # blockierendes Rendern: ein Standort pro Takt
+                break
         if not self.todo and not p.engine.inflight:
             self._finish()
 
     def _on_result(self, fid, res, err, meta):
         p = self.panel
         self.done += 1
+        if meta.get("render_s") or meta.get("api_s"):
+            self.t_render.append(meta.get("render_s", 0.0))
+            self.t_api.append(meta.get("api_s", 0.0))
         if err is not None:
             self.counts["Fehler"] += 1
             self.consecutive_errors += 1
@@ -124,6 +134,15 @@ class BatchRunner:
     def _overview(self):
         return ai_overview(self.tally, self.cfg["thr_dump"], self.cfg["thr_possible"])
 
+    def _speed(self):
+        """Durchsatz und mittlere Zeiten je Standort: zeigt, ob Rendern oder die Anfrage bremst."""
+        if not self.t_api:
+            return ""
+        elapsed = max(time.time() - self.t_start, 1e-6)
+        avg = lambda xs: sum(xs) / len(xs)                      # noqa: E731
+        return (f"<br><small>{self.done / elapsed:.1f} Standorte/s · Ø Rendern {avg(self.t_render):.1f} s · "
+                f"Ø Anfrage {avg(self.t_api):.1f} s</small>")
+
     def _progress(self):
         """Laufende Zählung: so sieht man schon während des Stapels, was gefunden und übersprungen wird."""
         p = self.panel
@@ -133,7 +152,7 @@ class BatchRunner:
         p.batch_info.setText(
             f"{self.done}/{len(self.fids)} · Dump {o['dump']} · Möglich {o['possible']} · Kein Dump {o['none']}"
             + (f" · automatisch übersprungen {o['auto_clean']} · Stichprobe {o['spot_check']}" if self.mode == "batch" else "")
-            + extra + f"  ·  Kosten {fmt_cost(self.cost)}")
+            + extra + f"  ·  Kosten {fmt_cost(self.cost)}" + self._speed())
 
     def _finish(self):
         self.timer.stop()

@@ -427,3 +427,12 @@ def test_overview_counts_dumps_possibles_negatives_and_skips():
     assert "automatisch übersprungen 2" in text and "Stichprobe 2" in text and "zu prüfen 6" in text
     assert ai.ai_overview([], 0.5, 0.2)["n"] == 0
     assert ai.ai_overview([(0.3, "")], thr_dump=0.25)["dump"] == 1                 # thresholds are respected
+
+
+def test_render_mode_and_batch_parallelism_settings():
+    d = ai.DEFAULT_SETTINGS
+    assert d["render_mode"] == "clean" and d["batch_parallel"] == 10 and d["batch_render_parallel"] == 4
+    assert ai.clean_settings({"render_mode": "visible"})["render_mode"] == "visible"
+    assert ai.clean_settings({"render_mode": "weird"})["render_mode"] == "clean"
+    assert ai.clean_settings({"batch_parallel": 99, "batch_render_parallel": 99}) ["batch_parallel"] == 24
+    assert ai.clean_settings({"batch_render_parallel": 0})["batch_render_parallel"] == 1

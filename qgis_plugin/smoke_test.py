@@ -136,6 +136,40 @@ layer, msgs = load_candidate_sites(iface, path)
 check(layer.isValid() and layer.featureCount() == 8, f"Schicht geladen (8 Standorte), Meldungen: {msgs}")
 check(QgsProject.instance().mapLayersByName("drawn_polygons"), "Zeichenschicht geladen")
 
+print("Hintergrund-Rendern (clean):")
+from osgeo import gdal                                                   # noqa: E402
+from qgis.core import QgsRasterLayer                                     # noqa: E402
+import numpy as np                                                       # noqa: E402
+rpath = os.path.join(tmp, "basemap.tif")
+ds = gdal.GetDriverByName("GTiff").Create(rpath, 400, 100, 3, gdal.GDT_Byte)
+ds.SetGeoTransform((399900.0, 10.0, 0, 7400200.0, 0, -10.0))
+srs = osr.SpatialReference()
+srs.ImportFromEPSG(32719)
+ds.SetProjection(srs.ExportToWkt())
+rng = np.random.default_rng(1)
+for b in range(3):
+    ds.GetRasterBand(b + 1).WriteArray((120 + rng.integers(0, 40, (100, 400))).astype("uint8"))
+ds = None
+raster = QgsRasterLayer(rpath, "basemap")
+check(raster.isValid(), "Satelliten-Attrappe (GeoTIFF) geladen")
+QgsProject.instance().addMapLayer(raster)
+iface.canvas.setLayers([layer, raster])                  # sichtbar: Standortschicht UND Satellitenbild
+from otr_review.render import raster_layers, start_render_clean            # noqa: E402
+check([l.name() for l in raster_layers(iface.canvas)] == ["basemap"], "nur Rasterschichten werden für 'clean' genommen")
+feats = [f for f in layer.getFeatures()][:3]
+got = {}
+for f in feats:                                          # drei Aufträge gleichzeitig starten
+    start_render_clean(iface.canvas, layer, f, core.clean_settings({}), 100.0, lambda img, fid=f.id(): got.__setitem__(fid, img))
+check(len(got) == 0, "start_render_clean kehrt sofort zurück (nichts blockiert)")
+wait_until(lambda: len(got) == 3, what="3 Hintergrund-Bilder")
+img = got[feats[0].id()]
+c = img.pixelColor(img.width() // 2, img.height() // 2)
+check(c.red() > 150 and c.green() > 140 and c.blue() < 120, f"Standort gelb markiert in der Bildmitte (RGB {c.red()},{c.green()},{c.blue()})")
+corner = img.pixelColor(5, 5)
+check(all(110 <= v <= 170 for v in (corner.red(), corner.green(), corner.blue())) or corner.red() == 255, f"Rand zeigt nur das Satellitenbild, keine Modell-Schichten (RGB {corner.red()},{corner.green()},{corner.blue()})")
+open(os.path.join(tmp, "clean.png"), "wb").write(__import__("otr_review.render", fromlist=["image_png"]).image_png(img))
+print("   BILD:", os.path.join(tmp, "clean.png"))
+
 print("Fenster:")
 panel = OtrPanel(iface, layer)
 pump(0.3)

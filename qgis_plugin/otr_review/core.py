@@ -102,7 +102,10 @@ DEFAULT_SETTINGS = {
     "auto_clean_contexts": "open_desert",   # ... und die Umgebung dazu passt (Komma-getrennt)
     "spot_check_every": 10,       # jeder n-te Auto-Clean-Kandidat kommt zur Kontrolle in deine Warteschlange
     "batch_n": 500,               # zuletzt benutzte Stapelgröße
-    "batch_parallel": 6,          # gleichzeitige Anfragen im Stapel
+    "batch_parallel": 10,         # gleichzeitige Standorte im Stapel (rendern + Anfrage)
+    "batch_render_parallel": 4,   # davon gleichzeitig im Hintergrund gerendert (nur render_mode = clean)
+    "render_mode": "clean",       # clean: nur Satellitenbild + Umriss/Umkreis (schnell, nichts verdeckt den Boden);
+                                  # visible: alle sichtbaren Schichten wie im Kartenfenster
     "batch_budget_usd": 1.0,      # Stapel stoppt, wenn die geschätzten Kosten das erreichen (0 = kein Limit)
     "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
@@ -110,7 +113,7 @@ DEFAULT_SETTINGS = {
 _LIMITS = {"radius_inside": (0, 500, float), "radius_near": (0, 500, float), "radius_desert": (0, 500, float),
            "max_tokens": (16, 32000, int), "radius_m": (0, 500, float), "max_image_px": (256, MAX_EDGE_PX, int),
            "min_view_m": (20, 2000, float), "timeout_s": (10, 600, int), "prefetch": (0, 16, int),
-           "spot_check_every": (1, 100, int), "batch_n": (1, 100000, int), "batch_parallel": (1, 16, int),
+           "spot_check_every": (1, 100, int), "batch_n": (1, 100000, int), "batch_parallel": (1, 24, int), "batch_render_parallel": (1, 12, int),
            "batch_budget_usd": (0, 1000, float), "auto_clean_p": (0, 0.5, float)}
 
 
@@ -149,6 +152,8 @@ def clean_settings(raw):
             out[key] = max(0.0, min(1000.0, float(raw[key])))
         except (KeyError, TypeError, ValueError):
             pass
+    if raw.get("render_mode") in ("clean", "visible"):
+        out["render_mode"] = raw["render_mode"]
     if raw.get("effort") in EFFORTS:
         out["effort"] = raw["effort"]
     if raw.get("thinking") in ("default", "off"):

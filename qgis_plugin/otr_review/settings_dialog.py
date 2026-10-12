@@ -68,6 +68,11 @@ class SettingsDialog(QDialog):
         form.addRow("  Umkreis im Betrieb (inside_op)", self.r_inside)
         form.addRow("  Umkreis am Rand (near_op)", self.r_near)
         form.addRow("  Umkreis offene Wüste (open_desert)", self.r_desert)
+        self.render_mode = QComboBox()
+        self.render_mode.addItems(["clean - nur Satellitenbild + Umriss/Umkreis (schnell, im Hintergrund)",
+                                   "visible - alle sichtbaren Schichten wie im Kartenfenster"])
+        self.render_mode.setCurrentIndex(1 if s["render_mode"] == "visible" else 0)
+        form.addRow("Bild für die KI", self.render_mode)
         self.ring = QCheckBox("Umkreis gestrichelt einzeichnen (der Prompt erwähnt die Linie)")
         self.ring.setChecked(s["draw_ring"])
         form.addRow(self.ring)
@@ -100,7 +105,9 @@ class SettingsDialog(QDialog):
         self.spot.setToolTip("Jeder n-te Auto-Clean-Kandidat kommt zur Kontrolle in deine Warteschlange (1 = alle).")
         form.addRow("  Stichprobe: jeder n-te zur Kontrolle", self.spot)
         self.b_parallel = _spin(*_LIMITS["batch_parallel"][:2], s["batch_parallel"])
-        form.addRow("Stapel: gleichzeitige Anfragen", self.b_parallel)
+        form.addRow("Stapel: gleichzeitige Standorte", self.b_parallel)
+        self.b_render = _spin(*_LIMITS["batch_render_parallel"][:2], s["batch_render_parallel"])
+        form.addRow("Stapel: davon gleichzeitig rendern", self.b_render)
         self.b_budget = _dspin(0.0, 1000.0, s["batch_budget_usd"], 0.25)
         form.addRow("Stapel: Kostenlimit in $ (0 = keins)", self.b_budget)
 
@@ -143,6 +150,8 @@ class SettingsDialog(QDialog):
             "auto_clean": self.auto_clean.isChecked(), "auto_clean_p": self.auto_p.value(),
             "auto_clean_contexts": ",".join(c for c, b in self.auto_ctx.items() if b.isChecked()),
             "spot_check_every": self.spot.value(), "batch_parallel": self.b_parallel.value(),
+            "batch_render_parallel": self.b_render.value(),
+            "render_mode": "visible" if self.render_mode.currentIndex() == 1 else "clean",
             "batch_budget_usd": self.b_budget.value(), "price_in": self.price_in.value(),
             "price_out": self.price_out.value(), "log_path": self.log_path.text()}
         cleaned = clean_settings(raw)

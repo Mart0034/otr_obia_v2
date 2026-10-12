@@ -1,11 +1,12 @@
-"""Anfragen an die KI: Bild rendern (Hauptthread), im Hintergrund senden, Ergebnis melden."""
+"""Anfragen an die KI: Bild rendern, im Hintergrund senden, Ergebnis melden."""
 
 import base64
+import time
 
 from qgis.core import QgsApplication, QgsTask
 
 from .core import (build_payload, log_row, parse_reply, prompt_id, radius_for, run_check, zone_note)
-from .render import image_png, render_selected
+from .render import image_png, render_selected, start_render_clean
 
 
 def feature_context(feature):
@@ -14,15 +15,18 @@ def feature_context(feature):
 
 
 class AiEngine:
-    """submit() rendert den Standort sofort und schickt die Anfrage im Hintergrund los; callback(fid,
-    res, error, meta) läuft danach im Hauptthread. meta: radius_m, context, model."""
+    """submit() rendert den Standort und schickt die Anfrage im Hintergrund los; callback(fid, res, error,
+    meta) läuft danach im Hauptthread. meta: radius_m, context, model, render_s, api_s (Sekunden).
+    render_mode 'clean' rendert ebenfalls im Hintergrund (mehrere Standorte gleichzeitig, `rendering` zählt
+    sie); 'visible' blockiert QGIS kurz je Standort."""
 
     def __init__(self, iface, get_settings, get_extra_context, get_site_info):
         self.iface = iface
         self.get_settings = get_settings          # -> aktuelle Einstellungen (dict)
         self.get_extra_context = get_extra_context  # -> Zusatzinfo-Text des Fensters
         self.get_site_info = get_site_info        # fid -> {"site_id", "rank"}
-        self.inflight = set()
+        self.inflight = set()                     # Standorte in Arbeit (Rendern + Anfrage)
+        self.rendering = 0                        # davon gerade beim Rendern
         self.tasks = {}
         self.generation = 0                       # steigt bei Einstellungsänderung: alte Antworten verfallen
 
@@ -34,16 +38,47 @@ class AiEngine:
         fid = feature.id()
         context = feature_context(feature)
         radius = radius_for(context, cfg)
-        canvas = self.iface.mapCanvas()
-        image = render_selected(canvas, layer, feature, cfg, radius) if radius > 0 else canvas.grab().toImage()
-        extra = "; ".join(t for t in (zone_note(context, radius), self.get_extra_context()) if t)
-        payload = build_payload(base64.b64encode(image_png(image, cfg["max_image_px"])).decode("ascii"),
-                                "image/png", extra, cfg["model"], cfg["max_tokens"], cfg["system_prompt"],
-                                cfg["temperature"], cfg["effort"], cfg["thinking"], cfg["prompt_cache"])
-        info = self.get_site_info(fid)
         gen = self.generation
-        meta = {"radius_m": radius, "context": context, "model": cfg["model"]}
+        meta = {"radius_m": radius, "context": context, "model": cfg["model"], "render_s": 0.0, "api_s": 0.0}
+        t0 = time.time()
         self.inflight.add(fid)
+
+        def fail(exc):
+            self.inflight.discard(fid)
+            if gen == self.generation:
+                callback(fid, None, str(exc), meta)
+
+        def send(image):
+            try:
+                meta["render_s"] = time.time() - t0
+                extra = "; ".join(t for t in (zone_note(context, radius), self.get_extra_context()) if t)
+                payload = build_payload(base64.b64encode(image_png(image, cfg["max_image_px"])).decode("ascii"),
+                                        "image/png", extra, cfg["model"], cfg["max_tokens"], cfg["system_prompt"],
+                                        cfg["temperature"], cfg["effort"], cfg["thinking"], cfg["prompt_cache"])
+                self._send(fid, payload, key, cfg, gen, meta, callback)
+            except Exception as exc:
+                fail(exc)
+
+        canvas = self.iface.mapCanvas()
+        try:
+            if radius > 0 and cfg["render_mode"] == "clean":
+                self.rendering += 1
+
+                def rendered(image):
+                    self.rendering -= 1
+                    if image is None:               # kein sichtbares Satellitenbild: wie 'visible'
+                        image = render_selected(canvas, layer, feature, cfg, radius)
+                    send(image)
+
+                start_render_clean(canvas, layer, feature, cfg, radius, rendered)
+            else:
+                send(render_selected(canvas, layer, feature, cfg, radius) if radius > 0 else canvas.grab().toImage())
+        except Exception as exc:
+            fail(exc)
+
+    def _send(self, fid, payload, key, cfg, gen, meta, callback):
+        info = self.get_site_info(fid)
+        t1 = time.time()
 
         def work(task):
             return run_check(payload, key, timeout=cfg["timeout_s"])
@@ -53,18 +88,19 @@ class AiEngine:
             self.tasks.pop(fid, None)
             if gen != self.generation:             # Einstellungen inzwischen geändert: Antwort verwerfen
                 return
+            meta["api_s"] = time.time() - t1
             if exception is not None or result is None:
                 callback(fid, None, str(exception), meta)
                 return
             res = parse_reply(result)
-            res["radius_m"], res["context"] = radius, context
+            res["radius_m"], res["context"] = meta["radius_m"], meta["context"]
             try:
                 log_row(cfg["log_path"], {**info, "model": cfg["model"], "effort": cfg["effort"],
                                           "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]),
                                           "label": res["label"], "confidence": res["confidence"],
                                           "dump_probability": res["dump_probability"],
                                           "dump_location": res["dump_location"], "reason": res["reason"],
-                                          "radius_m": radius, "context": context,
+                                          "radius_m": meta["radius_m"], "context": meta["context"],
                                           "tokens_in": res["tokens_in"], "tokens_out": res["tokens_out"]})
             except OSError:
                 pass
