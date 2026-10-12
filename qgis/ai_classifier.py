@@ -280,7 +280,9 @@ def _ensure_ai_fields(layer):
         layer.startEditing()
     missing = [QgsField(n, _field_type(k)) for n, k in AI_FIELDS if layer.fields().indexOf(n) < 0]
     if missing:
-        layer.addAttributes(missing)
+        for field in missing:                  # QgsVectorLayer kennt nur addAttribute (Einzahl)
+            if not layer.addAttribute(field):
+                raise RuntimeError(f"Spalte {field.name()} konnte nicht angelegt werden")
         layer.commitChanges(False)
         if not layer.isEditable():
             layer.startEditing()
