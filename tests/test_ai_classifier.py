@@ -112,3 +112,12 @@ def test_banner_text_and_color():
     assert ai.banner({"dump_probability": 0.04}) == ("No dump (04%)", "#2e7d32")
     assert ai.banner({"dump_probability": 0.5})[0] == "Dump found (50%)"
     assert ai.banner({"dump_probability": 1.0})[0] == "Dump found (100%)"
+
+
+def test_verdict_to_review_mapping():
+    f = ai.verdict_to_review
+    assert f({"dump_probability": 0.9, "dump_location": "inside"}) == "dump"
+    assert f({"dump_probability": 0.9, "dump_location": "partial"}) == "partial"
+    assert f({"dump_probability": 0.9, "dump_location": "nearby"}) == "unsure"
+    assert f({"dump_probability": 0.9, "dump_location": ""}) == "dump"
+    assert f({"dump_probability": 0.1, "dump_location": "none"}) == "clean"

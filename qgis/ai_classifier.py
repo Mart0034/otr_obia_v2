@@ -17,6 +17,10 @@ in den QGIS-Einstellungen (Klartext im Profil - auf geteilten Rechnern nicht nut
     Zusatzinfo    optionaler Hinweis, z.B. "Sentinel-2, 10 m" oder "Satellitenbild 0.5 m"
     ⚙             Einstellungen: Modell, max. Tokens, Temperatur, Prompt, Umkreis, Bildgröße,
                   Zeitlimit, Log-Datei (werden gespeichert)
+    ✔ / ✖         Annehmen schreibt das KI-Urteil als `review` (Dump -> dump bzw. partial, Halde
+                  nur in der Umgebung -> unsure, sonst clean) ins gpkg und springt im Review-
+                  Fenster weiter; Ablehnen lässt `review` leer. Beides landet in den neuen
+                  Spalten ai_label, ai_dump_p, ai_decision (accepted/denied).
     Als Notiz     übernimmt das Ergebnis in das Notizfeld des Review-Fensters (falls offen)
 
 Läuft review_queue.py im selben Fenster, wird zusätzlich site_id/Rang mitgeloggt.
@@ -194,6 +198,18 @@ def banner(result):
     return f"{text} ({round(p * 100):02d}%)", ("#c62828" if p >= 0.5 else "#2e7d32")
 
 
+def verdict_to_review(result):
+    """KI-Ergebnis -> Wert der Spalte `review`: dump / partial / unsure / clean.
+    Halde nur teilweise im Umriss = partial; Halde nur in der Umgebung (Beinahe-Treffer) = unsure,
+    damit der Umriss nicht fälschlich als 'clean' ins Training geht."""
+    if result["dump_probability"] < 0.5:
+        return "clean"
+    return {"partial": "partial", "nearby": "unsure"}.get(result.get("dump_location", ""), "dump")
+
+
+AI_FIELDS = (("ai_label", "string"), ("ai_dump_p", "double"), ("ai_decision", "string"))
+
+
 def call_api(payload, api_key, timeout=90, opener=urllib.request.urlopen):
     """POST an die Messages-API; wirft RuntimeError mit lesbarer Meldung."""
     req = urllib.request.Request(
@@ -223,10 +239,10 @@ def log_row(path, row):
 
 
 try:  # außerhalb von QGIS (Tests) nicht verfügbar
-    from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
+    from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsField,
                            QgsMapRendererSequentialJob, QgsMapSettings, QgsProject, QgsRectangle,
                            QgsSettings, QgsTask)
-    from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QSize, Qt
+    from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QSize, Qt, QVariant
     from qgis.PyQt.QtGui import QColor, QPainter, QPen, QPolygonF
     from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget,
                                      QDoubleSpinBox, QFormLayout, QGridLayout, QInputDialog, QLabel,
@@ -247,6 +263,27 @@ def _qt_enum(group_name, name):
     if group is not None and hasattr(group, name):
         return getattr(group, name)
     return getattr(Qt, name)
+
+
+def _field_type(kind):
+    """QVariant (Qt5) bzw. QMetaType (Qt6) für string/double."""
+    try:
+        from qgis.PyQt.QtCore import QMetaType
+        return getattr(QMetaType.Type, "QString" if kind == "string" else "Double")
+    except (ImportError, AttributeError):
+        return QVariant.String if kind == "string" else QVariant.Double
+
+
+def _ensure_ai_fields(layer):
+    """Legt ai_label / ai_dump_p / ai_decision an, falls sie fehlen (Schicht muss bearbeitbar sein)."""
+    if not layer.isEditable():
+        layer.startEditing()
+    missing = [QgsField(n, _field_type(k)) for n, k in AI_FIELDS if layer.fields().indexOf(n) < 0]
+    if missing:
+        layer.addAttributes(missing)
+        layer.commitChanges(False)
+        if not layer.isEditable():
+            layer.startEditing()
 
 
 def _metric_crs(layer):
@@ -428,10 +465,20 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         grid.addWidget(self.out, 5, 0, 1, 2)
         note_btn = QPushButton("Als Notiz übernehmen")
         note_btn.clicked.connect(lambda _=False: self.to_note())
-        grid.addWidget(note_btn, 6, 0, 1, 2)
+        grid.addWidget(note_btn, 7, 0, 1, 2)
+        self.accept_btn = QPushButton("✔ Annehmen (ins gpkg)")
+        self.deny_btn = QPushButton("✖ Ablehnen")
+        self.accept_btn.clicked.connect(lambda _=False: self.decide_ai(True))
+        self.deny_btn.clicked.connect(lambda _=False: self.decide_ai(False))
+        for b in (self.accept_btn, self.deny_btn):
+            b.setMinimumHeight(30)
+            b.hide()
+        grid.addWidget(self.accept_btn, 6, 0)
+        grid.addWidget(self.deny_btn, 6, 1)
+        self.pending = None                    # {"layer", "fid", "res"} bis angenommen/abgelehnt
         gear = QPushButton("⚙ Einstellungen")
         gear.clicked.connect(lambda _=False: self.open_settings())
-        grid.addWidget(gear, 7, 0, 1, 2)
+        grid.addWidget(gear, 8, 0, 1, 2)
         self.setWidget(body)
         iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
 
@@ -508,6 +555,10 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         info = self._site_info()
         self.go.setEnabled(False)
         self.banner.hide()
+        self.pending = None
+        self.accept_btn.hide()
+        self.deny_btn.hide()
+        target = (layer, feature.id()) if feature is not None else None
         self.out.setText("Frage Claude ...")
 
         def work(task):
@@ -526,6 +577,12 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
                                       "font-weight: bold; border-radius: 6px; padding: 6px;")
             self.banner.show()
+            if target is not None:
+                self.pending = {"layer": target[0], "fid": target[1], "res": res}
+                self.accept_btn.setEnabled(True)
+                self.deny_btn.setEnabled(True)
+                self.accept_btn.show()
+                self.deny_btn.show()
             self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
                              f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
             try:
@@ -537,6 +594,56 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
 
         self.task = QgsTask.fromFunction("Claude Einschätzung", work, on_finished=done)
         QgsApplication.taskManager().addTask(self.task)
+
+    def decide_ai(self, accepted):
+        """Annehmen: KI-Urteil als review in die Schicht (über das Review-Fenster, falls offen);
+        Ablehnen: nur vermerken, review bleibt leer. Beides wird in ai_* Spalten gespeichert."""
+        pend = self.pending
+        if pend is None:
+            return
+        layer, fid, res = pend["layer"], pend["fid"], pend["res"]
+        try:
+            _ensure_ai_fields(layer)
+            fields = layer.fields()
+            for name, value in (("ai_label", res["label"]), ("ai_dump_p", round(res["dump_probability"], 3)),
+                                ("ai_decision", "accepted" if accepted else "denied")):
+                layer.changeAttributeValue(fid, fields.indexOf(name), value)
+            layer.commitChanges(False)
+            if not layer.isEditable():
+                layer.startEditing()
+        except Exception as exc:
+            self.out.setText(f"Speichern fehlgeschlagen: {exc}")
+            return
+        value = verdict_to_review(res)
+        panel = globals().get("_review_panel")
+        in_queue = False
+        if accepted:
+            try:
+                in_queue = panel is not None and panel.queue.current == fid
+            except Exception:
+                in_queue = False
+            note = f"AI: {res['label']} ({res['dump_probability']:.2f})"
+            if in_queue:
+                panel.note.setEditText(note)
+                panel.decide(value)            # trägt ein, springt weiter, sichert regelmäßig
+            else:
+                fields = layer.fields()
+                layer.changeAttributeValue(fid, fields.indexOf("review"), value)
+                if fields.indexOf("note") >= 0:
+                    layer.changeAttributeValue(fid, fields.indexOf("note"), note)
+                layer.commitChanges(False)
+                if not layer.isEditable():
+                    layer.startEditing()
+        if panel is not None:
+            try:
+                panel.save_to_file(quiet=True)
+            except Exception:
+                pass
+        self.pending = None
+        self.accept_btn.hide()
+        self.deny_btn.hide()
+        self.banner.hide()
+        self.out.setText(f"Angenommen: review = {value}" if accepted else "Abgelehnt (review bleibt leer)")
 
     def to_note(self):
         panel = globals().get("_review_panel")
