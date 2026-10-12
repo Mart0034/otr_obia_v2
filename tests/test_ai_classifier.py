@@ -303,7 +303,7 @@ def test_radius_follows_context_when_auto_and_falls_back_otherwise():
 
 def test_context_radius_defaults_and_validation():
     d = ai.DEFAULT_SETTINGS
-    assert (d["radius_inside"], d["radius_near"], d["radius_desert"], d["auto_radius"]) == (200.0, 100.0, 50.0, True)
+    assert (d["radius_inside"], d["radius_near"], d["radius_desert"], d["auto_radius"]) == (200.0, 150.0, 100.0, True)
     assert ai.clean_settings({"radius_inside": 9999})["radius_inside"] == 500.0
 
 

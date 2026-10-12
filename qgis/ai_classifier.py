@@ -13,7 +13,7 @@ in den QGIS-Einstellungen (Klartext im Profil - auf geteilten Rechnern nicht nut
 
     Umkreis       Hat die Liste die Spalte `context` (site_context.py bzw. candidate_sites.py
                   --operations), wählt das Fenster den Umkreis je Standort: im Betrieb 200 m, am
-                  Rand 100 m, in der offenen Wüste 50 m (Einstellungen). Sonst gilt der feste Wert.
+                  Rand 150 m, in der offenen Wüste 100 m (Einstellungen). Sonst gilt der feste Wert.
     Einschätzen   rendert den aktuellen Standort (Review-Fenster bzw. in candidate_sites
                   markiert) plus Umkreis (Standard 50 m, einstellbar), zeichnet den Umkreis
                   gestrichelt ein und schickt das Bild; ohne Standort den sichtbaren Ausschnitt
@@ -109,8 +109,8 @@ DEFAULT_SETTINGS = {
     "radius_m": BUFFER_M,         # Umkreis, wenn der Standort keine Spalte `context` hat (oder Auto aus)
     "auto_radius": True,          # Umkreis nach der Spalte `context` (site_context.py) wählen
     "radius_inside": 200.0,       # im Betriebsgelände einer Mine/eines Steinbruchs: Anlagen mit ansehen
-    "radius_near": 100.0,         # am Rand eines Betriebs
-    "radius_desert": 50.0,        # offene Wüste: knapp halten
+    "radius_near": 150.0,         # am Rand eines Betriebs
+    "radius_desert": 100.0,       # offene Wüste (9 gezeichnete Halden: 4 davon in der Wüste, bis 194 m neben dem Standort)
     "max_image_px": 1024,         # Kantenlänge des gerenderten Bildes
     "min_view_m": MIN_SIDE_M,
     "draw_ring": True,
