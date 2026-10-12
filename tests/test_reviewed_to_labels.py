@@ -98,3 +98,30 @@ def test_drawn_polygon_far_from_any_site_needs_a_mine_id():
 def test_unknown_drawn_kind_is_an_error():
     with pytest.raises(ValueError, match="kind"):
         split_reviews(_sites(["dump"]), drawn=_drawn(("dumb", "tile_a", box(X0, Y0, X0 + 5, Y0 + 5))))
+
+
+def _with_ai(reviews, decisions):
+    s = _sites(reviews)
+    s["ai_decision"] = decisions
+    return s
+
+
+def test_auto_clean_sites_become_ignore_zones_not_hard_negatives_by_default():
+    sites = _with_ai(["clean", "clean", "clean", "dump"], ["auto_clean", "accepted", None, "accepted"])
+    dump, clean, unsure, summary = split_reviews(sites)
+    assert list(clean["site_id"]) == ["S0002", "S0003"]            # human / accepted cleans only
+    assert list(unsure["site_id"]) == ["S0001"]                      # auto-clean: kept out of lists, not trained on
+    assert list(dump["site_id"]) == ["S0004"]
+    assert "ai_decision" in summary.columns
+
+
+def test_trust_ai_clean_counts_them_as_confirmed_negatives():
+    sites = _with_ai(["clean", "clean"], ["auto_clean", "spot_ok"])
+    dump, clean, unsure, _ = split_reviews(sites, trust_ai_clean=True)
+    assert list(clean["site_id"]) == ["S0001", "S0002"] and unsure.empty
+
+
+def test_human_override_of_an_auto_clean_is_respected():
+    sites = _with_ai(["dump", "partial"], ["auto_clean", "auto_clean"])      # you changed them afterwards
+    dump, clean, unsure, _ = split_reviews(sites)
+    assert list(dump["site_id"]) == ["S0001"] and list(unsure["site_id"]) == ["S0002"] and clean.empty

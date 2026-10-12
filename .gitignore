@@ -8,3 +8,4 @@ output*/
 *.tif
 *.gpkg
 *.pkl
+qgis_plugin/dist/

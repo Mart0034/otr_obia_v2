@@ -96,12 +96,20 @@ def apply_drawn(sites, drawn):
     return sites, drawn, skip
 
 
-def split_reviews(sites, close_gaps_m=5.0, drawn=None):
+def split_reviews(sites, close_gaps_m=5.0, drawn=None, trust_ai_clean=False):
     """Teilt die Standorte nach dem Urteil in (dump, clean, unsure, summary).
     dump/clean: GeoDataFrame(mine_id, site_id, geometry); unsure: Umrisse der
-    unklaren und teilweisen Standorte (Ignorier-Zone)."""
+    unklaren und teilweisen Standorte (Ignorier-Zone).
+    Standorte, die das QGIS-Plugin automatisch als clean eingetragen hat (ai_decision = auto_clean,
+    ohne dass du sie geprüft hast), zählen standardmäßig NICHT als bestätigte Negative: sie kommen in
+    die Ignorier-Zone (nicht mehr in Listen, aber auch nicht als hartes Negativ im Training). Mit
+    trust_ai_clean=True zählen sie als clean."""
     sites = sites.copy()
     sites["review"] = sites["review"].fillna("").astype(str).str.strip().str.lower()
+    ai_auto = pd.Series(False, index=sites.index)
+    if "ai_decision" in sites.columns:
+        ai_auto = (sites["ai_decision"].fillna("").astype(str).str.strip().str.lower() == "auto_clean") \
+            & (sites["review"] == "clean")
     skip = pd.Series(False, index=sites.index)
     drawn_dump = drawn_clean = None
     if drawn is not None and len(drawn):
@@ -118,15 +126,17 @@ def split_reviews(sites, close_gaps_m=5.0, drawn=None):
     # Halden-Polygon entsteht
     shaped = sites.assign(geometry=sites.geometry.buffer(close_gaps_m).buffer(-close_gaps_m))
     dump = shaped[(sites["review"] == "dump") & ~skip][cols + ["geometry"]]
-    clean = shaped[(sites["review"] == "clean") & ~skip][cols + ["geometry"]]
+    untrusted = ai_auto & (not trust_ai_clean)
+    clean = shaped[(sites["review"] == "clean") & ~skip & ~untrusted][cols + ["geometry"]]
     if drawn_dump is not None:
         dump = pd.concat([dump, drawn_dump[cols + ["geometry"]]], ignore_index=True)
         clean = pd.concat([clean, drawn_clean[cols + ["geometry"]]], ignore_index=True)
         dump, clean = gpd.GeoDataFrame(dump, crs=sites.crs), gpd.GeoDataFrame(clean, crs=sites.crs)
     # unklare und teilweise Standorte: als Ganzes aus dem Negativ-Training nehmen
-    unsure = sites[sites["review"].isin(["unsure", "partial"])][cols + ["geometry"]].copy()
+    unsure = sites[sites["review"].isin(["unsure", "partial"]) | untrusted][cols + ["geometry"]].copy()
     summary = sites[sites["review"] != ""].sort_values("rank")[
-        [c for c in ("rank", "site_id", "mine_id", "size_class", "area_m2", "mean_proba", "review", "note")
+        [c for c in ("rank", "site_id", "mine_id", "size_class", "area_m2", "mean_proba", "review", "note",
+                     "ai_decision")
          if c in sites.columns]
     ]
     return dump, clean, unsure, summary
@@ -155,6 +165,9 @@ def main(argv=None):
     p.add_argument("--drawn", default=None,
                    help="Optional: eigene Datei mit den gezeichneten Polygonen (Schicht drawn_polygons "
                         "oder die erste Schicht). Nicht nötig, wenn sie in --reviewed liegen.")
+    p.add_argument("--trust-ai-clean", action="store_true",
+                   help="Vom Plugin automatisch als clean eingetragene Standorte (ai_decision = auto_clean) auch "
+                        "als bestätigte Negative zählen. Standard: nur Ignorier-Zone.")
     p.add_argument("--out-dir", required=True)
     args = p.parse_args(argv)
     sites = gpd.read_file(args.reviewed, layer="candidate_sites") if args.reviewed.endswith(".gpkg") \
@@ -167,7 +180,7 @@ def main(argv=None):
         drawn = gpd.read_file(args.reviewed, layer="drawn_polygons")
     if drawn is not None:
         print(f"Gezeichnete Polygone: {len(drawn)}")
-    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn)
+    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn, trust_ai_clean=args.trust_ai_clean)
     os.makedirs(args.out_dir, exist_ok=True)
     if len(dump):
         dump.to_file(os.path.join(args.out_dir, "labels_reviewed_dump.gpkg"), driver="GPKG")

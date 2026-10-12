@@ -412,9 +412,17 @@ def call_api(payload, api_key, timeout=90, opener=urllib.request.urlopen):
 
 
 def log_row(path, row):
-    new = not os.path.exists(path)
+    """Eine Zeile an die CSV anhängen. Existiert die Datei schon, gilt ihre Kopfzeile (neue Spalten werden
+    ignoriert, fehlende bleiben leer) - sonst würden Werte unter falschen Überschriften landen."""
+    header = list(row)
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as fh:
+            first = fh.readline().strip()
+        if first:
+            header = next(csv.reader([first]))
+    new = not os.path.exists(path) or not os.path.getsize(path)
     with open(path, "a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(row))
+        writer = csv.DictWriter(fh, fieldnames=header, extrasaction="ignore", restval="")
         if new:
             writer.writeheader()
         writer.writerow(row)

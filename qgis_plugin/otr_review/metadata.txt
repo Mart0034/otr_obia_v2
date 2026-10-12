@@ -1,0 +1,14 @@
+[general]
+name=OTR Review
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=Kandidaten-Standorte von Reifenhalden prüfen: Review-Warteschlange, KI-Einschätzung, Stapel-Analyse
+about=Lädt candidate_sites.gpkg, geht die Standorte der Reihe nach durch (Tasten 1-7) und lässt sie auf Wunsch von Claude (Anthropic-API) einschätzen - einzeln, vorab oder als Stapel mit automatischem Clean für sichere Wüsten-Standorte.
+version=1.0.0
+author=Martin
+email=martin.weiner.aguilera@gmail.com
+tracker=https://github.com/Mart0034/otr_obia_v2
+repository=https://github.com/Mart0034/otr_obia_v2
+tags=review,mining,tires,satellite
+experimental=True
