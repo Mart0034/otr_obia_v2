@@ -74,3 +74,26 @@ def test_padded_box_adds_radius_and_enforces_minimum_side():
 def test_image_size_keeps_aspect_ratio():
     assert ai.image_size(200, 100, 1000) == (1000, 500)
     assert ai.image_size(100, 200, 1000) == (500, 1000)
+
+
+def test_clean_settings_defaults_clamps_and_garbage():
+    assert ai.clean_settings(None) == ai.DEFAULT_SETTINGS
+    s = ai.clean_settings({"max_tokens": 10**6, "radius_m": "abc", "max_image_px": 10, "temperature": 5,
+                           "system_prompt": "  ", "model": " m ", "draw_ring": "yes"})
+    assert s["max_tokens"] == 8192 and s["radius_m"] == 50.0 and s["max_image_px"] == 256
+    assert s["temperature"] == 1.0 and s["system_prompt"] == ai.SYSTEM_PROMPT
+    assert s["model"] == "m" and s["draw_ring"] is True
+
+
+def test_load_settings_roundtrip_and_bad_json():
+    custom = ai.clean_settings({"max_tokens": 900, "temperature": 0.2, "system_prompt": "Custom"})
+    assert ai.load_settings(json.dumps(custom)) == custom
+    assert ai.load_settings("{not json") == ai.DEFAULT_SETTINGS
+    assert ai.load_settings(None) == ai.DEFAULT_SETTINGS
+
+
+def test_payload_uses_custom_system_tokens_and_optional_temperature():
+    p = ai.build_payload("x", system="MY PROMPT", max_tokens=900, temperature=0.3)
+    assert p["system"] == "MY PROMPT" and p["max_tokens"] == 900 and p["temperature"] == 0.3
+    assert "temperature" not in ai.build_payload("x")
+    assert ai.prompt_id("a") != ai.prompt_id("b") and len(ai.prompt_id("a")) == 8
