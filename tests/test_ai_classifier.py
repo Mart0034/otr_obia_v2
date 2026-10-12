@@ -121,3 +121,9 @@ def test_verdict_to_review_mapping():
     assert f({"dump_probability": 0.9, "dump_location": "nearby"}) == "unsure"
     assert f({"dump_probability": 0.9, "dump_location": ""}) == "dump"
     assert f({"dump_probability": 0.1, "dump_location": "none"}) == "clean"
+
+
+def test_ai_note_has_label_probability_and_reason():
+    r = {"label": "clean_road", "dump_probability": 0.04, "reason": "Haul road\nwith  tracks."}
+    assert ai.ai_note(r) == "AI: clean_road, dump 0.04 - Haul road with tracks."
+    assert ai.ai_note({"label": "dump", "dump_probability": 0.9, "reason": ""}) == "AI: dump, dump 0.90"

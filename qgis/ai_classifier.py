@@ -198,6 +198,12 @@ def banner(result):
     return f"{text} ({round(p * 100):02d}%)", ("#c62828" if p >= 0.5 else "#2e7d32")
 
 
+def ai_note(result):
+    """Notiztext: was die KI zu sehen glaubt, z.B. 'AI: clean_road, dump 0.04 - Haul road with ...'."""
+    reason = " ".join(str(result.get("reason", "")).split())
+    return f"AI: {result['label']}, dump {result['dump_probability']:.2f}" + (f" - {reason}" if reason else "")
+
+
 def verdict_to_review(result):
     """KI-Ergebnis -> Wert der Spalte `review`: dump / partial / unsure / clean.
     Halde nur teilweise im Umriss = partial; Halde nur in der Umgebung (Beinahe-Treffer) = unsure,
@@ -624,7 +630,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                 in_queue = panel is not None and panel.queue.current == fid
             except Exception:
                 in_queue = False
-            note = f"AI: {res['label']} ({res['dump_probability']:.2f})"
+            note = ai_note(res)
             if in_queue:
                 panel.note.setEditText(note)
                 panel.decide(value)            # trägt ein, springt weiter, sichert regelmäßig
