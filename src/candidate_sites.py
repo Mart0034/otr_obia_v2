@@ -36,6 +36,8 @@ import sys
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely.geometry import MultiPolygon, Polygon
+from shapely.strtree import STRtree
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +94,62 @@ def _split_big(g, join_dist_m, max_area_m2, crs):
     return out
 
 
+def _polygonal(geom, min_part_m2):
+    """Nur die Flächenteile einer Geometrie (Linien/Punkte aus Differenzen weg), Splitter unter
+    min_part_m2 verworfen; leere Geometrie, wenn nichts übrig bleibt."""
+    parts = getattr(geom, "geoms", [geom])
+    keep = [g for g in parts if g.geom_type in ("Polygon", "MultiPolygon") and g.area >= min_part_m2]
+    flat = []
+    for g in keep:
+        flat += list(g.geoms) if g.geom_type == "MultiPolygon" else [g]
+    if not flat:
+        return Polygon()
+    return flat[0] if len(flat) == 1 else MultiPolygon(flat)
+
+
+def resolve_overlaps(sites, min_keep_frac=0.3, min_area_m2=0.0, min_part_m2=200.0):
+    """Macht die Standorte überlappungsfrei. Hintergrund: Nachbar-Kacheln (jede Mine/Steinbruch hat eine
+    eigene) decken denselben Boden ab und liefern dort jeweils einen eigenen Standort. `sites` muss nach
+    Rang sortiert sein (bester zuerst): der bessere Standort behält seine Fläche, den schlechteren trifft
+    der Abzug. Bleibt vom schlechteren weniger als min_keep_frac seiner Fläche (oder weniger als
+    min_area_m2) übrig, gilt er als Doppelgänger und fällt weg. Fläche und Score werden für gekürzte
+    Standorte neu berechnet (`trimmed` = True, ursprüngliche Fläche in `area_before_trim_m2`)."""
+    if len(sites) < 2:
+        out = sites.copy()
+        out["trimmed"] = False
+        return out
+    orig = list(sites.geometry.values)
+    cur = list(orig)
+    tree = STRtree(orig)
+    keep = np.ones(len(orig), dtype=bool)
+    trimmed = np.zeros(len(orig), dtype=bool)
+    for i, g in enumerate(orig):
+        geom = g
+        for j in sorted(int(k) for k in tree.query(g) if k < i):
+            if keep[j] and geom.intersects(cur[j]):
+                geom = geom.difference(cur[j])
+                if geom.is_empty:
+                    break
+        if geom is not g and not geom.equals(g):
+            geom = _polygonal(geom, min_part_m2)
+            trimmed[i] = True
+        if geom.is_empty or (trimmed[i] and (geom.area < min_keep_frac * g.area or geom.area < min_area_m2)):
+            keep[i] = False
+            continue
+        cur[i] = geom
+    out = sites[keep].copy()
+    out["trimmed"] = trimmed[keep]
+    out["area_before_trim_m2"] = sites.loc[keep, "area_m2"].values
+    out["geometry"] = [cur[i] for i in np.flatnonzero(keep)]
+    out["area_m2"] = out.geometry.area
+    out["score"] = out["area_m2"] * out["mean_proba"]
+    return out.reset_index(drop=True)
+
+
 def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                           labels=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
                           exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
-                          sample_every=None, sample_skip=0):
+                          sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3):
     """seg: Segmente mit mine_id, dump_proba, geometry (projiziertes CRS in Metern).
     Gibt ein GeoDataFrame mit einem Standort pro Zeile zurück, nach Rang sortiert.
     max_site_m2: größere Standorte werden in ihre Kerne zerlegt (0 = aus).
@@ -103,6 +157,9 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     rank_by: Sortierung - "score" (Fläche x mittlere Bewertung), "max_proba" (höchste
     Segment-Bewertung im Standort) oder "mean_proba". In der ersten Prüfung von 300
     Standorten waren die Treffer bei max_proba >= 0.95 am häufigsten.
+    trim_overlaps: Standorte, die sich überlappen (Nachbar-Kacheln), überlappungsfrei machen: der
+    besser bewertete behält die Fläche, vom schlechteren wird sie abgezogen, bleibt weniger als
+    min_keep_frac übrig, fällt er weg (resolve_overlaps).
     exclude_areas: GeoDataFrame mit Flächen (z.B. bereits geprüfte Standorte): Standorte,
     die eine davon berühren, werden weggelassen.
     max_urban_frac: Standorte weglassen, bei denen mehr als dieser Flächenanteil
@@ -150,6 +207,11 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     if rank_by not in ("score", "max_proba", "mean_proba"):
         raise ValueError("rank_by muss score, max_proba oder mean_proba sein")
     sites = sites.sort_values([rank_by, "score"], ascending=False).reset_index(drop=True)
+    if trim_overlaps and len(sites):
+        n0 = len(sites)
+        sites = resolve_overlaps(sites, min_keep_frac, min_area_m2)
+        logger.info("Überlappende Standorte (Nachbar-Kacheln): %d gekürzt, %d Doppelgänger entfernt.",
+                    int(sites["trimmed"].sum()), n0 - len(sites))
 
     if labels is not None and len(labels):
         lab = labels.to_crs(seg.crs)
@@ -224,7 +286,7 @@ def write_sites_gpkg(sites, path):
 def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                         labels_path=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
                         exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
-                        sample_every=None, sample_skip=0):
+                        sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3):
     """Standortliste aus bewerteten Segmenten (seg: mine_id, dump_proba, geometry) bauen und als
     GeoPackage + CSV schreiben. Wird vom Kommandozeilen-Skript und - mit den Segmenten direkt aus dem
     Speicher - von der Pipeline selbst benutzt (--candidate-lists), ohne die Segmentdatei neu zu lesen.
@@ -237,7 +299,7 @@ def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0
             ignore_index=True), crs=seg.crs)
     sites = build_candidate_sites(seg, threshold, area_pct, join_dist_m, min_area_m2, labels, known_dist_m, top,
                                   max_site_m2, exclude_known, max_urban_frac, rank_by, excl,
-                                  sample_every, sample_skip)
+                                  sample_every, sample_skip, trim_overlaps, min_keep_frac)
     write_sites_gpkg(sites, out)
     csv_path = out.rsplit(".", 1)[0] + ".csv"
     pd.DataFrame(sites.drop(columns="geometry")).to_csv(csv_path, index=False)
@@ -286,6 +348,11 @@ def main(argv=None):
                         "die Geometrien der bestbewerteten Segmente laden (spart viel Speicher).")
     p.add_argument("--exclude-known", action="store_true",
                    help="Standorte nahe bekannter Halden (--labels) weglassen - zum Suchen NEUER Halden.")
+    p.add_argument("--keep-overlaps", action="store_true",
+                   help="Überlappende Standorte (Nachbar-Kacheln) NICHT bereinigen. Standard: der besser "
+                        "bewertete behält die Fläche, vom schlechteren wird sie abgezogen.")
+    p.add_argument("--min-keep-frac", type=float, default=0.3,
+                   help="Bleibt von einem überlappten Standort weniger als dieser Anteil übrig, fällt er weg.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -298,7 +365,8 @@ def main(argv=None):
         join_dist_m=args.join_dist_m, min_area_m2=args.min_area_m2, labels_path=args.labels,
         known_dist_m=args.known_dist_m, top=args.top, max_site_m2=args.max_site_m2,
         exclude_known=args.exclude_known, max_urban_frac=args.max_urban_frac, rank_by=args.rank_by,
-        exclude_areas=args.exclude_areas, sample_every=args.sample_every, sample_skip=args.sample_skip)
+        exclude_areas=args.exclude_areas, sample_every=args.sample_every, sample_skip=args.sample_skip,
+        trim_overlaps=not args.keep_overlaps, min_keep_frac=args.min_keep_frac)
     return 0
 
 

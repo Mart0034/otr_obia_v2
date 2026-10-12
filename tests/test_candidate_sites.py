@@ -190,3 +190,39 @@ def test_sample_every_keeps_original_ranks_and_skips_reviewed_ones():
     assert list(samp["rank"]) == [15, 20, 25, 30, 35, 40, 45, 50, 55, 60][:len(samp)]
     assert list(samp["site_id"]) == [f"S{r:04d}" for r in samp["rank"]]
     assert set(samp["site_id"]) <= set(full["site_id"])
+
+
+def _two_tiles(b_cols, b_proba=0.8):
+    a = [(c, 0, 0.9) for c in range(10)]
+    b = [(c, 0, b_proba) for c in b_cols]
+    return pd.concat([_seg(a, "tile_A"), _seg(b, "tile_B")], ignore_index=True)
+
+
+def test_overlapping_tiles_are_trimmed_so_the_better_site_keeps_the_ground():
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5)
+    assert len(sites) == 2
+    a, b = sites.iloc[0], sites.iloc[1]
+    assert a["mine_id"] == "tile_A" and a["area_m2"] == pytest.approx(1000) and not a["trimmed"]
+    assert b["mine_id"] == "tile_B" and b["trimmed"] and b["area_m2"] == pytest.approx(600)
+    assert b["area_before_trim_m2"] == pytest.approx(1000)
+    assert b["score"] == pytest.approx(600 * 0.8)
+    assert a.geometry.intersection(b.geometry).area == pytest.approx(0)
+
+
+def test_site_that_is_mostly_covered_by_a_better_one_is_dropped_as_duplicate():
+    sites = build_candidate_sites(_two_tiles(range(1, 11)), threshold=0.5)   # only col 10 is new: 10% left
+    assert len(sites) == 1 and sites.loc[0, "mine_id"] == "tile_A"
+    full = build_candidate_sites(_two_tiles(range(0, 10)), threshold=0.5)    # exact copy
+    assert len(full) == 1
+
+
+def test_keep_overlaps_switch_leaves_sites_untouched():
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, trim_overlaps=False)
+    assert len(sites) == 2 and sites["area_m2"].tolist() == pytest.approx([1000, 1000])
+    assert "trimmed" not in sites.columns
+
+
+def test_no_overlap_means_nothing_trimmed():
+    cells = [(0, 0, 0.8), (40, 0, 0.9)]
+    sites = build_candidate_sites(_seg(cells), threshold=0.5)
+    assert len(sites) == 2 and not sites["trimmed"].any()
