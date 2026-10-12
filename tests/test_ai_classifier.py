@@ -27,7 +27,8 @@ def test_payload_has_image_context_and_model():
 def test_parse_plain_and_fenced_json():
     r = ai.parse_reply(_resp('```json\n{"label": "Dump", "confidence": 0.8, '
                              '"dump_location": "inside", "reason": "dark piles"}\n```'))
-    assert r == {"label": "dump", "confidence": 0.8, "dump_location": "inside", "reason": "dark piles"}
+    assert r == {"label": "dump", "confidence": 0.8, "dump_probability": 0.8,
+                 "dump_location": "inside", "reason": "dark piles"}
 
 
 def test_parse_garbage_and_bad_values_fall_back_to_unsure():
@@ -97,3 +98,17 @@ def test_payload_uses_custom_system_tokens_and_optional_temperature():
     assert p["system"] == "MY PROMPT" and p["max_tokens"] == 900 and p["temperature"] == 0.3
     assert "temperature" not in ai.build_payload("x")
     assert ai.prompt_id("a") != ai.prompt_id("b") and len(ai.prompt_id("a")) == 8
+
+
+def test_dump_probability_explicit_and_fallback():
+    r = ai.parse_reply(_resp('{"label": "clean_road", "confidence": 0.96, "dump_probability": 0.04}'))
+    assert r["dump_probability"] == 0.04
+    assert ai.parse_reply(_resp('{"label": "clean_road", "confidence": 0.9}'))["dump_probability"] == pytest.approx(0.1)
+    assert ai.parse_reply(_resp('{"label": "unsure", "confidence": 0.9}'))["dump_probability"] == 0.5
+
+
+def test_banner_text_and_color():
+    assert ai.banner({"dump_probability": 0.93}) == ("Dump found (93%)", "#c62828")
+    assert ai.banner({"dump_probability": 0.04}) == ("No dump (04%)", "#2e7d32")
+    assert ai.banner({"dump_probability": 0.5})[0] == "Dump found (50%)"
+    assert ai.banner({"dump_probability": 1.0})[0] == "Dump found (100%)"

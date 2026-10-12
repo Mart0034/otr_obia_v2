@@ -68,8 +68,9 @@ polygon, "partial" (polygon only partly covers it), "nearby" (inside the dashed 
 the polygon), or "none".
 
 Reply with ONLY a JSON object:
-{"label": "<label>", "confidence": <0..1>, "dump_location": "inside|partial|nearby|none", \
-"reason": "<one or two sentences>"}""" % ", ".join(LABELS)
+{"label": "<label>", "confidence": <0..1, how sure you are of the label>, \
+"dump_probability": <0..1, probability that a tire dump is present in the zone>, \
+"dump_location": "inside|partial|nearby|none", "reason": "<one or two sentences>"}""" % ", ".join(LABELS)
 
 
 DEFAULT_SETTINGS = {
@@ -176,9 +177,21 @@ def parse_reply(response):
         conf = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
     except (TypeError, ValueError):
         conf = 0.0
-    return {"label": label, "confidence": conf,
+    try:
+        dump_p = max(0.0, min(1.0, float(data["dump_probability"])))
+    except (KeyError, TypeError, ValueError):      # älterer Prompt ohne das Feld
+        dump_p = conf if label == "dump" else (1.0 - conf if label.startswith("clean") else 0.5)
+    return {"label": label, "confidence": conf, "dump_probability": dump_p,
             "dump_location": str(data.get("dump_location", "")),
             "reason": str(data.get("reason", text.strip() if not data else ""))}
+
+
+def banner(result):
+    """(Text, Farbe) des Ergebnis-Kastens: 'Dump found (93%)' / 'No dump (04%)' - die Prozentzahl ist
+    die Wahrscheinlichkeit, dass eine Halde vorhanden ist; ab 50 % gilt 'Dump found'."""
+    p = result["dump_probability"]
+    text = "Dump found" if p >= 0.5 else "No dump"
+    return f"{text} ({round(p * 100):02d}%)", ("#c62828" if p >= 0.5 else "#2e7d32")
 
 
 def call_api(payload, api_key, timeout=90, opener=urllib.request.urlopen):
@@ -404,16 +417,21 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.go.setMinimumHeight(34)
         self.go.clicked.connect(lambda _=False: self.classify())
         grid.addWidget(self.go, 3, 0, 1, 2)
+        self.banner = QLabel("")
+        self.banner.setAlignment(_qt_enum("AlignmentFlag", "AlignCenter"))
+        self.banner.setMinimumHeight(48)
+        self.banner.hide()
+        grid.addWidget(self.banner, 4, 0, 1, 2)
         self.out = QLabel("")
         self.out.setWordWrap(True)
         self.out.setTextInteractionFlags(_qt_enum("TextInteractionFlag", "TextSelectableByMouse"))
-        grid.addWidget(self.out, 4, 0, 1, 2)
+        grid.addWidget(self.out, 5, 0, 1, 2)
         note_btn = QPushButton("Als Notiz übernehmen")
         note_btn.clicked.connect(lambda _=False: self.to_note())
-        grid.addWidget(note_btn, 5, 0, 1, 2)
+        grid.addWidget(note_btn, 6, 0, 1, 2)
         gear = QPushButton("⚙ Einstellungen")
         gear.clicked.connect(lambda _=False: self.open_settings())
-        grid.addWidget(gear, 6, 0, 1, 2)
+        grid.addWidget(gear, 7, 0, 1, 2)
         self.setWidget(body)
         iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
 
@@ -489,6 +507,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                                 cfg["system_prompt"], cfg["temperature"])
         info = self._site_info()
         self.go.setEnabled(False)
+        self.banner.hide()
         self.out.setText("Frage Claude ...")
 
         def work(task):
@@ -497,15 +516,21 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         def done(exception, result=None):
             self.go.setEnabled(True)
             if exception is not None or result is None:
+                self.banner.hide()
                 self.out.setText(f"Fehler: {exception}")
                 return
             res = parse_reply(result)
             self.last_result = res
+            text, color = banner(res)
+            self.banner.setText(text)
+            self.banner.setStyleSheet(f"background: {color}; color: white; font-size: 20px; "
+                                      "font-weight: bold; border-radius: 6px; padding: 6px;")
+            self.banner.show()
             self.out.setText(f"<b>{res['label']}</b> &nbsp; ({res['confidence']:.2f})"
                              f"<br>Halde: {res['dump_location'] or '-'}<br>{res['reason']}")
             try:
                 log_row(cfg["log_path"], {**info, "model": payload["model"], "prompt_id": prompt_id(cfg["system_prompt"]), "label": res["label"],
-                                   "confidence": res["confidence"], "dump_location": res["dump_location"],
+                                   "confidence": res["confidence"], "dump_probability": res["dump_probability"], "dump_location": res["dump_location"],
                                    "reason": res["reason"]})
             except OSError:
                 pass
