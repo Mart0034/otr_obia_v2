@@ -407,7 +407,7 @@ def test_defaults_for_the_plugin():
     assert ai.DEFAULT_MODEL == "claude-haiku-5-5" and ai.DEFAULT_SETTINGS["prompt_cache"] is True
     assert ai.PREFS_KEY != ai.OLD_PREFS_KEY and ai.KEY_SETTING == "otr_obia/anthropic_api_key"
     assert ai.clean_settings({"batch_budget_usd": -3})["batch_budget_usd"] == 0
-    assert ai.clean_settings({"batch_parallel": 99})["batch_parallel"] == 16
+    assert ai.clean_settings({"batch_parallel": 99})["batch_parallel"] == 24
 
 
 def test_log_row_tolerates_new_columns_in_an_old_log(tmp_path):
