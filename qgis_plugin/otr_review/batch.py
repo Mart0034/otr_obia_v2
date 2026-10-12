@@ -9,7 +9,7 @@ eingeschätzt, ohne etwas zu ändern - zeigt, ob die KI echte Halden je unter di
 
 from collections import Counter
 
-from .core import ai_note, auto_clean_ok, batch_outcome, fmt_cost
+from .core import ai_note, ai_overview, auto_clean_ok, batch_outcome, fmt_cost, fmt_overview
 from .qtcompat import QMessageBox, QTimer
 
 
@@ -24,6 +24,7 @@ class BatchRunner:
         self.counts = Counter()
         self.consecutive_errors = 0
         self.last_error = ""
+        self.tally = []                     # (Wahrscheinlichkeit, Ergebnis) dieses Stapels
         self.rows = []                      # (site_id, bisheriges Urteil, p, label, Ort) im Testmodus
         self.stop_reason = ""
         self.since_commit = 0
@@ -90,6 +91,7 @@ class BatchRunner:
             if not res["ok"]:
                 self.counts["unlesbar"] += 1
             elif self.mode == "test":
+                self.tally.append((res["dump_probability"], "test"))
                 self._record_test(fid, res, meta)
             else:
                 self._apply(fid, res, meta)
@@ -104,6 +106,7 @@ class BatchRunner:
     def _apply(self, fid, res, meta):
         p, f = self.panel, self.panel.feats[fid]
         outcome = batch_outcome(res, meta["context"], f["site_id"], self.cfg)
+        self.tally.append((res["dump_probability"], outcome))
         p.store_fields(fid, res, outcome)
         if outcome == "auto_clean":
             note = ai_note(res) + " [auto]"
@@ -118,23 +121,51 @@ class BatchRunner:
             self.since_commit = 0
             p._commit()
 
+    def _overview(self):
+        return ai_overview(self.tally, self.cfg["thr_dump"], self.cfg["thr_possible"])
+
     def _progress(self):
+        """Laufende Zählung: so sieht man schon während des Stapels, was gefunden und übersprungen wird."""
         p = self.panel
         p.progress.setValue(self.done)
-        text = f"{self.done}/{len(self.fids)} · " + " · ".join(f"{k} {v}" for k, v in self.counts.items())
-        p.batch_info.setText(text + f"  ·  Kosten {fmt_cost(self.cost)}")
+        o = self._overview()
+        extra = "".join(f" · {k} {v}" for k, v in self.counts.items() if k in ("Fehler", "unlesbar"))
+        p.batch_info.setText(
+            f"{self.done}/{len(self.fids)} · Dump {o['dump']} · Möglich {o['possible']} · Kein Dump {o['none']}"
+            + (f" · automatisch übersprungen {o['auto_clean']} · Stichprobe {o['spot_check']}" if self.mode == "batch" else "")
+            + extra + f"  ·  Kosten {fmt_cost(self.cost)}")
 
     def _finish(self):
         self.timer.stop()
         p = self.panel
+        o = self._overview()
         head = ("Test" if self.mode == "test" else "Stapel") + f" fertig: {self.done}/{len(self.fids)}"
         if self.stop_reason:
             head += f" ({self.stop_reason})"
-        parts = [head] + [f"{k} {v}" for k, v in self.counts.items()] + [f"Kosten {fmt_cost(self.cost)}"]
-        text = " · ".join(parts)
+        errors = self.counts.get("Fehler", 0) + self.counts.get("unlesbar", 0)
+        text = (head + "<br>" + fmt_overview(o) + (f"<br>{errors} ohne Ergebnis (Fehler/unlesbar)" if errors else "")
+                + f"<br>Kosten {fmt_cost(self.cost)}")
         if self.mode == "test" and self.rows:
             self._show_test_report()
         p.batch_finished(text)
+        if self.mode == "batch" and o["n"]:
+            self._show_batch_report(o, head)
+
+    def _show_batch_report(self, o, head):
+        """Sofort nach dem Stapel: was die KI gefunden hat und was für dich übrig bleibt."""
+        lines = [head, "",
+                 f"{o['n']} Standorte eingeschätzt.", "",
+                 f"Dump vermutet:           {o['dump']}",
+                 f"Möglich / unsicher:      {o['possible']}",
+                 f"Kein Dump:               {o['none']}",
+                 f"   davon automatisch als clean übersprungen: {o['auto_clean']}",
+                 f"   davon als Stichprobe für dich:            {o['spot_check']}", "",
+                 f"Für dich zu prüfen (Warteschlange): {o['to_review']}",
+                 f"Kosten: {fmt_cost(self.cost)}"]
+        box = QMessageBox(self.panel)
+        box.setWindowTitle("Stapel-Ergebnis")
+        box.setText("\n".join(lines))
+        box.exec() if hasattr(box, "exec") else box.exec_()
 
     def _show_test_report(self):
         cfg = self.cfg

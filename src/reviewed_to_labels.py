@@ -46,7 +46,31 @@ import pyogrio
 VALID = ("dump", "clean", "partial", "unsure")
 
 
-def _clean_drawn(drawn, sites, max_dist_m=500.0):
+def mine_from_tiles(points, tiles_dir):
+    """mine_id (= Kachelname) der Bildkachel, in der der Punkt liegt (bei mehreren: Mittelpunkt am nächsten);
+    NaN, wenn der Punkt in keiner Kachel liegt. points: GeoSeries; tiles_dir: Ordner mit den .tif-Kacheln."""
+    import glob
+    import os
+
+    import rasterio
+    from shapely.geometry import box
+    rows = []
+    for path in glob.glob(os.path.join(tiles_dir, "*.tif")):
+        with rasterio.open(path) as src:
+            rows.append((os.path.splitext(os.path.basename(path))[0], box(*src.bounds), src.crs))
+    out = pd.Series(float("nan"), index=points.index, dtype="object")
+    if not rows:
+        return out
+    tiles = gpd.GeoDataFrame({"mine_id": [r[0] for r in rows]}, geometry=[r[1] for r in rows], crs=rows[0][2])
+    pts = points.to_crs(tiles.crs)
+    for idx, pt in pts.items():
+        hit = tiles[tiles.contains(pt)]
+        if len(hit):
+            out[idx] = hit.loc[hit.geometry.centroid.distance(pt).idxmin(), "mine_id"]
+    return out
+
+
+def _clean_drawn(drawn, sites, max_dist_m=500.0, tiles_dir=None):
     """Prüft die gezeichneten Polygone und ergänzt fehlende mine_id vom nächsten Standort."""
     drawn = drawn[drawn.geometry.notna() & ~drawn.geometry.is_empty].copy()
     if drawn.empty:
@@ -61,6 +85,20 @@ def _clean_drawn(drawn, sites, max_dist_m=500.0):
         near = gpd.sjoin_nearest(drawn[missing][["geometry"]], sites[["mine_id", "geometry"]],
                                  how="left", max_distance=max_dist_m)
         near = near[~near.index.duplicated(keep="first")]
+        if near["mine_id"].isna().any() and tiles_dir:
+            # weiter als max_dist_m von jedem Standort (z.B. eine Halde, die das Modell ganz übersehen hat):
+            # mine_id aus der Bildkachel, in der das Polygon liegt; ohne Kachel gibt es keine Merkmale -> verwerfen
+            far = near.index[near["mine_id"].isna()]
+            found = mine_from_tiles(drawn.loc[far, "geometry"].representative_point(), tiles_dir)
+            near.loc[far, "mine_id"] = found
+            outside = near.index[near["mine_id"].isna()]
+            if len(outside):
+                print(f"Warnung: {len(outside)} gezeichnete Polygone liegen in keiner Bildkachel und werden "
+                      "ignoriert (keine Merkmale vorhanden).")
+                drawn = drawn.drop(index=outside)
+                near = near.drop(index=outside)
+                missing = missing.drop(index=outside)
+            print(f"{len(far) - len(outside)} weit entfernte Polygone über die Bildkachel zugeordnet.")
         if near["mine_id"].isna().any():
             raise ValueError(
                 f"{int(near['mine_id'].isna().sum())} gezeichnete Polygone liegen weiter als "
@@ -70,7 +108,7 @@ def _clean_drawn(drawn, sites, max_dist_m=500.0):
     return drawn
 
 
-def apply_drawn(sites, drawn):
+def apply_drawn(sites, drawn, tiles_dir=None):
     """Gezeichnete Polygone haben Vorrang vor dem Urteil über den ganzen Standort.
     Gibt (sites, drawn, skip) zurück: skip = Standorte, die gezeichnete Polygone
     berühren (ihr Umriss wird nicht als Label verwendet). Ein Standort ohne eigenes
@@ -78,7 +116,7 @@ def apply_drawn(sites, drawn):
     clean (nur gezeichnete saubere Flächen)."""
     sites = sites.copy()
     skip = pd.Series(False, index=sites.index)
-    drawn = _clean_drawn(drawn, sites)
+    drawn = _clean_drawn(drawn, sites, tiles_dir=tiles_dir)
     if drawn.empty:
         return sites, drawn, skip
     for idx, site in sites.iterrows():
@@ -96,7 +134,7 @@ def apply_drawn(sites, drawn):
     return sites, drawn, skip
 
 
-def split_reviews(sites, close_gaps_m=5.0, drawn=None, trust_ai_clean=False):
+def split_reviews(sites, close_gaps_m=5.0, drawn=None, trust_ai_clean=False, tiles_dir=None):
     """Teilt die Standorte nach dem Urteil in (dump, clean, unsure, summary).
     dump/clean: GeoDataFrame(mine_id, site_id, geometry); unsure: Umrisse der
     unklaren und teilweisen Standorte (Ignorier-Zone).
@@ -113,7 +151,7 @@ def split_reviews(sites, close_gaps_m=5.0, drawn=None, trust_ai_clean=False):
     skip = pd.Series(False, index=sites.index)
     drawn_dump = drawn_clean = None
     if drawn is not None and len(drawn):
-        sites, drawn, skip = apply_drawn(sites, drawn.to_crs(sites.crs) if drawn.crs else drawn)
+        sites, drawn, skip = apply_drawn(sites, drawn.to_crs(sites.crs) if drawn.crs else drawn, tiles_dir)
         sites["review"] = sites["review"].astype(str).str.strip().str.lower()
         cols_d = ["mine_id", "geometry"]
         drawn_dump = drawn[drawn["kind"] == "dump"][cols_d].assign(site_id="drawn")
@@ -165,6 +203,9 @@ def main(argv=None):
     p.add_argument("--drawn", default=None,
                    help="Optional: eigene Datei mit den gezeichneten Polygonen (Schicht drawn_polygons "
                         "oder die erste Schicht). Nicht nötig, wenn sie in --reviewed liegen.")
+    p.add_argument("--tiles-dir", default=None,
+                   help="Ordner mit den Bildkacheln (.tif): gezeichnete Polygone, die weiter als 500 m von jedem "
+                        "Standort entfernt sind und keine mine_id haben, bekommen die der Kachel, in der sie liegen.")
     p.add_argument("--trust-ai-clean", action="store_true",
                    help="Vom Plugin automatisch als clean eingetragene Standorte (ai_decision = auto_clean) auch "
                         "als bestätigte Negative zählen. Standard: nur Ignorier-Zone.")
@@ -180,7 +221,7 @@ def main(argv=None):
         drawn = gpd.read_file(args.reviewed, layer="drawn_polygons")
     if drawn is not None:
         print(f"Gezeichnete Polygone: {len(drawn)}")
-    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn, trust_ai_clean=args.trust_ai_clean)
+    dump, clean, unsure, summary = split_reviews(sites, drawn=drawn, trust_ai_clean=args.trust_ai_clean, tiles_dir=args.tiles_dir)
     os.makedirs(args.out_dir, exist_ok=True)
     if len(dump):
         dump.to_file(os.path.join(args.out_dir, "labels_reviewed_dump.gpkg"), driver="GPKG")

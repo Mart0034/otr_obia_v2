@@ -494,6 +494,27 @@ def result_from_fields(label, dump_p, location, reason):
             "dump_location": str(location or ""), "reason": str(reason or ""), "cached": True}
 
 
+def ai_overview(entries, thr_dump=0.5, thr_possible=0.2):
+    """Überblick über KI-Ergebnisse. entries: (Halden-Wahrscheinlichkeit, ai_decision) je Standort.
+    dump / possible / none nach denselben Grenzen wie der Kasten im Fenster; auto_clean und spot_check
+    zählen zusätzlich (auto_clean sind Teil von none, spot_check ebenfalls)."""
+    o = {"n": 0, "dump": 0, "possible": 0, "none": 0, "auto_clean": 0, "spot_check": 0}
+    for p, decision in entries:
+        o["n"] += 1
+        o["dump" if p >= thr_dump else "possible" if p >= thr_possible else "none"] += 1
+        if decision in ("auto_clean", "spot_check"):
+            o[decision] += 1
+    o["to_review"] = o["n"] - o["auto_clean"]
+    return o
+
+
+def fmt_overview(o):
+    """Eine Zeile: wie viele Dumps vermutet, unsicher, negativ - und wie viele automatisch übersprungen."""
+    return (f"{o['n']} geprüft:  Dump {o['dump']} · Möglich {o['possible']} · Kein Dump {o['none']}"
+            f"  |  automatisch übersprungen {o['auto_clean']} · Stichprobe {o['spot_check']}"
+            f"  |  für dich zu prüfen {o['to_review']}")
+
+
 def audit_summary(decisions):
     """Zusammenfassung der ai_decision-Werte: wie oft wurde automatisch bereinigt und wie oft lag die KI
     in deinen Stichproben daneben? Text für das Fenster."""

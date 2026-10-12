@@ -125,3 +125,28 @@ def test_human_override_of_an_auto_clean_is_respected():
     sites = _with_ai(["dump", "partial"], ["auto_clean", "auto_clean"])      # you changed them afterwards
     dump, clean, unsure, _ = split_reviews(sites)
     assert list(dump["site_id"]) == ["S0001"] and list(unsure["site_id"]) == ["S0002"] and clean.empty
+
+
+def _tile(path, x0, y0, size=1000.0):
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    with rasterio.open(path, "w", driver="GTiff", height=10, width=10, count=1, dtype="uint8", crs="EPSG:32719",
+                       transform=from_origin(x0, y0 + size, size / 10, size / 10)) as dst:
+        dst.write(np.zeros((10, 10), dtype="uint8"), 1)
+
+
+def test_far_drawn_dumps_take_the_mine_id_of_the_tile_they_lie_in(tmp_path, capsys):
+    _tile(str(tmp_path / "q_way_1.tif"), X0 + 5000, Y0)             # tile far from the only site
+    _tile(str(tmp_path / "q_way_2.tif"), X0 + 9000, Y0)
+    sites = _sites(["clean"])
+    drawn = gpd.GeoDataFrame({"kind": ["dump", "dump", "dump"], "mine_id": [None, None, None]},
+                             geometry=[box(X0 + 5400, Y0 + 400, X0 + 5460, Y0 + 460),     # in tile 1
+                                       box(X0 + 9400, Y0 + 400, X0 + 9460, Y0 + 460),     # in tile 2
+                                       box(X0 + 20000, Y0, X0 + 20050, Y0 + 50)],         # outside every tile
+                             crs="EPSG:32719")
+    with pytest.raises(ValueError, match="mine_id"):                 # without tiles-dir the old behaviour stays
+        split_reviews(sites, drawn=drawn)
+    dump, clean, unsure, _ = split_reviews(sites, drawn=drawn, tiles_dir=str(tmp_path))
+    assert sorted(dump["mine_id"]) == ["q_way_1", "q_way_2"]
+    assert "ignoriert" in capsys.readouterr().out

@@ -21,6 +21,8 @@ parallel, with a cost limit (default $1; settings).
   and no dump seen are written as `review = clean`, `ai_decision = auto_clean`, note `... [auto]`.
 - Every 10th such site (by site id) stays in your queue as a spot check (`ai_decision = spot_check`). Your decision
   on it is recorded as `spot_ok` / `spot_miss`; the window shows the miss rate.
+- While the batch runs the window counts live: Dump / Möglich / Kein Dump, automatically skipped, spot checks, cost.
+  When it ends a report shows the same plus how many are left for you. A standing overview line stays in the window.
 - Everything else keeps its stored AI result (columns `ai_label`, `ai_dump_p`, `ai_loc`, `ai_reason`,
   `ai_decision = pending`), so reopening a site costs no request.
 - *Test auf Auswahl* checks the sites you selected in QGIS (e.g. all with `review = dump / partial`) without

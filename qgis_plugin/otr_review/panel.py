@@ -6,7 +6,7 @@ import os
 from qgis.core import QgsCoordinateTransform, QgsProject, QgsRectangle, QgsSettings
 
 from .batch import BatchRunner
-from .core import (DEFAULT_MODEL, KEY_SETTING, OLD_PREFS_KEY, PREFS_KEY, ReviewQueue, ai_note, audit_summary,
+from .core import (DEFAULT_MODEL, ai_overview, fmt_overview, KEY_SETTING, OLD_PREFS_KEY, PREFS_KEY, ReviewQueue, ai_note, audit_summary,
                    banner, clean_settings, cost_of, fmt_cost, human_followup, load_settings, result_from_fields,
                    verdict_to_review)
 from .engine import AiEngine, feature_context
@@ -187,10 +187,14 @@ class OtrPanel(QDockWidget):
         self.batch_info = QLabel("")
         self.batch_info.setWordWrap(True)
         bl.addWidget(self.batch_info, 4, 0, 1, 2)
+        self.overview = QLabel("")
+        self.overview.setWordWrap(True)
+        self.overview.setStyleSheet("font-weight: bold;")
+        bl.addWidget(self.overview, 5, 0, 1, 2)
         self.stats = QLabel("")
         self.stats.setWordWrap(True)
         self.stats.setStyleSheet("color: gray; font-size: 11px;")
-        bl.addWidget(self.stats, 5, 0, 1, 2)
+        bl.addWidget(self.stats, 6, 0, 1, 2)
         col.addWidget(bbox)
 
         gear = QPushButton("⚙ Einstellungen")
@@ -440,9 +444,21 @@ class OtrPanel(QDockWidget):
             self.set_decision(fid, new)
 
     def _refresh_stats(self):
-        i = self.layer.fields().indexOf("ai_decision")
-        decisions = [str(f["ai_decision"]) for f in self.layer.getFeatures() if i >= 0 and f["ai_decision"]
-                     and str(f["ai_decision"]) != "NULL"]
+        """Überblick über alle KI-Ergebnisse der Schicht (Dump / Möglich / Kein Dump, automatisch
+        übersprungen, Stichproben) und die Trefferquote der Stichproben."""
+        fields = self.layer.fields()
+        i, j = fields.indexOf("ai_decision"), fields.indexOf("ai_dump_p")
+        decisions, entries = [], []
+        for f in self.layer.getFeatures():
+            d = f["ai_decision"] if i >= 0 else None
+            d = str(d) if d is not None and str(d) != "NULL" else ""
+            if d:
+                decisions.append(d)
+            pv = f["ai_dump_p"] if j >= 0 else None
+            if pv is not None and str(pv) != "NULL":
+                entries.append((float(pv), d))
+        self.overview.setText(fmt_overview(ai_overview(entries, self.settings["thr_dump"],
+                                                        self.settings["thr_possible"])) if entries else "")
         self.stats.setText(audit_summary(decisions))
 
     # =====================================================================================

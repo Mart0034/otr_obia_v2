@@ -115,7 +115,7 @@ def fake_call_api(payload, api_key, timeout=90, opener=None):
 
 
 core.call_api = fake_call_api
-QMessageBox.exec = lambda self: print("  (Testbericht)\n" + self.text())
+QMessageBox.exec = lambda self: print("  (Bericht)\n" + self.text())
 if hasattr(QMessageBox, "exec_"):
     QMessageBox.exec_ = QMessageBox.exec
 
@@ -180,6 +180,10 @@ check(all(rows[k][0] in ("NULL", "None", "") for k in spot), "Stichprobe bleibt 
 yard = [k for k, v in rows.items() if k in ("S0003", "S0006")]
 check(all(rows[k][1] == "pending" for k in yard), "inside_op/near_op werden nie automatisch clean")
 check("Auto-Clean" in panel.stats.text(), f"Statistik: {panel.stats.text()}")
+check("automatisch übersprungen" in panel.overview.text() and "Kein Dump" in panel.overview.text(),
+      f"Überblick: {panel.overview.text()}")
+check("automatisch übersprungen" in panel.batch_info.text() or "übersprungen" in panel.batch_info.text(),
+      f"Stapel-Zusammenfassung: {panel.batch_info.text()[:140]!r}")
 n_calls = len(CALLS)
 panel.start_batch("batch")
 check(panel.batch is None or not panel.batch.fids, "zweiter Stapel überspringt bereits eingeschätzte Standorte")

@@ -415,3 +415,15 @@ def test_log_row_tolerates_new_columns_in_an_old_log(tmp_path):
     ai.log_row(path, {"a": 1, "b": 2})
     ai.log_row(path, {"a": 3, "b": 4, "c": 5})                     # an older header must not break the new row
     assert open(path).read().splitlines() == ["a,b", "1,2", "3,4"]
+
+
+def test_overview_counts_dumps_possibles_negatives_and_skips():
+    entries = [(0.9, "pending"), (0.6, "pending"), (0.3, "pending"), (0.25, "spot_check"), (0.03, "auto_clean"),
+               (0.04, "auto_clean"), (0.05, "spot_check"), (0.15, "pending")]
+    o = ai.ai_overview(entries)
+    assert o == {"n": 8, "dump": 2, "possible": 2, "none": 4, "auto_clean": 2, "spot_check": 2, "to_review": 6}
+    text = ai.fmt_overview(o)
+    assert "8 geprüft" in text and "Dump 2" in text and "Möglich 2" in text and "Kein Dump 4" in text
+    assert "automatisch übersprungen 2" in text and "Stichprobe 2" in text and "zu prüfen 6" in text
+    assert ai.ai_overview([], 0.5, 0.2)["n"] == 0
+    assert ai.ai_overview([(0.3, "")], thr_dump=0.25)["dump"] == 1                 # thresholds are respected
