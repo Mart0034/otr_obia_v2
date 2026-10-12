@@ -63,3 +63,14 @@ def test_log_row_writes_header_once(tmp_path):
     ai.log_row(p, {"a": 1, "b": 2})
     ai.log_row(p, {"a": 3, "b": 4})
     assert open(p).read().splitlines() == ["a,b", "1,2", "3,4"]
+
+
+def test_padded_box_adds_radius_and_enforces_minimum_side():
+    assert ai.padded_box(0, 0, 100, 40, radius=50, min_side=150) == (-50, -55, 150, 95)
+    x0, y0, x1, y1 = ai.padded_box(0, 0, 10, 10, radius=5, min_side=150)
+    assert (x1 - x0, y1 - y0) == (150, 150) and (x0 + x1) / 2 == 5
+
+
+def test_image_size_keeps_aspect_ratio():
+    assert ai.image_size(200, 100, 1000) == (1000, 500)
+    assert ai.image_size(100, 200, 1000) == (500, 1000)
