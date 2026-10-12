@@ -146,10 +146,60 @@ def resolve_overlaps(sites, min_keep_frac=0.3, min_area_m2=0.0, min_part_m2=200.
     return out.reset_index(drop=True)
 
 
+def merge_touching_sites(sites, join_dist_m=20.0, max_site_m2=None):
+    """Fasst Standorte zusammen, die sich berühren oder höchstens join_dist_m auseinanderliegen. Innerhalb
+    einer Kachel passiert das schon beim Bauen (zusammenhängende Segmente); Standorte NEBENEINANDER LIEGENDER
+    Kacheln (verschiedene mine_id) blieben bisher getrennt, auch wenn sie sich berühren (nach dem Abziehen
+    der Überlappungen grenzen sie genau aneinander). Der zusammengefasste Standort bekommt: Vereinigung der
+    Flächen, Summe der Segmente, flächengewichtete mittlere Bewertung (und frac_*), höchste Einzelbewertung,
+    die mine_id des besser bewerteten Mitglieds (`sites` muss nach Rang sortiert sein), `n_merged` = Anzahl
+    der Mitglieder. Ist max_site_m2 gesetzt, werden Gruppen, die dadurch größer würden, NICHT
+    zusammengefasst (sonst entstünden riesige Flecken, die man nicht mehr beurteilen kann)."""
+    sites = sites.reset_index(drop=True).copy()
+    sites["n_merged"] = 1
+    if len(sites) < 2 or join_dist_m is None or join_dist_m < 0:
+        return sites
+    joined = sites.geometry.buffer(join_dist_m / 2.0 + 0.01).union_all()
+    comps = gpd.GeoDataFrame(geometry=list(getattr(joined, "geoms", [joined])), crs=sites.crs)
+    comps["_comp"] = np.arange(len(comps))
+    hit = gpd.sjoin(sites[["geometry"]], comps, predicate="intersects", how="left")
+    hit = hit[~hit.index.duplicated(keep="first")]
+    sites["_comp"] = hit["_comp"].reindex(sites.index).values
+    frac_cols = [c for c in sites.columns if c.startswith("frac_")]
+    rows, merged_any = [], False
+    for _, grp in sites.groupby("_comp", sort=False):
+        total = float(grp["area_m2"].sum())
+        if len(grp) == 1 or (max_site_m2 and total > max_site_m2):
+            rows.extend(grp.drop(columns="_comp").to_dict("records"))
+            continue
+        merged_any = True
+        first = grp.iloc[0]                                     # bestes Mitglied (Eingabe ist nach Rang sortiert)
+        row = first.drop(labels="_comp").to_dict()
+        geom = grp.geometry.union_all()
+        w = grp["area_m2"].to_numpy(dtype=float)
+        row.update({
+            "geometry": geom, "n_segments": int(grp["n_segments"].sum()), "area_m2": float(geom.area),
+            "mean_proba": float((grp["mean_proba"].to_numpy(dtype=float) * w).sum() / w.sum()),
+            "max_proba": float(grp["max_proba"].max()), "n_merged": int(len(grp)),
+        })
+        for c in frac_cols:
+            row[c] = float((grp[c].to_numpy(dtype=float) * w).sum() / w.sum())
+        for flag in ("trimmed",):
+            if flag in grp.columns:
+                row[flag] = bool(grp[flag].any())
+        if "area_before_trim_m2" in grp.columns:
+            row["area_before_trim_m2"] = float(grp["area_before_trim_m2"].sum())
+        row["score"] = row["area_m2"] * row["mean_proba"]
+        rows.append(row)
+    if not merged_any:
+        return sites.drop(columns="_comp")
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs=sites.crs)
+
+
 def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, min_area_m2=0.0,
                           labels=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
                           exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
-                          sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3):
+                          sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3, merge_touching=True):
     """seg: Segmente mit mine_id, dump_proba, geometry (projiziertes CRS in Metern).
     Gibt ein GeoDataFrame mit einem Standort pro Zeile zurück, nach Rang sortiert.
     max_site_m2: größere Standorte werden in ihre Kerne zerlegt (0 = aus).
@@ -160,6 +210,8 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
     trim_overlaps: Standorte, die sich überlappen (Nachbar-Kacheln), überlappungsfrei machen: der
     besser bewertete behält die Fläche, vom schlechteren wird sie abgezogen, bleibt weniger als
     min_keep_frac übrig, fällt er weg (resolve_overlaps).
+    merge_touching: Standorte, die sich berühren oder höchstens join_dist_m auseinanderliegen (z.B. aus
+    Nachbar-Kacheln), zu einem zusammenfassen (merge_touching_sites).
     exclude_areas: GeoDataFrame mit Flächen (z.B. bereits geprüfte Standorte): Standorte,
     die eine davon berühren, werden weggelassen.
     max_urban_frac: Standorte weglassen, bei denen mehr als dieser Flächenanteil
@@ -212,6 +264,11 @@ def build_candidate_sites(seg, threshold=None, area_pct=2.0, join_dist_m=20.0, m
         sites = resolve_overlaps(sites, min_keep_frac, min_area_m2)
         logger.info("Überlappende Standorte (Nachbar-Kacheln): %d gekürzt, %d Doppelgänger entfernt.",
                     int(sites["trimmed"].sum()), n0 - len(sites))
+    if merge_touching and len(sites) > 1:
+        n0 = len(sites)
+        sites = merge_touching_sites(sites, join_dist_m, max_site_m2)
+        sites = sites.sort_values([rank_by, "score"], ascending=False).reset_index(drop=True)
+        logger.info("Berührende Standorte (Nachbar-Kacheln) zusammengefasst: %d Standorte -> %d.", n0, len(sites))
 
     if labels is not None and len(labels):
         lab = labels.to_crs(seg.crs)
@@ -287,7 +344,7 @@ def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0
                         labels_path=None, known_dist_m=50.0, top=None, max_site_m2=100000.0,
                         exclude_known=False, max_urban_frac=None, rank_by="score", exclude_areas=None,
                         sample_every=None, sample_skip=0, trim_overlaps=True, min_keep_frac=0.3,
-                        operations=None, near_op_m=250.0):
+                        merge_touching=True, operations=None, near_op_m=250.0):
     """Standortliste aus bewerteten Segmenten (seg: mine_id, dump_proba, geometry) bauen und als
     GeoPackage + CSV schreiben. Wird vom Kommandozeilen-Skript und - mit den Segmenten direkt aus dem
     Speicher - von der Pipeline selbst benutzt (--candidate-lists), ohne die Segmentdatei neu zu lesen.
@@ -302,7 +359,7 @@ def sites_from_segments(seg, out, threshold=None, area_pct=2.0, join_dist_m=20.0
             ignore_index=True), crs=seg.crs)
     sites = build_candidate_sites(seg, threshold, area_pct, join_dist_m, min_area_m2, labels, known_dist_m, top,
                                   max_site_m2, exclude_known, max_urban_frac, rank_by, excl,
-                                  sample_every, sample_skip, trim_overlaps, min_keep_frac)
+                                  sample_every, sample_skip, trim_overlaps, min_keep_frac, merge_touching)
     if operations:
         from site_context import add_context, load_operations
         sites = add_context(sites, load_operations(operations.split(","), sites.crs), near_op_m)
@@ -361,6 +418,10 @@ def main(argv=None):
                    help="Umrisse von Minen/Steinbrüchen (Dateien mit Komma getrennt): ergänzt `context` "
                         "(inside_op / near_op / open_desert) für den automatischen KI-Umkreis in QGIS.")
     p.add_argument("--near-op-m", type=float, default=250.0, help="Bis zu diesem Abstand zum Umriss: near_op.")
+    p.add_argument("--no-merge-touching", action="store_true",
+                   help="Berührende Standorte aus Nachbar-Kacheln NICHT zusammenfassen (Standard: zusammenfassen, "
+                        "wenn sie höchstens --join-dist-m auseinanderliegen und der Fleck nicht größer als "
+                        "--max-site-m2 würde).")
     p.add_argument("--min-keep-frac", type=float, default=0.3,
                    help="Bleibt von einem überlappten Standort weniger als dieser Anteil übrig, fällt er weg.")
     args = p.parse_args(argv)
@@ -377,7 +438,7 @@ def main(argv=None):
         exclude_known=args.exclude_known, max_urban_frac=args.max_urban_frac, rank_by=args.rank_by,
         exclude_areas=args.exclude_areas, sample_every=args.sample_every, sample_skip=args.sample_skip,
         trim_overlaps=not args.keep_overlaps, min_keep_frac=args.min_keep_frac,
-        operations=args.operations, near_op_m=args.near_op_m)
+        merge_touching=not args.no_merge_touching, operations=args.operations, near_op_m=args.near_op_m)
     return 0
 
 

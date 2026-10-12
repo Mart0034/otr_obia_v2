@@ -41,10 +41,13 @@ def test_gap_within_join_distance_connects_sites():
     assert len(build_candidate_sites(_seg(cells), threshold=0.5, join_dist_m=5)) == 2
 
 
-def test_sites_never_merge_across_mines():
+def test_touching_sites_of_different_mines_merge_unless_switched_off():
     a, b = _seg([(0, 0, 0.8)], "mine_001"), _seg([(1, 0, 0.8)], "mine_002")
-    sites = build_candidate_sites(pd.concat([a, b], ignore_index=True), threshold=0.5, join_dist_m=20)
-    assert len(sites) == 2
+    both = pd.concat([a, b], ignore_index=True)
+    assert len(build_candidate_sites(both, threshold=0.5, join_dist_m=20)) == 1          # they touch -> one site
+    assert len(build_candidate_sites(both, threshold=0.5, join_dist_m=20, merge_touching=False)) == 2
+    far = pd.concat([a, _seg([(10, 0, 0.8)], "mine_002")], ignore_index=True)             # 90 m apart: stay separate
+    assert len(build_candidate_sites(far, threshold=0.5, join_dist_m=20)) == 2
 
 
 def test_maps_link_and_coordinates():
@@ -199,7 +202,7 @@ def _two_tiles(b_cols, b_proba=0.8):
 
 
 def test_overlapping_tiles_are_trimmed_so_the_better_site_keeps_the_ground():
-    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5)
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, merge_touching=False)
     assert len(sites) == 2
     a, b = sites.iloc[0], sites.iloc[1]
     assert a["mine_id"] == "tile_A" and a["area_m2"] == pytest.approx(1000) and not a["trimmed"]
@@ -217,7 +220,7 @@ def test_site_that_is_mostly_covered_by_a_better_one_is_dropped_as_duplicate():
 
 
 def test_keep_overlaps_switch_leaves_sites_untouched():
-    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, trim_overlaps=False)
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, trim_overlaps=False, merge_touching=False)
     assert len(sites) == 2 and sites["area_m2"].tolist() == pytest.approx([1000, 1000])
     assert "trimmed" not in sites.columns
 
@@ -226,3 +229,43 @@ def test_no_overlap_means_nothing_trimmed():
     cells = [(0, 0, 0.8), (40, 0, 0.9)]
     sites = build_candidate_sites(_seg(cells), threshold=0.5)
     assert len(sites) == 2 and not sites["trimmed"].any()
+
+
+def test_touching_sites_of_neighbouring_tiles_are_joined_into_one():
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5)        # B is trimmed to cols 10-15
+    assert len(sites) == 1
+    s = sites.iloc[0]
+    assert s["mine_id"] == "tile_A" and s["n_merged"] == 2
+    assert s["area_m2"] == pytest.approx(1600)
+    assert s["mean_proba"] == pytest.approx((0.9 * 1000 + 0.8 * 600) / 1600)       # area-weighted
+    assert s["max_proba"] == pytest.approx(0.9) and s["score"] == pytest.approx(s["area_m2"] * s["mean_proba"])
+    assert s["trimmed"]
+
+
+def test_sites_further_apart_than_the_join_distance_stay_separate():
+    a = [(c, 0, 0.9) for c in range(5)]
+    b = [(c, 0, 0.8) for c in range(30, 35)]                                       # 250 m away
+    seg = pd.concat([_seg(a, "tile_A"), _seg(b, "tile_B")], ignore_index=True)
+    sites = build_candidate_sites(seg, threshold=0.5)
+    assert len(sites) == 2 and (sites["n_merged"] == 1).all()
+
+
+def test_a_chain_of_three_touching_tiles_becomes_one_site():
+    seg = pd.concat([_seg([(c, 0, 0.9) for c in range(0, 5)], "t1"),
+                     _seg([(c, 0, 0.8) for c in range(5, 10)], "t2"),
+                     _seg([(c, 0, 0.7) for c in range(10, 15)], "t3")], ignore_index=True)
+    sites = build_candidate_sites(seg, threshold=0.5)
+    assert len(sites) == 1 and sites.loc[0, "n_merged"] == 3 and sites.loc[0, "area_m2"] == pytest.approx(1500)
+
+
+def test_merging_is_skipped_when_the_result_would_exceed_the_site_size_cap():
+    sites = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, max_site_m2=1200)
+    assert len(sites) == 2 and (sites["n_merged"] == 1).all()                      # 1600 m2 > 1200 m2: keep them apart
+
+
+def test_merge_switch_and_ranking_after_merge():
+    off = build_candidate_sites(_two_tiles(range(6, 16)), threshold=0.5, merge_touching=False)
+    assert len(off) == 2 and "n_merged" not in off.columns
+    seg = pd.concat([_two_tiles(range(6, 16)), _seg([(100, 0, 0.99)], "tile_C")], ignore_index=True)
+    sites = build_candidate_sites(seg, threshold=0.5)
+    assert sites["rank"].tolist() == [1, 2] and sites.loc[0, "n_merged"] == 2       # the merged block outranks a single cell
