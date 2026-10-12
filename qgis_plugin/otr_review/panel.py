@@ -621,8 +621,15 @@ class OtrPanel(QDockWidget):
         if pend is None:
             return
         fid, res = pend["fid"], pend["res"]
+        _, prev = self.stored_result(fid)
+        if prev == "spot_check":
+            # Stichprobe eines Auto-Clean-Kandidaten: Annehmen heißt "die KI hatte recht" (spot_ok) und zählt
+            # in der Fehlerquote; Ablehnen lässt sie offen, dein Urteil per Taste ergibt dann spot_ok / spot_miss.
+            decision = "spot_ok" if accepted else "spot_check"
+        else:
+            decision = "accepted" if accepted else "denied"
         try:
-            self.store_fields(fid, res, "accepted" if accepted else "denied")
+            self.store_fields(fid, res, decision)
             self._commit()
         except Exception as exc:
             self.out.setText(f"Speichern fehlgeschlagen: {exc}")

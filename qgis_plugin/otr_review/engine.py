@@ -48,10 +48,12 @@ class AiEngine:
             if gen == self.generation:
                 callback(fid, None, str(exc), meta)
 
-        def send(image):
+        def send(image, m_per_px=None):
             try:
                 meta["render_s"] = time.time() - t0
-                extra = "; ".join(t for t in (zone_note(context, radius), self.get_extra_context()) if t)
+                meta["m_per_px"] = m_per_px
+                extra = "; ".join(t for t in (zone_note(context, radius, cfg["tell_context"], m_per_px),
+                                              self.get_extra_context()) if t)
                 payload = build_payload(base64.b64encode(image_png(image, cfg["max_image_px"])).decode("ascii"),
                                         "image/png", extra, cfg["model"], cfg["max_tokens"], cfg["system_prompt"],
                                         cfg["temperature"], cfg["effort"], cfg["thinking"], cfg["prompt_cache"])
@@ -64,15 +66,18 @@ class AiEngine:
             if radius > 0 and cfg["render_mode"] == "clean":
                 self.rendering += 1
 
-                def rendered(image):
+                def rendered(image, m_per_px):
                     self.rendering -= 1
                     if image is None:               # kein sichtbares Satellitenbild: wie 'visible'
-                        image = render_selected(canvas, layer, feature, cfg, radius)
-                    send(image)
+                        image, m_per_px = render_selected(canvas, layer, feature, cfg, radius)
+                    send(image, m_per_px)
 
                 start_render_clean(canvas, layer, feature, cfg, radius, rendered)
             else:
-                send(render_selected(canvas, layer, feature, cfg, radius) if radius > 0 else canvas.grab().toImage())
+                if radius > 0:
+                    send(*render_selected(canvas, layer, feature, cfg, radius))
+                else:
+                    send(canvas.grab().toImage(), None)
         except Exception as exc:
             fail(exc)
 

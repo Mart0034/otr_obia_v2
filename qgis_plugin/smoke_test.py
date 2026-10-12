@@ -107,7 +107,7 @@ def fake_call_api(payload, api_key, timeout=90, opener=None):
     text = payload["messages"][0]["content"][1]["text"]
     CALLS.append(payload)
     assert payload["messages"][0]["content"][0]["source"]["data"], "kein Bild"
-    p = 0.04 if "open desert" in text else 0.45
+    p = 0.04 if "Zone radius 100 m" in text else 0.45        # Wüsten-Umkreis; die Umgebung selbst wird der KI nicht genannt
     body = {"label": "clean_desert" if p < 0.1 else "clean_yard", "confidence": 0.9, "dump_probability": p,
             "dump_location": "none" if p < 0.1 else "nearby", "reason": "The zone shows bare sand."}
     return {"content": [{"type": "text", "text": json.dumps(body)}], "stop_reason": "end_turn",
@@ -159,12 +159,13 @@ check([l.name() for l in raster_layers(iface.canvas)] == ["basemap"], "nur Raste
 feats = [f for f in layer.getFeatures()][:3]
 got = {}
 for f in feats:                                          # drei Aufträge gleichzeitig starten
-    start_render_clean(iface.canvas, layer, f, core.clean_settings({}), 100.0, lambda img, fid=f.id(): got.__setitem__(fid, img))
+    start_render_clean(iface.canvas, layer, f, core.clean_settings({}), 100.0, lambda img, mpp, fid=f.id(): got.__setitem__(fid, (img, mpp)))
 check(len(got) == 0, "start_render_clean kehrt sofort zurück (nichts blockiert)")
 wait_until(lambda: len(got) == 3, what="3 Hintergrund-Bilder")
-img = got[feats[0].id()]
+img, mpp = got[feats[0].id()]
+check(mpp and 0.05 < mpp < 5, f"Meter je Pixel geliefert ({mpp:.3f} m/px)")
 c = img.pixelColor(img.width() // 2, img.height() // 2)
-check(c.red() > 150 and c.green() > 140 and c.blue() < 120, f"Standort gelb markiert in der Bildmitte (RGB {c.red()},{c.green()},{c.blue()})")
+check(all(110 <= v <= 170 for v in (c.red(), c.green(), c.blue())), f"Bildmitte bleibt unverfärbt (nur Umriss), RGB {c.red()},{c.green()},{c.blue()}")
 corner = img.pixelColor(5, 5)
 check(all(110 <= v <= 170 for v in (corner.red(), corner.green(), corner.blue())) or corner.red() == 255, f"Rand zeigt nur das Satellitenbild, keine Modell-Schichten (RGB {corner.red()},{corner.green()},{corner.blue()})")
 open(os.path.join(tmp, "clean.png"), "wb").write(__import__("otr_review.render", fromlist=["image_png"]).image_png(img))
@@ -193,6 +194,9 @@ check(panel.banner.text().startswith("No dump"), f"Kasten: {panel.banner.text()}
 check(layer.getFeature(cur)["ai_decision"] == "pending", "Ergebnis in der Datei gespeichert (pending)")
 check(CALLS[-1].get("system")[0].get("cache_control"), "Prompt-Cache aktiv")
 check(any("Zone radius 100 m" in c["messages"][0]["content"][1]["text"] for c in CALLS), "Wüsten-Umkreis 100 m")
+texts = [c["messages"][0]["content"][1]["text"] for c in CALLS]
+check(all("image scale" in t and "per pixel" in t for t in texts), "Maßstab (m je Pixel) steht im Text an die KI")
+check(not any("location:" in t or "mining operation" in t for t in texts), "die Umgebung (Betrieb/Wüste) wird der KI NICHT genannt")
 panel.decide_ai(True)
 pump(0.2)
 check(str(layer.getFeature(cur)["review"]) == "clean" and layer.getFeature(cur)["ai_decision"] == "accepted",
@@ -239,6 +243,21 @@ if spot:
     panel.decide("dump")
     check(layer.getFeature(fid)["ai_decision"] == "spot_miss", "Stichprobe als dump bestätigt -> spot_miss")
 
+print("Stichprobe annehmen -> spot_ok:")
+sid = [f for f in layer.getFeatures() if f["site_id"] == "S0006"][0]
+res_ok = core.result_from_fields("clean_desert", 0.05, "none", "Bare sand.")
+panel.results[sid.id()] = res_ok
+panel.store_fields(sid.id(), res_ok, "spot_check")
+panel._commit()
+while panel.queue.current != sid.id() and panel.queue.current is not None:
+    panel.skip()
+panel.shown = None
+panel._refresh_view()
+check(panel.pending is not None and panel.accept_btn.isVisibleTo(panel), "Stichprobe zeigt Annehmen/Ablehnen")
+panel.decide_ai(True)
+check(layer.getFeature(sid.id())["ai_decision"] == "spot_ok", "Annehmen einer Stichprobe -> spot_ok (nicht 'accepted')")
+check("falsch" in panel.stats.text() or "Stichprobe geprüft" in panel.stats.text(), f"Fehlerquote sichtbar: {panel.stats.text()}")
+
 print("Auto-Modus mit Vorab-Einschätzung:")
 CALLS.clear()
 panel.results.clear()
@@ -256,7 +275,7 @@ layer.commitChanges(False)
 panel.auto.setChecked(True)
 todo = list(panel.queue.todo)[:3]
 wait_until(lambda: all(f in panel.results for f in todo), timeout=30, what="Vorab-Ergebnisse")
-check(len(CALLS) == 3, f"aktueller + 2 Vorab-Standorte eingeschätzt ({len(CALLS)} Anfragen)")
+check(len(CALLS) == len(todo) and len(todo) >= 2, f"aktueller + Vorab-Standorte eingeschätzt ({len(CALLS)} Anfragen für {len(todo)} Standorte)")
 wait_until(lambda: panel.shown == panel.queue.current, what="Anzeige")
 check(panel.banner.isVisible() or panel.banner.text() != "", f"Ergebnis des aktuellen Standorts angezeigt: {panel.banner.text()}")
 n = len(CALLS)
@@ -283,7 +302,7 @@ check(vals == base, "Dialog gibt unveränderte Einstellungen zurück")
 print("Bild des Standorts:")
 from otr_review.render import image_png, render_selected                  # noqa: E402
 iface.canvas.setLayers([layer])
-img = render_selected(iface.canvas, layer, [f for f in layer.getFeatures()][2], panel.settings, 200)
+img, _mpp = render_selected(iface.canvas, layer, [f for f in layer.getFeatures()][2], panel.settings, 200)
 png = image_png(img)
 open(os.path.join(tmp, "site.png"), "wb").write(png)
 check(len(png) > 1000 and img.width() >= 256, f"Standort gerendert ({img.width()}x{img.height()}), {tmp}/site.png")

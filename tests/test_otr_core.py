@@ -308,14 +308,31 @@ def test_context_radius_defaults_and_validation():
     assert ai.clean_settings({"radius_inside": 9999})["radius_inside"] == 500.0
 
 
-def test_zone_note_describes_radius_and_surroundings():
-    assert "200 m" in ai.zone_note("inside_op", 200) and "mining operation" in ai.zone_note("inside_op", 200)
-    assert "open desert" in ai.zone_note("open_desert", 50)
-    assert ai.zone_note("", 50) == "Zone radius 50 m"
+def test_zone_note_gives_radius_and_scale_and_the_location_only_on_request():
+    assert ai.zone_note("inside_op", 200) == "Zone radius 200 m"                  # location is NOT told by default
+    note = ai.zone_note("inside_op", 200, m_per_px=0.19)
+    assert "200 m" in note and "0.19 m per pixel" in note and "about 16 px" in note
+    assert "mining operation" not in note and "facilities" not in note
+    assert "inside a mining operation" in ai.zone_note("inside_op", 200, tell_context=True)
+    assert "open desert" in ai.zone_note("open_desert", 50, tell_context=True)
+    assert ai.zone_note("", 50, tell_context=True) == "Zone radius 50 m"
     assert "radius is given in the message" in ai.SYSTEM_PROMPT
 
 
-# ---------------------------------------------------------------- new in the plugin: auto-clean, batch, cache
+def test_prompt_separates_tires_from_dirt_heaps_and_ignores_location():
+    p = ai.SYSTEM_PROMPT
+    assert "2.5-4 m" in p and "dirt and rock heaps" in p.lower() and "hollow" in p
+    assert "Location is irrelevant" in p and "Never lower the probability" in p
+    assert "round objects of tire size" in p                                      # recall bias kept, but size-bound
+    assert ai.prompt_id(p) not in ai.LEGACY_PROMPT_IDS
+    assert "3270d54d" in ai.LEGACY_PROMPT_IDS                                      # the previous default is migrated away
+
+
+def test_context_and_highlight_settings_default_off():
+    d = ai.DEFAULT_SETTINGS
+    assert d["tell_context"] is False and d["highlight_fill"] is False
+    assert ai.clean_settings({"tell_context": True, "highlight_fill": True})["tell_context"] is True
+
 def _res(p, loc="none", label="clean_desert", ok=True):
     return {"ok": ok, "dump_probability": p, "dump_location": loc, "label": label}
 

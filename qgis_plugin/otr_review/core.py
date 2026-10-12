@@ -50,8 +50,19 @@ dark rock or desert colour variation, water, vegetation.
 
 Tire storage yards and stockpiles count as dumps: stacks or rows of tires, even neat ones, \
 on bare ground or inside an equipment yard. Pipes, containers, vehicles and buildings do not. \
-The project prefers false alarms to missed dumps: if dark round objects that could be tires are \
-visible anywhere in the zone, dump_probability must be at least 0.4, and dump_location says where.
+The project prefers false alarms to missed dumps: if round objects of tire size that could be tires \
+are visible anywhere in the zone, dump_probability must be at least 0.4, and dump_location says where.
+
+Scale decides: the message gives metres per pixel (and a scale bar is drawn in the image). A mining \
+tire is only 2.5-4 m across. Tires are uniform hollow rings (black, dark grey or light grey), with \
+sharp edges and a lighter or empty centre, lying in rows, stacks or tight piles; their shadows are short.
+NOT tires: dirt and rock heaps (spoil heaps, waste-dump slopes, pit benches) - irregular rounded \
+mounds typically 8-30 m across with soft shading, no hollow centre and uneven sizes, often in \
+scalloped or terraced patterns; the dark shadow side of such mounds can look like dark rings. \
+Never call a view a dump only because mounds are dark or speckled; require ring shapes of tire size.
+
+Location is irrelevant: tire dumps are common inside mining operations, next to haul roads, pits \
+and terraces. Never lower the probability because the view shows haul roads, terraces or yards.
 
 Classify the view with exactly one label from: %s.
 Use "dump" only if tires are plausibly visible; use "unsure" if the image resolution is too \
@@ -70,7 +81,7 @@ The reason must be telegraphic: only what is visible and why it decides the labe
 
 
 # prompt_id() früherer Standard-Prompts (vor dem Kürzen der Begründung)
-LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802", "e05849c1", "495a90d6"}
+LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802", "e05849c1", "495a90d6", "3270d54d"}
 
 CONTEXTS = ("inside_op", "near_op", "open_desert")
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
@@ -104,6 +115,8 @@ DEFAULT_SETTINGS = {
     "batch_n": 500,               # zuletzt benutzte Stapelgröße
     "batch_parallel": 10,         # gleichzeitige Standorte im Stapel (rendern + Anfrage)
     "batch_render_parallel": 4,   # davon gleichzeitig im Hintergrund gerendert (nur render_mode = clean)
+    "tell_context": False,        # der KI die Umgebung (Betrieb/Wüste) im Text nennen (Standard aus, siehe zone_note)
+    "highlight_fill": False,      # clean-Bild: Standort nur umranden (Standard) statt gelb füllen - verdeckt die Reifen nicht
     "render_mode": "clean",       # clean: nur Satellitenbild + Umriss/Umkreis (schnell, nichts verdeckt den Boden);
                                   # visible: alle sichtbaren Schichten wie im Kartenfenster
     "batch_budget_usd": 1.0,      # Stapel stoppt, wenn die geschätzten Kosten das erreichen (0 = kein Limit)
@@ -158,7 +171,7 @@ def clean_settings(raw):
         out["effort"] = raw["effort"]
     if raw.get("thinking") in ("default", "off"):
         out["thinking"] = raw["thinking"]
-    for key in ("draw_ring", "auto_next", "auto_radius", "prompt_cache", "auto_clean"):
+    for key in ("draw_ring", "auto_next", "auto_radius", "prompt_cache", "auto_clean", "tell_context", "highlight_fill"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
     return out
@@ -186,12 +199,18 @@ def radius_for(context, cfg):
     return float(cfg["radius_m"])
 
 
-def zone_note(context, radius_m):
-    """Zeile für die KI: Größe und Art der Umgebung (hilft ihr, Anlagen von Halden zu unterscheiden)."""
-    where = {"inside_op": "inside a mining operation (expect facilities, roads, yards)",
-             "near_op": "at the edge of a mining operation",
-             "open_desert": "open desert away from mines (equipment and facilities are unlikely)"}.get(context, "")
-    return f"Zone radius {radius_m:.0f} m" + (f"; location: {where}" if where else "")
+def zone_note(context, radius_m, tell_context=False, m_per_px=None):
+    """Zeile für die KI: Umkreis, Maßstab und - nur wenn tell_context - die Umgebung. Standard ist AUS: die
+    Umgebungsangabe ('inside a mining operation ...') drückte die Einschätzung in Betrieben Richtung
+    'clean_mine' (5 von 6 echten Halden dort bekamen unter 20 %)."""
+    parts = [f"Zone radius {radius_m:.0f} m"]
+    if m_per_px:
+        parts.append(f"image scale {m_per_px:.2f} m per pixel (a 3 m tire is about {3.0 / m_per_px:.0f} px across)")
+    where = {"inside_op": "inside a mining operation", "near_op": "at the edge of a mining operation",
+             "open_desert": "open desert away from mines"}.get(context, "") if tell_context else ""
+    if where:
+        parts.append(f"location: {where}")
+    return "; ".join(parts)
 
 
 def padded_box(xmin, ymin, xmax, ymax, radius=BUFFER_M, min_side=MIN_SIDE_M):

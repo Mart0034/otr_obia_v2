@@ -73,6 +73,13 @@ class SettingsDialog(QDialog):
                                    "visible - alle sichtbaren Schichten wie im Kartenfenster"])
         self.render_mode.setCurrentIndex(1 if s["render_mode"] == "visible" else 0)
         form.addRow("Bild für die KI", self.render_mode)
+        self.tell_context = QCheckBox("Der KI die Umgebung nennen (Betrieb / Wüste) - AUS empfohlen: drückte die Einschätzung "
+                                      "in Betrieben Richtung 'clean_mine'")
+        self.tell_context.setChecked(s["tell_context"])
+        form.addRow(self.tell_context)
+        self.highlight_fill = QCheckBox("Standort im Bild gelb füllen (aus = nur Umriss; die Füllung färbt die Reifen ein)")
+        self.highlight_fill.setChecked(s["highlight_fill"])
+        form.addRow(self.highlight_fill)
         self.ring = QCheckBox("Umkreis gestrichelt einzeichnen (der Prompt erwähnt die Linie)")
         self.ring.setChecked(s["draw_ring"])
         form.addRow(self.ring)
@@ -152,6 +159,7 @@ class SettingsDialog(QDialog):
             "spot_check_every": self.spot.value(), "batch_parallel": self.b_parallel.value(),
             "batch_render_parallel": self.b_render.value(),
             "render_mode": "visible" if self.render_mode.currentIndex() == 1 else "clean",
+            "tell_context": self.tell_context.isChecked(), "highlight_fill": self.highlight_fill.isChecked(),
             "batch_budget_usd": self.b_budget.value(), "price_in": self.price_in.value(),
             "price_out": self.price_out.value(), "log_path": self.log_path.text()}
         cleaned = clean_settings(raw)
