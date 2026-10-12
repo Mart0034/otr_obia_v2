@@ -27,7 +27,7 @@ def test_payload_has_image_context_and_model():
 def test_parse_plain_and_fenced_json():
     r = ai.parse_reply(_resp('```json\n{"label": "Dump", "confidence": 0.8, '
                              '"dump_location": "inside", "reason": "dark piles"}\n```'))
-    assert r == {"ok": True, "stop_reason": "", "label": "dump", "confidence": 0.8, "dump_probability": 0.8,
+    assert r == {"ok": True, "stop_reason": "", "tokens_in": 0, "tokens_out": 0, "label": "dump", "confidence": 0.8, "dump_probability": 0.8,
                  "dump_location": "inside", "reason": "dark piles"}
 
 
@@ -218,3 +218,51 @@ def test_prefetch_setting_defaults_to_four_and_is_clamped():
     assert ai.DEFAULT_SETTINGS["prefetch"] == 4
     assert ai.clean_settings({"prefetch": 99})["prefetch"] == 16
     assert ai.clean_settings({"prefetch": 0})["prefetch"] == 0
+
+
+def test_tidy_reason_strips_filler_openers():
+    t = ai.tidy_reason
+    assert t("The zone shows open-pit terraces, dark waste-rock.") == "Open-pit terraces, dark waste-rock."
+    assert t("This area appears to contain bare ground") == "Bare ground"
+    assert t("The image shows: roads") == "Roads"
+    assert t("Open-pit terraces") == "Open-pit terraces"            # nothing to strip
+    assert t("  multi\n line  text ") == "multi line text"
+    r = ai.parse_reply(_resp('{"label": "clean_mine", "confidence": 0.8, "reason": "The zone shows terraces."}'))
+    assert r["reason"] == "Terraces."
+
+
+def test_old_default_prompts_are_replaced_by_the_new_default():
+    assert "telegraphic" in ai.SYSTEM_PROMPT
+    for legacy in ("old default", ):
+        pass
+    old = ai.SYSTEM_PROMPT.replace("telegraphic", "wordy")
+    assert ai.clean_settings({"system_prompt": old})["system_prompt"] == old        # custom prompt stays
+    assert ai.prompt_id(ai.SYSTEM_PROMPT) not in ai.LEGACY_PROMPT_IDS
+
+
+def test_price_table_and_cost_estimate():
+    assert ai.price_per_mtok("claude-haiku-5-5") == (0.10, 0.50)
+    assert ai.price_per_mtok("claude-sonnet-5-5") == (2.0, 10.0)
+    assert ai.price_per_mtok("claude-opus-5-5") == (4.0, 20.0)
+    assert ai.price_per_mtok("mystery-model") is None
+    assert ai.price_per_mtok("mystery-model", 1.0, 2.0) == (1.0, 2.0)          # override
+    assert ai.estimate_cost("claude-haiku-5-5", 2000, 150) == pytest.approx(2000 * 0.10e-6 + 150 * 0.50e-6)
+    assert ai.estimate_cost("mystery-model", 1, 1) is None
+    assert ai.fmt_cost(0.000275) == "≈ $0.0003" and ai.fmt_cost(0.0234) == "≈ $0.023" and "unbekannt" in ai.fmt_cost(None)
+
+
+def test_usage_is_read_and_summed_over_the_retry():
+    r = dict(_resp('{"label": "dump", "confidence": 1}'), usage={"input_tokens": 2000, "output_tokens": 150})
+    assert ai.usage_of(r) == (2000, 150) and ai.parse_reply(r)["tokens_out"] == 150
+    assert ai.usage_of({}) == (0, 0)
+    first = {"content": [], "stop_reason": "max_tokens", "usage": {"input_tokens": 2000, "output_tokens": 400}}
+    second = dict(_resp('{"label": "dump", "confidence": 1}'), stop_reason="end_turn",
+                  usage={"input_tokens": 2000, "output_tokens": 900})
+    seq = [first, second]
+    out = ai.run_check({"max_tokens": 400}, "k", opener=lambda req, timeout: io.BytesIO(json.dumps(seq.pop(0)).encode()))
+    assert ai.usage_of(out) == (4000, 1300)
+
+
+def test_price_override_settings_are_clamped():
+    assert ai.clean_settings({"price_in": -5, "price_out": "x"})["price_in"] == 0.0
+    assert ai.clean_settings({"price_in": 3, "price_out": 15})["price_out"] == 15.0

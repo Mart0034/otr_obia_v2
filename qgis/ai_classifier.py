@@ -79,8 +79,15 @@ the polygon), or "none".
 Reply with ONLY a JSON object:
 {"label": "<label>", "confidence": <0..1, how sure you are of the label>, \
 "dump_probability": <0..1, probability that a tire dump is present in the zone>, \
-"dump_location": "inside|partial|nearby|none", "reason": "<one or two sentences>"}""" % ", ".join(LABELS)
+"dump_location": "inside|partial|nearby|none", "reason": "<max 20 words>"}
 
+The reason must be telegraphic: only what is visible and why it decides the label, e.g. \
+"Open-pit terraces, dark waste-rock slopes, no tire patterns." Never start with filler such as \
+"The zone shows", "The image shows", "This area contains" or "I can see".""" % ", ".join(LABELS)
+
+
+# prompt_id() früherer Standard-Prompts (vor dem Kürzen der Begründung)
+LEGACY_PROMPT_IDS = {"1a72a531", "af179aa7", "bb221802"}
 
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
@@ -97,6 +104,8 @@ DEFAULT_SETTINGS = {
     "draw_ring": True,
     "timeout_s": 90,
     "log_path": LOG_PATH,
+    "price_in": 0.0,              # USD je Mio. Eingabe-Token; 0 = Preistabelle des Modells
+    "price_out": 0.0,
     "prefetch": 4,                # so viele Standorte vor dem aktuellen werden schon vorab eingeschätzt (Auto)
     "auto_next": False,           # nach Annehmen/Ablehnen den nächsten Standort automatisch einschätzen
 }
@@ -123,6 +132,13 @@ def clean_settings(raw):
     for key in ("model", "system_prompt", "log_path"):
         if isinstance(raw.get(key), str) and raw[key].strip():
             out[key] = raw[key].strip() if key != "system_prompt" else raw[key]
+    if prompt_id(out["system_prompt"]) in LEGACY_PROMPT_IDS:   # früherer Standard-Prompt -> neuer Standard
+        out["system_prompt"] = SYSTEM_PROMPT
+    for key in ("price_in", "price_out"):
+        try:
+            out[key] = max(0.0, min(1000.0, float(raw[key])))
+        except (KeyError, TypeError, ValueError):
+            pass
     if raw.get("effort") in EFFORTS:
         out["effort"] = raw["effort"]
     if raw.get("thinking") in ("default", "off"):
@@ -194,6 +210,19 @@ def build_payload(image_b64, media_type="image/png", context="", model=DEFAULT_M
     return payload
 
 
+_FILLER = re.compile(r"^\s*(?:the|this)\s+(?:zone|area|image|view|site|scene|polygon|map|region)"
+                     r"(?:\s+\w+)?\s+(?:shows?|contains?|displays?|appears?\s+to\s+(?:show|contain)|"
+                     r"looks?\s+like|is\s+showing|depicts?)\s*[:,]?\s*", re.I)
+
+
+def tidy_reason(text):
+    """Füllwörter am Anfang ('The zone shows ...') entfernen und den Satz groß beginnen lassen -
+    auch wenn ein älterer gespeicherter Prompt sie noch erzeugt."""
+    text = " ".join(str(text).split())
+    cut = _FILLER.sub("", text)
+    return (cut[:1].upper() + cut[1:]) if cut != text and cut else text
+
+
 def parse_reply(response):
     """Messages-API-Antwort -> {'label','confidence','dump_location','reason'}.
     Toleriert Text vor/nach dem JSON (und Code-Zäune); bei Müll label='unsure'."""
@@ -217,9 +246,10 @@ def parse_reply(response):
     except (KeyError, TypeError, ValueError):      # älterer Prompt ohne das Feld
         dump_p = conf if label == "dump" else (1.0 - conf if label.startswith("clean") else 0.5)
     return {"ok": bool(data), "stop_reason": response.get("stop_reason", ""),
+            "tokens_in": usage_of(response)[0], "tokens_out": usage_of(response)[1],
             "label": label, "confidence": conf, "dump_probability": dump_p,
             "dump_location": str(data.get("dump_location", "")),
-            "reason": str(data.get("reason", text.strip() if not data else ""))}
+            "reason": tidy_reason(data.get("reason", text.strip() if not data else ""))}
 
 
 def _call_retrying(payload, api_key, timeout, opener, sleep, tries=4):
@@ -233,14 +263,55 @@ def _call_retrying(payload, api_key, timeout, opener, sleep, tries=4):
             sleep(2 ** (attempt + 1))
 
 
+# USD je 1 Mio. Token (Eingabe, Ausgabe) laut Anthropic-Preisseite; Thinking zählt als Ausgabe.
+# Reihenfolge: spezifischere Namen zuerst. Preise können sich ändern - in den Einstellungen überschreibbar.
+PRICES = (("haiku-5-5", 0.10, 0.50), ("haiku-4-5", 1.0, 5.0), ("sonnet-5-5", 2.0, 10.0),
+          ("sonnet-5", 2.0, 10.0), ("sonnet-4-6", 3.0, 15.0), ("opus-5-5", 4.0, 20.0),
+          ("opus-5", 5.0, 25.0), ("opus-4", 5.0, 25.0), ("fable-5", 10.0, 50.0))
+
+
+def price_per_mtok(model, override_in=0.0, override_out=0.0):
+    """(Eingabe, Ausgabe) in USD je Mio. Token; override > 0 ersetzt den Tabellenwert; None = unbekannt."""
+    if override_in > 0 and override_out > 0:
+        return override_in, override_out
+    for name, p_in, p_out in PRICES:
+        if name in model:
+            return p_in, p_out
+    return None
+
+
+def usage_of(response):
+    """(Eingabe-, Ausgabe-Token) einer Antwort; bei wiederholter Anfrage die Summe beider."""
+    u = response.get("usage") or {}
+    inp, out = int(u.get("input_tokens", 0) or 0), int(u.get("output_tokens", 0) or 0)
+    extra = response.get("_usage_before") or (0, 0)
+    return inp + extra[0], out + extra[1]
+
+
+def estimate_cost(model, tokens_in, tokens_out, override_in=0.0, override_out=0.0):
+    """Geschätzte Kosten in USD (None, wenn der Preis des Modells unbekannt ist)."""
+    price = price_per_mtok(model, override_in, override_out)
+    if price is None:
+        return None
+    return (tokens_in * price[0] + tokens_out * price[1]) / 1e6
+
+
+def fmt_cost(usd):
+    if usd is None:
+        return "Preis unbekannt"
+    return f"≈ ${usd:.4f}" if usd < 0.01 else f"≈ ${usd:.3f}"
+
+
 def run_check(payload, api_key, timeout=90, opener=urllib.request.urlopen, sleep=time.sleep):
     """Anfrage senden; endet sie wegen max_tokens ohne lesbare Antwort (Thinking hat die Tokens
     verbraucht), einmal mit dem 4-fachen Limit (höchstens 32000) wiederholen."""
     resp = _call_retrying(payload, api_key, timeout, opener, sleep)
     if not parse_reply(resp)["ok"] and resp.get("stop_reason") == "max_tokens":
         bigger = dict(payload, max_tokens=min(32000, payload["max_tokens"] * 4))
+        first = usage_of(resp)
         resp = _call_retrying(bigger, api_key, timeout, opener, sleep)
         resp["_retried_with"] = bigger["max_tokens"]
+        resp["_usage_before"] = first                  # die erste, abgeschnittene Anfrage wurde auch berechnet
     return resp
 
 
@@ -307,13 +378,13 @@ try:  # außerhalb von QGIS (Tests) nicht verfügbar
     from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QSize, Qt, QTimer, QVariant
     from qgis.PyQt.QtGui import QColor, QPainter, QPen, QPolygonF
     from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget,
-                                     QDoubleSpinBox, QFormLayout, QGridLayout, QInputDialog, QLabel,
-                                     QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout,
+                                     QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QInputDialog, QLabel,
+                                     QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QTextBrowser, QVBoxLayout,
                                      QWidget)
     IN_QGIS = True
 except ImportError:
     IN_QGIS = False
-    QDockWidget = QDialog = object
+    QDockWidget = QDialog = QTextBrowser = object
 
 SETTINGS_KEY = "otr_obia/anthropic_api_key"
 PREFS_KEY = "otr_obia/ai_classifier_prefs"
@@ -426,6 +497,13 @@ def _image_png(image, max_edge=MAX_EDGE_PX):
     return bytes(data)
 
 
+class _Out(QTextBrowser):  # pragma: no cover - braucht QGIS
+    """Ergebnistext mit automatischem Zeilenumbruch und Scrollleiste - nichts wird mehr abgeschnitten."""
+
+    def setText(self, html):
+        self.setHtml(html)
+
+
 class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
     def __init__(self, parent, settings):
         super().__init__(parent)
@@ -489,6 +567,16 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
         self.prefetch.setToolTip("Nur im Auto-Modus: so viele Standorte vor dem aktuellen werden parallel schon "
                                  "eingeschätzt (0 = aus). Übersprungene/selbst entschiedene kosten trotzdem eine Anfrage.")
         form.addRow("Vorab einschätzen (Standorte)", self.prefetch)
+        self.price_in = QDoubleSpinBox()
+        self.price_in.setRange(0.0, 1000.0)
+        self.price_in.setDecimals(3)
+        self.price_in.setValue(settings["price_in"])
+        self.price_out = QDoubleSpinBox()
+        self.price_out.setRange(0.0, 1000.0)
+        self.price_out.setDecimals(3)
+        self.price_out.setValue(settings["price_out"])
+        form.addRow("Preis Eingabe $/Mio. Token (0 = Tabelle)", self.price_in)
+        form.addRow("Preis Ausgabe $/Mio. Token (0 = Tabelle)", self.price_out)
         self.log_path = QLineEdit(settings["log_path"])
         form.addRow("Log-Datei", self.log_path)
         self.prompt = QPlainTextEdit(settings["system_prompt"])
@@ -516,7 +604,7 @@ class SettingsDialog(QDialog):  # pragma: no cover - braucht QGIS
             "system_prompt": self.prompt.toPlainText(), "radius_m": self.radius.value(),
             "max_image_px": self.px.value(), "min_view_m": self.min_view.value(),
             "draw_ring": self.ring.isChecked(), "timeout_s": self.timeout.value(),
-            "prefetch": self.prefetch.value(), "log_path": self.log_path.text()})
+            "prefetch": self.prefetch.value(), "price_in": self.price_in.value(), "price_out": self.price_out.value(), "log_path": self.log_path.text()})
 
 
 class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
@@ -551,13 +639,21 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.banner.setMinimumHeight(48)
         self.banner.hide()
         grid.addWidget(self.banner, 4, 0, 1, 2)
-        self.out = QLabel("")
-        self.out.setWordWrap(True)
-        self.out.setTextInteractionFlags(_qt_enum("TextInteractionFlag", "TextSelectableByMouse"))
+        self.out = _Out()
+        self.out.setReadOnly(True)
+        self.out.setMinimumHeight(130)
+        self.out.setFrameShape(QFrame.Shape.NoFrame if hasattr(QFrame, "Shape") else QFrame.NoFrame)
         grid.addWidget(self.out, 5, 0, 1, 2)
+        self.cost = QLabel("")
+        self.cost.setStyleSheet("color: gray; font-size: 11px;")
+        self.cost.setToolTip("Token dieses Checks, geschätzte Kosten und Summe seit dem Öffnen des Fensters "
+                             "(inkl. vorab eingeschätzter Standorte). Preise: Tabelle im Skript, in den "
+                             "Einstellungen überschreibbar.")
+        grid.addWidget(self.cost, 6, 0, 1, 2)
+        self.total = {"n": 0, "usd": 0.0, "unknown": False}
         note_btn = QPushButton("Als Notiz übernehmen")
         note_btn.clicked.connect(lambda _=False: self.to_note())
-        grid.addWidget(note_btn, 7, 0, 1, 2)
+        grid.addWidget(note_btn, 8, 0, 1, 2)
         self.accept_btn = QPushButton("✔ Annehmen (ins gpkg)")
         self.deny_btn = QPushButton("✖ Ablehnen")
         self.accept_btn.clicked.connect(lambda _=False: self.decide_ai(True))
@@ -565,8 +661,8 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         for b in (self.accept_btn, self.deny_btn):
             b.setMinimumHeight(30)
             b.hide()
-        grid.addWidget(self.accept_btn, 6, 0)
-        grid.addWidget(self.deny_btn, 6, 1)
+        grid.addWidget(self.accept_btn, 7, 0)
+        grid.addWidget(self.deny_btn, 7, 1)
         self.pending = None                    # {"layer", "fid", "res"} bis angenommen/abgelehnt
         self.results = {}                      # fid -> geparstes Ergebnis (auch vorab eingeschätzte)
         self.errors = {}                       # fid -> Fehlertext (kein automatisches Wiederholen)
@@ -579,14 +675,14 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.auto.toggled.connect(self._auto_toggled)
         self.model.currentTextChanged.connect(lambda _t: self._ui_changed())
         self.radius.valueChanged.connect(lambda _v: self._ui_changed())
-        grid.addWidget(self.auto, 9, 0, 1, 2)
+        grid.addWidget(self.auto, 10, 0, 1, 2)
         self.timer = QTimer(self)              # prüft, ob im Review-Fenster ein neuer Standort dran ist
         self.timer.setInterval(300)
         self.timer.timeout.connect(self._auto_tick)
         self.timer.start()
         gear = QPushButton("⚙ Einstellungen")
         gear.clicked.connect(lambda _=False: self.open_settings())
-        grid.addWidget(gear, 8, 0, 1, 2)
+        grid.addWidget(gear, 9, 0, 1, 2)
         self.setWidget(body)
         iface.addDockWidget(_qt_enum("DockWidgetArea", "RightDockWidgetArea"), self)
 
@@ -720,6 +816,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
             else:
                 res = parse_reply(result)
                 self.results[fid] = res
+                self._add_total(res)
                 try:
                     log_row(cfg["log_path"], {**info, "model": payload["model"], "effort": cfg["effort"],
                                               "thinking": cfg["thinking"], "prompt_id": prompt_id(cfg["system_prompt"]),
@@ -753,6 +850,26 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
                 b.hide()
             self.out.setText("Frage Claude ..." if fid in self.inflight else "")
 
+    def _cost_of(self, res):
+        cfg = self.settings
+        return estimate_cost(cfg["model"], res["tokens_in"], res["tokens_out"], cfg["price_in"], cfg["price_out"])
+
+    def _add_total(self, res):
+        usd = self._cost_of(res)
+        self.total["n"] += 1
+        if usd is None:
+            self.total["unknown"] = True
+        else:
+            self.total["usd"] += usd
+
+    def _cost_text(self, res=None):
+        tot = self.total
+        line = f"Σ {tot['n']} Checks " + ("(Preis unbekannt)" if tot["unknown"] and not tot["usd"]
+                                          else fmt_cost(tot["usd"]))
+        if res is None:
+            return line
+        return (f"{res['tokens_in']:,} ein / {res['tokens_out']:,} aus  {fmt_cost(self._cost_of(res))}\n" + line)
+
     def _show(self, fid, layer):
         """Ergebnis (oder Fehler) von fid in Kasten und Text anzeigen; bei lesbarem Ergebnis auch
         Annehmen/Ablehnen anbieten."""
@@ -761,6 +878,7 @@ class AiPanel(QDockWidget):  # pragma: no cover - braucht QGIS
         self.accept_btn.hide()
         self.deny_btn.hide()
         res = self.results.get(fid)
+        self.cost.setText(self._cost_text(res))
         if res is None:
             self.banner.hide()
             self.out.setText(f"Fehler: {self.errors.get(fid, '?')}")
