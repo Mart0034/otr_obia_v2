@@ -71,7 +71,7 @@
     const maxShare = Math.max(...DATA.stats.rounds.map((r) => r.confirmed / r.reviewed));
     box.innerHTML = order.filter((k) => by[k]).map((k) => {
       const r = by[k], share = r.confirmed / r.reviewed;
-      return `<div class="bar"><span>${t("round_" + k)}</span><span class="track"><span class="fill" data-w="${Math.min(100, share * 100 * 4)}"></span></span><span class="v">${t("n_of", { c: r.confirmed, n: nf(r.reviewed) })}</span></div>`;
+      return `<div class="bar"><span>${t("round_" + k)}</span><span class="track"><span class="fill" data-w="${Math.min(100, (share / maxShare) * 88)}"></span></span><span class="v">${t("n_of", { c: r.confirmed, n: nf(r.reviewed) })}</span></div>`;
     }).join("");
     requestAnimationFrame(() => $$(".fill", box).forEach((f) => (f.style.width = f.dataset.w + "%")));
   }
@@ -142,6 +142,7 @@
     els.forEach((e) => io.observe(e));
   }
   async function load() {
+    if (window.OTR_DATA) { Object.assign(DATA, window.OTR_DATA); return; }          // data/data.js (also works from file://)
     const get = (f) => fetch("data/" + f).then((r) => { if (!r.ok) throw new Error(f); return r.json(); });
     const [stats, found, known, cand, mines] = await Promise.all(["stats.json", "found.json", "known.json", "candidates.json", "mines.json"].map(get));
     Object.assign(DATA, { stats, found, known, cand, mines });
@@ -156,7 +157,7 @@
     try {
       await load(); initMap(); applyI18n(); animateCounters();
     } catch (e) {
-      const m = $("#mapEl"); if (m) m.textContent = "Data could not be loaded (" + e.message + "). Serve the page over http(s), not file://.";
+      const m = $("#mapEl"); if (m) m.textContent = "Data could not be loaded (" + e.message + ").";
     }
     initReveal();
   });

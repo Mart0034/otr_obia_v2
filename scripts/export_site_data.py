@@ -171,6 +171,11 @@ def main(argv=None):
                                   if south <= f["geometry"]["coordinates"][1] < north)),
         }
     json.dump(st, open(os.path.join(args.out, "stats.json"), "w"), indent=1, ensure_ascii=False)
+    # Alle Daten zusätzlich als eine JS-Datei: so läuft die Seite auch direkt aus dem Ordner (file://), nicht nur über http(s)
+    bundle = {"stats": st, "found": found, "known": known_cells, "cand": cand_cells,
+              "mines": json.load(open(os.path.join(args.out, "mines.json")))}
+    with open(os.path.join(args.out, "data.js"), "w") as f:
+        f.write("window.OTR_DATA = " + json.dumps(bundle, separators=(",", ":"), ensure_ascii=False) + ";\n")
     print(json.dumps({k: st[k] for k in ("reviewed", "confirmed", "hit_rate", "ai_high", "ai_low", "auto_clean",
                                           "spot_checks", "spot_misses", "known_polygons", "mines", "candidates",
                                           "found_by_how")}, indent=1))

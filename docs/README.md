@@ -9,7 +9,7 @@ The page is then at `https://<user>.github.io/<repo>/`.
 
 ## Local preview
 ```bash
-cd docs && python3 -m http.server 8000     # then open http://localhost:8000
+cd docs && python3 -m http.server 8000     # then open http://localhost:8000 (opening index.html directly also works)
 ```
 
 ## Data (`docs/data/`)
