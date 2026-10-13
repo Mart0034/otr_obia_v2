@@ -2,7 +2,7 @@
 # One review-and-retrain cycle in a single command (run on the VPS in /home/container).
 #
 #   bash scripts/run_cycle.sh TAG --reviewed rev_in/my_reviews.gpkg --prev all4 --new all5 [--compare out_px12_qv4]
-#       [--extra-root DIR] [--ops-extra FILE]   # more tile folders (made by sites_from_vector.py) and their mine/quarry outlines
+#       [--extra-root DIR] [--ops-extra FILE] [--rank-by score|mean_proba|max_proba] [--top N] [--sample-top N]   # more tile folders (made by sites_from_vector.py) and their mine/quarry outlines
 #   bash scripts/run_cycle.sh TAG --labels all4 [--compare out_px12_qv4]       # same labels, e.g. a speed test
 #
 # What it does: reviews -> labels (reviewed_to_labels, merged with the earlier labels), splits the quarry tiles
@@ -22,7 +22,7 @@ Q=data/sites_quarries
 TILE_CACHE=data/tile_cache
 
 TAG=$1; shift
-REVIEWED=""; PREV=""; NEW=""; LABELS=""; COMPARE=""; EXTRA_ROOT=""; OPS_EXTRA=""; CACHE_FLAG="--tile-cache-dir $TILE_CACHE"
+REVIEWED=""; PREV=""; NEW=""; LABELS=""; COMPARE=""; EXTRA_ROOT=""; OPS_EXTRA=""; RANK_BY="score"; TOP=500; SAMPLE_TOP=2500; CACHE_FLAG="--tile-cache-dir $TILE_CACHE"
 while [ $# -gt 0 ]; do
   case $1 in
     --reviewed) REVIEWED=$2; shift 2;;
@@ -32,6 +32,9 @@ while [ $# -gt 0 ]; do
     --compare) COMPARE=$2; shift 2;;
     --extra-root) EXTRA_ROOT=$2; shift 2;;
     --ops-extra) OPS_EXTRA=$2; shift 2;;
+    --rank-by) RANK_BY=$2; shift 2;;
+    --top) TOP=$2; shift 2;;
+    --sample-top) SAMPLE_TOP=$2; shift 2;;
     --no-cache) CACHE_FLAG=""; shift;;
     *) echo "unknown argument $1"; exit 2;;
   esac
@@ -126,10 +129,10 @@ grep -c "aus dem Zwischenspeicher geladen" log_q$TAG.txt | sed 's/^/tiles loaded
 
 stamp "=== 4. candidate lists (top 2% area per mine, rank by size x mean score, with context)"
 COMMONC="--segments $RUN/segments_classified.gpkg --preselect --area-pct 2 --labels $OUT/labels_${LABELS}_for_eval.gpkg --exclude-known \
-  --rank-by score --min-area-m2 2500 --max-site-m2 40000 --max-urban-frac 0.3 --exclude-areas $OUT/negatives_${LABELS}_clean.gpkg,$OUT/ignore_reviewed_$LABELS.geojson \
+  --rank-by $RANK_BY --min-area-m2 2500 --max-site-m2 40000 --max-urban-frac 0.3 --exclude-areas $OUT/negatives_${LABELS}_clean.gpkg,$OUT/ignore_reviewed_$LABELS.geojson \
   --operations data/mine_boundaries.gpkg,data/northChileQuarrys.geojson${OPS_EXTRA:+,$OPS_EXTRA}"
-$PY src/candidate_sites.py $COMMONC --top 2500 --sample-every 5 --out $RUN/candidate_sites_${TAG}_sample5.gpkg > log_${TAG}_sample5.txt 2>&1
-$PY src/candidate_sites.py $COMMONC --top 500 --out $RUN/candidate_sites_${TAG}_top500.gpkg > log_${TAG}_top500.txt 2>&1
+$PY src/candidate_sites.py $COMMONC --top $SAMPLE_TOP --sample-every 5 --out $RUN/candidate_sites_${TAG}_sample5.gpkg > log_${TAG}_sample5.txt 2>&1
+$PY src/candidate_sites.py $COMMONC --top $TOP --out $RUN/candidate_sites_${TAG}_top500.gpkg > log_${TAG}_top500.txt 2>&1
 phase "4 candidate lists"
 
 stamp "=== 5. check on the 138 known mines"
