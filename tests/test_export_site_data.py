@@ -30,9 +30,19 @@ def test_cells_merge_points_and_never_keep_exact_coordinates():
 def test_how_found_and_stats():
     assert ex.how_found({"ai_dump_p": 0.85}) == "ai" and ex.how_found({"ai_dump_p": 0.2}) == "human"
     assert ex.how_found({"ai_dump_p": None}) == "human"
-    d = pd.DataFrame({"round": ["v4"] * 4, "review": ["dump", "clean", "clean", "partial"],
-                      "ai_dump_p": [0.9, 0.05, 0.8, 0.1], "ai_decision": ["accepted", "spot_ok", "spot_miss", "auto_clean"]})
-    st = ex.stats_from(d)
-    assert st["reviewed"] == 4 and st["confirmed"] == 2
+    d = pd.DataFrame({"round": ["r1"] * 5, "review": ["dump", "clean", "clean", "partial", "clean"],
+                      "ai_dump_p": [0.9, 0.05, 0.8, 0.1, 0.02],
+                      "ai_decision": ["accepted", "spot_ok", "spot_miss", "auto_clean", "auto_clean"]})
+    d["auto"] = d["ai_decision"] == "auto_clean"
+    st = ex.stats_from(d, [])
+    assert st["reviewed"] == 3 and st["confirmed"] == 1                 # nur von Menschen angesehene Standorte
+    assert st["auto_clean"] == 2
     assert st["ai_high"]["n"] == 2 and st["ai_high"]["confirmed"] == 1
     assert st["spot_checks"] == 2 and st["spot_misses"] == 0            # spot_miss zählt nur, wenn heute dump/partial
+
+
+def test_round_table_counts_only_human_checked(tmp_path):
+    d = pd.DataFrame({"round": ["r1"] * 4, "listed": [10] * 4, "review": ["dump", "clean", "clean", "unsure"],
+                      "auto": [False, False, True, False]})
+    rows = ex.round_table(["r1:mines=x.gpkg"], d)
+    assert rows == [{"round": "r1", "tag": "mines", "listed": 10, "checked": 3, "auto": 1, "confirmed": 1}]

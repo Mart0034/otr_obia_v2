@@ -12,7 +12,7 @@ stehen. Dieses Skript schreibt deshalb nur:
 
 Nutzung (Pfade der geprüften Dateien anpassen):
     python scripts/export_site_data.py --out docs/data \\
-        --reviewed v4=output_corr/candidate_sites_v4_top500_corrected.gpkg ... \\
+        --reviewed r1:mines=a.gpkg r2:quarries=b.gpkg ... \\
         --candidates output_corr/candidate_sites_v8_newchile_only.gpkg \\
         --known data/dump_labels.gpkg --mines data/mine_boundaries.gpkg
 """
@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 GRID_DEG = 0.01
+RECENT_ROUNDS = ("r07", "r08", "r09")      # Runden mit dem verbesserten KI-Prompt (v6, Neu-Chile, v7)
 REGIONS = (("north", "Norte (Arica - Tarapacá)", -22.6, -17.0),
            ("atacama", "Atacama (Antofagasta)", -25.7, -22.6),
            ("south", "Sur (Atacama - Coquimbo)", -33.0, -25.7))
@@ -55,7 +56,8 @@ def round5(p):
 
 def how_found(row):
     """Wie wurde der Fund gemacht? ai: das KI-Urteil lag bei 50 % oder mehr (System + KI, Mensch bestätigt);
-    human: die KI war unsicher/dagegen, der Mensch hat es erkannt."""
+    human: die KI war unsicher/dagegen - oder es gab die KI-Prüfung noch nicht (frühe Runden) - und der Mensch hat
+    es erkannt."""
     p = row.get("ai_dump_p")
     return "ai" if p is not None and not pd.isna(p) and float(p) >= 0.5 else "human"
 
@@ -77,39 +79,62 @@ def cells(df, props):
 
 
 def load_reviewed(spec):
+    """spec: Einträge "Runde:Art=Datei" in zeitlicher Reihenfolge (z.B. "r1:mines=a.gpkg"). Gibt die Standorte aller
+    Runden zurück (ein Standort, der in mehreren Listen steht, zählt einmal: die spätere Beurteilung gilt)."""
     frames = []
     for item in spec:
-        label, path = item.split("=", 1)
+        head, path = item.split("=", 1)
+        label, _, tag = head.partition(":")
         g = gpd.read_file(path, layer="candidate_sites")
         c = g.to_crs(4326).geometry.centroid
         g["lon"], g["lat"] = c.x, c.y
-        g["round"] = label
+        g["round"], g["tag"], g["listed"] = label, tag or "", len(g)
+        for col in ("ai_dump_p", "ai_decision"):
+            if col not in g.columns:
+                g[col] = None
         frames.append(pd.DataFrame(g.drop(columns="geometry")))
     d = pd.concat(frames, ignore_index=True)
     d["review"] = d["review"].fillna("").astype(str).str.lower()
-    return d[d["review"].isin(["dump", "partial", "clean", "unsure"])].copy()
+    d["ai_decision"] = d["ai_decision"].fillna("").astype(str)
+    d = d[d["review"].isin(["dump", "partial", "clean", "unsure"])].copy()
+    d["_key"] = list(zip(d["lon"].round(4), d["lat"].round(4), d["area_m2"].round(-1)))
+    d = d.drop_duplicates("_key", keep="last").drop(columns="_key")
+    d["auto"] = d["ai_decision"] == "auto_clean"          # vom Plugin automatisch verworfen, nicht von einem Menschen gesehen
+    return d
 
 
-def stats_from(reviewed):
+def round_table(frames_spec, reviewed):
+    """Pro Runde: Listenlänge, davon von einem Menschen geprüft, automatisch verworfen, bestätigt."""
+    order = [item.split("=", 1)[0] for item in frames_spec]
+    rows = []
+    for head in order:
+        label, _, tag = head.partition(":")
+        g = reviewed[reviewed["round"] == label]
+        human = g[~g["auto"]]
+        rows.append({"round": label, "tag": tag, "listed": int(g["listed"].iloc[0]) if len(g) else 0,
+                     "checked": int(len(human)), "auto": int(g["auto"].sum()),
+                     "confirmed": int(human["review"].isin(["dump", "partial"]).sum())})
+    return rows
+
+
+def stats_from(reviewed, rounds):
     d = reviewed[reviewed["review"].isin(["dump", "partial", "clean"])].copy()
     d["pos"] = d["review"].isin(["dump", "partial"])
-    rounds = []
-    for label, g in d.groupby("round", sort=True):
-        rounds.append({"round": label, "reviewed": int(len(g)), "confirmed": int(g["pos"].sum())})
+    human = reviewed[~reviewed["auto"]]
+    n_human, n_pos = int(len(human)), int(human["review"].isin(["dump", "partial"]).sum())
     ai = d[d["ai_dump_p"].notna()]
     hi, lo = ai[ai["ai_dump_p"] >= 0.7], ai[ai["ai_dump_p"] < 0.3]
-    recent = ai[ai["round"].isin(["v6", "chile", "v7"])]
+    recent = ai[ai["round"].isin(RECENT_ROUNDS)]
     rhi = recent[recent["ai_dump_p"] >= 0.7]
     spot = reviewed[reviewed["ai_decision"].isin(["spot_ok", "spot_miss"])]
     spot_miss = int(((spot["ai_decision"] == "spot_miss") & spot["review"].isin(["dump", "partial"])).sum())
     return {
-        "reviewed": int(len(d)), "confirmed": int(d["pos"].sum()),
-        "hit_rate": round(float(d["pos"].mean()), 4), "rounds": rounds,
+        "reviewed": n_human, "confirmed": n_pos, "hit_rate": round(n_pos / max(n_human, 1), 4), "rounds": rounds,
         "ai_high": {"n": int(len(hi)), "confirmed": int(hi["pos"].sum()), "share": round(float(hi["pos"].mean()), 3)},
         "ai_low": {"n": int(len(lo)), "confirmed": int(lo["pos"].sum()), "share": round(float(lo["pos"].mean()), 4)},
         "ai_high_recent": {"n": int(len(rhi)), "confirmed": int(rhi["pos"].sum()),
                            "share": round(float(rhi["pos"].mean()), 3) if len(rhi) else None},
-        "auto_clean": int((reviewed["ai_decision"] == "auto_clean").sum()),
+        "auto_clean": int(reviewed["auto"].sum()),
         "spot_checks": int(len(spot)), "spot_misses": spot_miss,
     }
 
@@ -119,6 +144,7 @@ def main(argv=None):
     p.add_argument("--out", default="docs/data")
     p.add_argument("--reviewed", nargs="+", required=True, help="Runde=Datei (geprüfte Kandidatenlisten)")
     p.add_argument("--candidates", help="Noch ungeprüfte Kandidaten (z.B. v8 nur Neu-Chile).")
+    p.add_argument("--open-round", help="Art der noch offenen Runde (zeigt sie im Diagramm als offen), z.B. chile_all.")
     p.add_argument("--known", required=True, help="Von Hand markierte Halden-Polygone (dump_labels.gpkg).")
     p.add_argument("--mines", required=True, help="Umrisse der bekannten Minen.")
     args = p.parse_args(argv)
@@ -153,7 +179,12 @@ def main(argv=None):
     mines = mines[~mines.geometry.is_empty].to_crs(4326)[["geometry"]]
     mines.to_file(os.path.join(args.out, "mines.json"), driver="GeoJSON", COORDINATE_PRECISION=4)
 
-    st = stats_from(reviewed)
+    rounds = round_table(args.reviewed, reviewed)
+    if args.open_round:
+        n_open = int(sum(f["properties"]["n"] for f in cand_cells["features"]))
+        rounds.append({"round": "r%02d" % (len(rounds) + 1), "tag": args.open_round, "listed": n_open, "checked": 0,
+                       "auto": 0, "confirmed": 0, "open": True})
+    st = stats_from(reviewed, rounds)
     st["known_polygons"] = int(len(known))
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
@@ -166,7 +197,7 @@ def main(argv=None):
             "name": name, "south": south, "north": north,
             "known": in_region(kdf), "found": in_region(pos),
             "found_ai": in_region(pos[pos["how"] == "ai"]), "found_human": in_region(pos[pos["how"] == "human"]),
-            "reviewed": in_region(reviewed[reviewed["review"].isin(["dump", "partial", "clean"])]),
+            "reviewed": in_region(reviewed[~reviewed["auto"]]),
             "candidates": int(sum(f["properties"]["n"] for f in cand_cells["features"]
                                   if south <= f["geometry"]["coordinates"][1] < north)),
         }

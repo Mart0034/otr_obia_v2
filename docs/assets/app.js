@@ -67,11 +67,13 @@
   /* ---------- chart ---------- */
   function renderChart() {
     const box = $("#chart"); if (!box) return;
-    const order = ["v4", "v5", "v6", "chile", "v7"], by = Object.fromEntries(DATA.stats.rounds.map((r) => [r.round, r]));
-    const maxShare = Math.max(...DATA.stats.rounds.map((r) => r.confirmed / r.reviewed));
-    box.innerHTML = order.filter((k) => by[k]).map((k) => {
-      const r = by[k], share = r.confirmed / r.reviewed;
-      return `<div class="bar"><span>${t("round_" + k)}</span><span class="track"><span class="fill" data-w="${Math.min(100, (share / maxShare) * 88)}"></span></span><span class="v">${t("n_of", { c: r.confirmed, n: nf(r.reviewed) })}</span></div>`;
+    const rs = DATA.stats.rounds, done = rs.filter((r) => !r.open);
+    const maxShare = Math.max(...done.map((r) => r.confirmed / r.checked));
+    box.innerHTML = rs.map((r, i) => {
+      const name = `${t("round_n", { i: i + 1 })} · ${t("tag_" + r.tag)}`;
+      if (r.open) return `<div class="bar open"><span>${name}</span><span class="track"></span><span class="v">${t("chart_open", { n: nf(r.listed) })}</span></div>`;
+      const share = r.confirmed / r.checked, auto = r.auto ? `<small title="${t("chart_auto", { a: nf(r.auto) })}">+${nf(r.auto)} AI</small>` : "";
+      return `<div class="bar"><span>${name}</span><span class="track"><span class="fill" data-w="${Math.min(100, (share / maxShare) * 88)}"></span></span><span class="v">${t("n_of", { c: r.confirmed, n: nf(r.checked) })}${auto}</span></div>`;
     }).join("");
     requestAnimationFrame(() => $$(".fill", box).forEach((f) => (f.style.width = f.dataset.w + "%")));
   }

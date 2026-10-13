@@ -1,59 +1,115 @@
 {
- "reviewed": 2190,
- "confirmed": 67,
- "hit_rate": 0.0306,
+ "reviewed": 1822,
+ "confirmed": 97,
+ "hit_rate": 0.0532,
  "rounds": [
   {
-   "round": "chile",
-   "reviewed": 207,
-   "confirmed": 9
+   "round": "r01",
+   "tag": "mines",
+   "listed": 300,
+   "checked": 51,
+   "auto": 0,
+   "confirmed": 4
   },
   {
-   "round": "v4",
-   "reviewed": 496,
+   "round": "r02",
+   "tag": "quarries",
+   "listed": 500,
+   "checked": 50,
+   "auto": 0,
+   "confirmed": 2
+  },
+  {
+   "round": "r03",
+   "tag": "quarries",
+   "listed": 500,
+   "checked": 129,
+   "auto": 0,
+   "confirmed": 14
+  },
+  {
+   "round": "r04",
+   "tag": "quarries",
+   "listed": 500,
+   "checked": 302,
+   "auto": 0,
+   "confirmed": 11
+  },
+  {
+   "round": "r05",
+   "tag": "atacama",
+   "listed": 500,
+   "checked": 210,
+   "auto": 290,
    "confirmed": 15
   },
   {
-   "round": "v5",
-   "reviewed": 494,
+   "round": "r06",
+   "tag": "atacama",
+   "listed": 500,
+   "checked": 287,
+   "auto": 213,
    "confirmed": 10
   },
   {
-   "round": "v6",
-   "reviewed": 498,
-   "confirmed": 18
+   "round": "r07",
+   "tag": "atacama",
+   "listed": 500,
+   "checked": 275,
+   "auto": 197,
+   "confirmed": 17
   },
   {
-   "round": "v7",
-   "reviewed": 495,
+   "round": "r08",
+   "tag": "chile",
+   "listed": 209,
+   "checked": 183,
+   "auto": 24,
+   "confirmed": 9
+  },
+  {
+   "round": "r09",
+   "tag": "mixed",
+   "listed": 500,
+   "checked": 335,
+   "auto": 165,
    "confirmed": 15
+  },
+  {
+   "round": "r10",
+   "tag": "chile_all",
+   "listed": 500,
+   "checked": 0,
+   "auto": 0,
+   "confirmed": 0,
+   "open": true
   }
  ],
  "ai_high": {
-  "n": 75,
-  "confirmed": 40,
-  "share": 0.533
+  "n": 74,
+  "confirmed": 39,
+  "share": 0.527
  },
  "ai_low": {
-  "n": 2013,
-  "confirmed": 16,
-  "share": 0.0079
+  "n": 2243,
+  "confirmed": 17,
+  "share": 0.0076
  },
  "ai_high_recent": {
-  "n": 42,
-  "confirmed": 29,
-  "share": 0.69
+  "n": 40,
+  "confirmed": 28,
+  "share": 0.7
  },
- "auto_clean": 900,
- "spot_checks": 180,
+ "auto_clean": 889,
+ "spot_checks": 179,
  "spot_misses": 0,
  "known_polygons": 205,
  "mines": 138,
- "found_cells": 63,
+ "found_cells": 93,
  "candidates": 500,
  "found_by_how": {
-  "ai": 47,
-  "human": 20
+  "ai": 46,
+  "human": 51
  },
  "regions": {
   "north": {
@@ -61,10 +117,10 @@
    "south": -22.6,
    "north": -17.0,
    "known": 0,
-   "found": 23,
+   "found": 32,
    "found_ai": 19,
-   "found_human": 4,
-   "reviewed": 730,
+   "found_human": 13,
+   "reviewed": 531,
    "candidates": 204
   },
   "atacama": {
@@ -72,10 +128,10 @@
    "south": -25.7,
    "north": -22.6,
    "known": 205,
-   "found": 23,
-   "found_ai": 16,
-   "found_human": 7,
-   "reviewed": 620,
+   "found": 35,
+   "found_ai": 15,
+   "found_human": 20,
+   "reviewed": 616,
    "candidates": 286
   },
   "south": {
@@ -83,10 +139,10 @@
    "south": -33.0,
    "north": -25.7,
    "known": 0,
-   "found": 21,
+   "found": 30,
    "found_ai": 12,
-   "found_human": 9,
-   "reviewed": 840,
+   "found_human": 18,
+   "reviewed": 675,
    "candidates": 10
   }
  }

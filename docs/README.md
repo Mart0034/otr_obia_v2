@@ -18,8 +18,11 @@ generalised on purpose:** dumps and candidates are rounded to 0.01° cells (abou
 no site IDs, no exact coordinates. Mine outlines are public data. Re-run the script after each review round:
 
 ```bash
-python scripts/export_site_data.py --out docs/data --reviewed v4=... v5=... --candidates <open candidates.gpkg> \
+python scripts/export_site_data.py --out docs/data \
+    --reviewed r1:mines=<file> r2:quarries=<file> ... r9:mixed=<file>      # one entry per review round, oldest first (Name:Art=Datei)\
+    --candidates <open candidates.gpkg> --open-round chile_all \
     --known data/dump_labels.gpkg --mines data/mine_boundaries.gpkg
+# only sites a person looked at are counted per round; sites the AI discarded on its own (ai_decision=auto_clean) are shown as "+ AI"
 ```
 
 ## Notes
