@@ -207,6 +207,13 @@ def main(argv=None):
               "mines": json.load(open(os.path.join(args.out, "mines.json")))}
     with open(os.path.join(args.out, "data.js"), "w") as f:
         f.write("window.OTR_DATA = " + json.dumps(bundle, separators=(",", ":"), ensure_ascii=False) + ";\n")
+    # Versionsnummer an die Skript-Adressen hängen, damit Browser (und GitHub Pages) nie alte Daten/Skripte weiterverwenden
+    import re, time
+    index = os.path.join(os.path.dirname(os.path.abspath(args.out)), "index.html")
+    if os.path.exists(index):
+        html = open(index, encoding="utf-8").read()
+        html = re.sub(r'((?:assets/(?:style\.css|i18n\.js|app\.js)|data/data\.js))(\?v=\w+)?"', r'\1?v=' + time.strftime("%Y%m%d%H%M") + '"', html)
+        open(index, "w", encoding="utf-8").write(html)
     print(json.dumps({k: st[k] for k in ("reviewed", "confirmed", "hit_rate", "ai_high", "ai_low", "auto_clean",
                                           "spot_checks", "spot_misses", "known_polygons", "mines", "candidates",
                                           "found_by_how")}, indent=1))
