@@ -51,11 +51,11 @@
     $$("[data-count]").forEach((el) => { el.dataset.target = s[el.dataset.count]; el.textContent = nf(s[el.dataset.count]); });
     $$("[data-n]").forEach((el) => (el.textContent = nf(c[el.dataset.n] ?? 0)));
     $("#foundSplit").textContent = t("found_split", { ai: nf(c.ai), human: nf(c.human) });
-    const pn = $(".places"); if (pn) pn.textContent = t("places_note", { k: s.known_places });
-    $("#heroGain").innerHTML = t("hero_gain", { x: "<b>" + s.multiple.toLocaleString(LOCALE[lang]) + "×</b>", n: nf(s.reviewed), open: nf(s.candidates) });
+    const pn = $(".places"); if (pn) pn.textContent = t("places_note", { k: s.known_items });
+    $("#heroGain").innerHTML = t("hero_gain", { added: "<b>" + nf(s.found_items) + "</b>", pct: "<b>+" + pct(s.added_share) + "%</b>", known: nf(s.known_items), n: nf(s.reviewed), open: nf(s.candidates) });
     const last = s.growth[s.growth.length - 1];
-    $("#growthBig").textContent = nf(s.known_places) + " → " + nf(last.total);
-    $("#growthText").textContent = t("growth_text", { a: nf(s.known_places), b: nf(last.total), open: nf(s.candidates) });
+    $("#growthBig").textContent = nf(s.known_items) + " → " + nf(last.total);
+    $("#growthText").textContent = t("growth_text", { a: nf(s.known_items), b: nf(last.total), open: nf(s.candidates) });
     const g = s.gain.points, at = (p) => g.find((q) => q.p === p);
     $("#gainText").textContent = t("gain_text", { x: pct(at(0.7).x, 0), y: pct(at(0.7).y, 0), x2: pct(at(0.2).x, 0), y2: pct(at(0.2).y, 0) });
     $("#aiBig").textContent = pct(s.ai_high.share) + " %";
@@ -69,7 +69,7 @@
 
   function renderGrowth() {
     const s = DATA.stats, el = $("#growthChart"); if (!el) return;
-    const pts = [{ label: "0", total: s.known_places }].concat(s.growth.map((g) => ({ label: String(roundNo(g.round)), total: g.total })));
+    const pts = [{ label: "0", total: s.known_items }].concat(s.growth.map((g) => ({ label: String(roundNo(g.round)), total: g.total })));
     const narrow = el.clientWidth && el.clientWidth < 560, W = narrow ? 400 : 760, H = narrow ? 250 : 230, L = 40, R = 18, T = 20, B = 34, max = Math.ceil(Math.max(...pts.map((p) => p.total)) / 20) * 20;
     const x = (i) => L + (i * (W - L - R)) / (pts.length - 1), y = (v) => T + (1 - v / max) * (H - T - B);
     const line = pts.map((p, i) => `${x(i)},${y(p.total)}`).join(" ");

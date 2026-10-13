@@ -78,37 +78,6 @@ def cells(df, props):
     return {"type": "FeatureCollection", "features": feats}
 
 
-PLACE_RADIUS_M = 100          # Funde/Polygone, die näher als 2 x 100 m beieinander liegen, zählen als EIN Ort
-
-
-def place_ids(geoms):
-    """Gruppen-Nummer je Geometrie (EPSG:32719): Geometrien, deren 100-m-Puffer sich berühren, gehören zum selben Ort.
-    Die 205 von Hand gezeichneten Polygone sind kleine Stücke (Median 287 m²) und ergeben nur etwa 35 Orte; ein Fund
-    der Pipeline ist dagegen ein ganzer Standort-Umriss. Ohne diese Zusammenfassung wären die Zahlen nicht vergleichbar."""
-    geoms = gpd.GeoSeries(list(geoms), crs=32719)
-    union = geoms.buffer(PLACE_RADIUS_M).union_all()
-    parts = list(union.geoms) if hasattr(union, "geoms") else [union]
-    ids = np.full(len(geoms), -1)
-    for i, part in enumerate(parts):
-        ids[geoms.intersects(part).values & (ids < 0)] = i
-    return ids
-
-
-def to_places(df, props_first=("how", "kind", "size")):
-    """Funde (eine Zeile je Standort) zu Orten zusammenfassen: how = "ai", wenn ein Standort davon KI-bestätigt war;
-    kind = "dump", wenn einer davon eine ganze Halde war; size = größte; Lage = Mittelpunkt."""
-    pts = gpd.GeoSeries(gpd.points_from_xy(df["lon"], df["lat"]), crs=4326).to_crs(32719)
-    df = df.copy()
-    df["place"] = place_ids(pts)
-    rows = []
-    for _, g in df.groupby("place"):
-        rows.append({"lon": g["lon"].mean(), "lat": g["lat"].mean(),
-                     "how": "ai" if (g["how"] == "ai").any() else "human",
-                     "kind": "dump" if (g["kind"] == "dump").any() else "partial",
-                     "size": max(g["size"], key=["s", "m", "l"].index), "sites": len(g)})
-    return pd.DataFrame(rows)
-
-
 def load_reviewed(spec):
     """spec: Einträge "Runde:Art=Datei" in zeitlicher Reihenfolge (z.B. "r1:mines=a.gpkg"). Gibt die Standorte aller
     Runden zurück (ein Standort, der in mehreren Listen steht, zählt einmal: die spätere Beurteilung gilt)."""
@@ -178,7 +147,7 @@ def growth_curve(pos_sites, rounds, known_places):
             continue
         seen.append(r["round"])
         sub = pos_sites[pos_sites["round"].isin(seen)]
-        out.append({"round": r["round"], "found": int(len(to_places(sub))) if len(sub) else 0})
+        out.append({"round": r["round"], "found": int(len(sub))})
     for o in out:
         o["total"] = known_places + o["found"]
     return out
@@ -227,19 +196,14 @@ def main(argv=None):
     pos["size"] = pos["area_m2"].map(size_class)
     pos["kind"] = pos["review"]
     pos = pos[~pos["auto"]]
-    places = to_places(pos)
-    found = cells(places, ["kind", "how", "size"])
+    found = cells(pos, ["kind", "how", "size"])   # jeder bestätigte Standort einzeln, nichts wird zusammengefasst
     # KI-Wert je Zelle als Mittel (auf 5 % gerundet), ohne einzelne Standorte erkennbar zu machen
     json.dump(found, open(os.path.join(args.out, "found.json"), "w"), separators=(",", ":"))
 
     known = gpd.read_file(args.known)
     kc = known.to_crs(4326).geometry.centroid
-    kp = known.to_crs(32719)
-    kdf = pd.DataFrame({"lon": kc.x, "lat": kc.y, "size": kp.area.map(size_class), "place": place_ids(kp.geometry)})
-    kdf = kdf.groupby("place").agg(lon=("lon", "mean"), lat=("lat", "mean"),
-                                   size=("size", lambda x: max(x, key=["s", "m", "l"].index))).reset_index(drop=True)
-    kdf["size"] = "l"            # einzelne Stücke sind klein; als Ort gelten sie zusammen (Größe nicht aussagekräftig)
-    known_cells = cells(kdf, ["size"])
+    kdf = pd.DataFrame({"lon": kc.x, "lat": kc.y, "size": known.to_crs(32719).area.map(size_class)})
+    known_cells = cells(kdf, ["size"])           # jedes von Hand markierte Polygon einzeln
     json.dump(known_cells, open(os.path.join(args.out, "known.json"), "w"), separators=(",", ":"))
 
     cand_cells = {"type": "FeatureCollection", "features": []}
@@ -266,21 +230,20 @@ def main(argv=None):
     st["gain"] = gain_curve(reviewed)
     st["ai_rounds"] = ai_by_round(reviewed)
     st["known_polygons"] = int(len(known))
-    st["known_places"] = int(len(kdf))
-    st["found_sites"] = int(len(pos))
-    st["found_places"] = int(len(places))
-    st["multiple"] = round(len(places) / max(len(kdf), 1), 1)
+    st["known_items"] = int(len(kdf))
+    st["found_items"] = int(len(pos))
+    st["added_share"] = round(len(pos) / max(len(kdf), 1), 3)
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
     st["candidates"] = int(sum(f["properties"]["n"] for f in cand_cells["features"]))
-    st["found_by_how"] = {k: int((places["how"] == k).sum()) for k in ("ai", "human")}
+    st["found_by_how"] = {k: int((pos["how"] == k).sum()) for k in ("ai", "human")}
     st["regions"] = {}
     for key, name, south, north in REGIONS:
         in_region = lambda d: int(((d["lat"] >= south) & (d["lat"] < north)).sum())
         st["regions"][key] = {
             "name": name, "south": south, "north": north,
-            "known": in_region(kdf), "found": in_region(places),
-            "found_ai": in_region(places[places["how"] == "ai"]), "found_human": in_region(places[places["how"] == "human"]),
+            "known": in_region(kdf), "found": in_region(pos),
+            "found_ai": in_region(pos[pos["how"] == "ai"]), "found_human": in_region(pos[pos["how"] == "human"]),
             "reviewed": in_region(reviewed[~reviewed["auto"]]),
             "candidates": int(sum(f["properties"]["n"] for f in cand_cells["features"]
                                   if south <= f["geometry"]["coordinates"][1] < north)),
