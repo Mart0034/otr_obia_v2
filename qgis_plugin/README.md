@@ -11,7 +11,7 @@ One plugin instead of three console scripts (`qgis/load_candidate_sites.py`, `qg
    (same stored key as the old scripts); settings of the old scripts are taken over.
 
 ## One window
-Review keys 1-7 as before; 8 = accept the AI verdict, 9 = deny. Tick "Treffer zuerst" to work through open sites with an AI result from the highest to the lowest dump probability. Below: AI check (with result box, accept / deny, token and cost line),
+Review keys 1-7 as before; "Widersprüche prüfen" re-queues sites where your verdict and the AI disagree strongly; 8 = accept the AI verdict, 9 = deny. Tick "Treffer zuerst" to work through open sites with an AI result from the highest to the lowest dump probability. Below: AI check (with result box, accept / deny, token and cost line),
 the Auto checkbox (current + next N sites are checked ahead), batch analysis and the settings button.
 
 ## Testing the AI on chosen sites

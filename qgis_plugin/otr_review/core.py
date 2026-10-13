@@ -554,6 +554,26 @@ def human_followup(previous_decision, human_review, ai_verdict):
     return None
 
 
+CONFLICT_LOW = 0.4        # dein Urteil dump/partial, die KI höchstens so sicher
+CONFLICT_HIGH = 0.7       # dein Urteil clean, die KI mindestens so sicher
+
+
+def find_conflicts(items, low=CONFLICT_LOW, high=CONFLICT_HIGH):
+    """Widersprüche zwischen deinem Urteil und der KI: items = (fid, review, ai_dump_p oder None).
+    Liefert [(fid, art, abstand)], der größte Widerspruch zuerst. art: 'dump_ki_niedrig' (du: dump/partial, KI <= low)
+    oder 'clean_ki_hoch' (du: clean, KI >= high). Tippfehler beim Beurteilen fallen fast immer in diese Gruppen."""
+    out = []
+    for fid, review, p in items:
+        if p is None:
+            continue
+        if review in ("dump", "partial") and p <= low:
+            out.append((fid, "dump_ki_niedrig", 1.0 - p))
+        elif review == "clean" and p >= high:
+            out.append((fid, "clean_ki_hoch", p))
+    out.sort(key=lambda t: -t[2])
+    return out
+
+
 def result_from_fields(label, dump_p, location, reason):
     """Gespeicherte Einschätzung (Spalten ai_*) wieder als Ergebnis - kostet keine Anfrage."""
     try:
@@ -681,6 +701,16 @@ class ReviewQueue:
             self.todo.remove(fid)
         self.todo.appendleft(fid)
         return fid, old, old_note
+
+    def requeue(self, fids):
+        """Schon beurteilte Standorte noch einmal vorne einreihen (in der gegebenen Reihenfolge). Das Urteil bleibt,
+        bis du neu entscheidest; 'Überspringen' lässt es unverändert. Gibt die Anzahl zurück."""
+        fids = [f for f in fids if f in self.reviews]
+        for fid in reversed(fids):
+            if fid in self.todo:
+                self.todo.remove(fid)
+            self.todo.appendleft(fid)
+        return len(fids)
 
     def counts(self):
         out = {}

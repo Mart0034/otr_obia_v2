@@ -467,3 +467,20 @@ def test_queue_resort_by_ai_probability():
 def test_sort_by_ai_setting_is_kept():
     assert ai.load_settings('{"sort_by_ai": true}')["sort_by_ai"] is True
     assert ai.load_settings("")["sort_by_ai"] is False
+
+
+def test_find_conflicts_and_requeue():
+    items = [(1, "dump", 0.05), (2, "partial", 0.9), (3, "clean", 0.85), (4, "clean", 0.1), (5, "dump", 0.4),
+             (6, "clean", None), (7, "partial", 0.2)]
+    found = ai.find_conflicts(items)
+    assert [(f, k) for f, k, _ in found] == [(1, "dump_ki_niedrig"), (3, "clean_ki_hoch"), (7, "dump_ki_niedrig"),
+                                              (5, "dump_ki_niedrig")]
+    q = ai.ReviewQueue([(1, 1, "dump"), (2, 2, ""), (3, 3, "clean"), (4, 4, "clean")])
+    assert list(q.todo) == [2]
+    assert q.requeue([3, 1]) == 2
+    assert list(q.todo) == [3, 1, 2]
+    assert q.reviews[3] == "clean"            # Urteil bleibt, bis neu entschieden
+    q.skip()                                   # überspringen behält das Urteil und entfernt den Standort aus der Liste
+    assert list(q.todo) == [1, 2] and q.reviews[3] == "clean"
+    q.decide("dump")
+    assert q.reviews[1] == "dump" and list(q.todo) == [2]

@@ -7,7 +7,7 @@ from qgis.core import QgsCoordinateTransform, QgsProject, QgsRectangle, QgsSetti
 
 from .batch import BatchRunner
 from .core import (DEFAULT_MODEL, ai_overview, fmt_overview, KEY_SETTING, OLD_PREFS_KEY, PREFS_KEY, ReviewQueue, ai_note, audit_summary,
-                   banner, clean_settings, cost_of, fmt_cost, human_followup, load_settings, result_from_fields,
+                   banner, clean_settings, cost_of, find_conflicts, fmt_cost, human_followup, load_settings, result_from_fields,
                    verdict_to_review)
 from .engine import AiEngine, feature_context
 from .examples import DEFAULT_CAPTIONS, ExampleStore
@@ -231,6 +231,12 @@ class OtrPanel(QDockWidget):
         self.stats.setWordWrap(True)
         self.stats.setStyleSheet("color: gray; font-size: 11px;")
         bl.addWidget(self.stats, 6, 0, 1, 2)
+        self.conflict_btn = QPushButton("Widersprüche prüfen")
+        self.conflict_btn.setToolTip("Wählt Standorte, bei denen dein Urteil und die KI stark auseinanderliegen "
+                                     "(du: dump/partial, KI höchstens 40 %; du: clean, KI mindestens 70 %), und stellt sie "
+                                     "noch einmal nach vorn. Das alte Urteil bleibt, bis du neu entscheidest.")
+        self.conflict_btn.clicked.connect(lambda _=False: self.check_conflicts())
+        bl.addWidget(self.conflict_btn, 7, 0, 1, 2)
         col.addWidget(bbox)
 
         gear = QPushButton("⚙ Einstellungen")
@@ -296,6 +302,28 @@ class OtrPanel(QDockWidget):
 
     def _apply_order(self):
         self.queue.resort(self._ai_p if self.settings["sort_by_ai"] else None)
+
+    def check_conflicts(self):
+        """Urteile, die der KI stark widersprechen, markieren und zur erneuten Prüfung vorn einreihen."""
+        items = [(fid, self.queue.reviews.get(fid, ""), self._ai_p(fid)) for fid in self.feats]
+        found = find_conflicts(items)
+        if not found:
+            self.batch_info.setText("Keine Widersprüche: kein dump/partial mit KI <= 40 % und kein clean mit KI >= 70 %.")
+            return
+        fids = [f for f, _, _ in found]
+        self.queue.requeue(fids)
+        self.layer.selectByIds(fids)
+        lows = [f for f, k, _ in found if k == "dump_ki_niedrig"]
+        highs = [f for f, k, _ in found if k == "clean_ki_hoch"]
+        def ids(lst):
+            return ", ".join(self.feats[f]["site_id"] for f in lst[:12]) + (" ..." if len(lst) > 12 else "")
+        self.batch_info.setText(
+            f"{len(found)} Widersprüche, markiert und vorn eingereiht (größter zuerst).\n"
+            f"Du dump/partial, KI niedrig ({len(lows)}): {ids(lows)}\n"
+            f"Du clean, KI hoch ({len(highs)}): {ids(highs)}\n"
+            "Mit 1-4 neu entscheiden (überschreibt das alte Urteil) oder 5 = Urteil behalten.")
+        self.shown = None
+        self.show_current()
 
     def _sort_toggled(self, on):
         self.settings["sort_by_ai"] = bool(on)
