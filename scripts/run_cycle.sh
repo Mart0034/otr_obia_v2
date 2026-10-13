@@ -105,7 +105,7 @@ rm -rf $RUN; mkdir $RUN
 for f in feature_cache.pkl polygons_cache.gpkg; do ln -s "$(realpath $BASE/$f)" $RUN/$f; done
 $PY src/otr_obia_pipeline.py --imagery-dir data/imagery --labels-path data/dump_labels.gpkg --mine-boundary-path data/mine_boundaries.gpkg \
   --s1-dir data/all_s1 --dem-dir data/all_dem --s2my-dir data/s2_multiyear_all --s2my-bands $BANDS --target-segment-px 12 \
-  --max-segments-per-mine 1000000 --n-jobs 12 --use-cache $CACHE_FLAG --labeled-imagery-dir data/run15/labeled --extra-labels-path data/run15/labels_extra.gpkg \
+  --max-segments-per-mine 1000000 --n-jobs 12 --use-cache $CACHE_FLAG --model-cache-dir data/model_cache --labeled-imagery-dir data/run15/labeled --extra-labels-path data/run15/labels_extra.gpkg \
   --reviewed-imagery-dir $Q/imagery_reviewed --extra-imagery-dir $Q/imagery_rest \
   --add-labels-path $OUT/labels_reviewed_dump_$LABELS.gpkg --ignore-points-path data/run15/ignore_points.geojson,$OUT/ignore_reviewed_$LABELS.geojson \
   --hard-negatives-path $OUT/negatives_${LABELS}_clean.gpkg --hard-negative-factor 20 \

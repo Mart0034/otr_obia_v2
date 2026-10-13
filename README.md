@@ -541,6 +541,26 @@ how many tiles come out and which are skipped. The tiles land in
 with `--use-cache --extra-imagery-dir <out-dir>/imagery`, passing the matching
 `--s1-dir`/`--dem-dir`. The tile IDs come from the OSM id (e.g. `q_way_123`).
 
+#### Faster runs and whole regions
+
+- **Parallel download.** `sites_from_vector.py --fetch` now loads each tile from all sources at the same time (Sentinel-2
+  base image first, then Sentinel-1, elevation and the multi-year brightness together) and works on several tiles in
+  parallel (`--n-workers`, default 8; measured: 6 -> 12 tiles at once is about 1.8x faster, beyond that little). `--staged`
+  restores the old stage-by-stage order. See `src/fetch_tiles.py`.
+- **OSM from a local country file.** `osm_local.py --pbf chile-latest.osm.pbf --build-dir data/osm_chile` converts the
+  Geofabrik file once; `sites_from_vector.py --osm-build-dir data/osm_chile` then cuts roads/buildings/POI per tile in
+  seconds (no overloaded Overpass server).
+- **Region grid.** `sites_from_vector.py --grid-bounds W,S,E,N --grid-tile-m 2700` plans a grid of tiles instead of
+  reading a vector file. `--exclude-near FILE` skips tiles near known mines/quarries and `--prescreen` drops tiles that
+  cannot hold a dump (water, snow, forest/farmland, town) using ESA WorldCover (a few kB read per tile) *before* anything is
+  downloaded (`src/prescreen.py`, rules in `prescreen.RULES`).
+- **Saved model.** `--model-cache-dir DIR` keeps the trained model; it is reused as long as the training data and settings
+  are unchanged (e.g. when only new, unlabelled tiles are scored), which skips training and cross-validation.
+  `--export-extra-only` scores and exports only the `--extra-imagery-dir` tiles, and `--skip-polygons-extra` skips the
+  large `polygons_extra.gpkg`.
+- **Faster road density** (vectorised) and a pickle copy of the polygon cache (`polygons_cache.pkl` next to the GeoPackage).
+- **One command for a region:** `bash scripts/run_region.sh TAG --bounds W,S,E,N --labels all7 --exclude-near data/mine_boundaries.gpkg`.
+
 ## Running the tests
 
 ```bash
