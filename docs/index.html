@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OTR-finder</title>
+<meta name="description" content="OTR-finder: finding abandoned mining-tire dumps from satellite data. Proof of concept.">
+<meta name="theme-color" content="#0e1116">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f2a541' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f2a541'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+
+<header class="top" id="top">
+  <a class="brand" href="#top" aria-label="OTR-finder">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="16" cy="16" r="4" fill="currentColor"/></svg>
+    <span>OTR-finder</span>
+  </a>
+  <nav aria-label="Main">
+    <a href="#how" data-i18n="nav_how">How it works</a>
+    <a href="#map" data-i18n="nav_map">Map</a>
+    <a href="#results" data-i18n="nav_results">Results</a>
+    <a href="#why" data-i18n="nav_why">Use cases</a>
+    <a href="#contact" data-i18n="nav_contact">Contact</a>
+  </nav>
+  <div class="lang" role="group" aria-label="Language" data-i18n-aria="lang_label">
+    <button type="button" data-lang="en">EN</button><button type="button" data-lang="de">DE</button><button type="button" data-lang="es">ES</button>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero">
+  <div class="hero-bg" aria-hidden="true"></div>
+  <div class="wrap hero-inner">
+    <p class="kicker" data-i18n="hero_kicker">Proof of concept</p>
+    <h1 data-i18n="hero_title">Finding abandoned mining-tire dumps from space</h1>
+    <p class="lead" data-i18n="hero_sub"></p>
+    <p class="cta"><a class="btn primary" href="#map" data-i18n="cta_map">Explore the map</a> <a class="btn ghost" href="#how" data-i18n="cta_how">How it works</a></p>
+    <dl class="stats" id="heroStats">
+      <div><dt data-i18n="stat_known"></dt><dd data-count="known_polygons">–</dd></div>
+      <div><dt data-i18n="stat_reviewed"></dt><dd data-count="reviewed">–</dd></div>
+      <div><dt data-i18n="stat_found"></dt><dd data-count="confirmed">–</dd></div>
+      <div><dt data-i18n="stat_cand"></dt><dd data-count="candidates">–</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section id="how" class="band">
+  <div class="wrap">
+    <h2 data-i18n="how_title"></h2>
+    <p class="sub" data-i18n="how_lead"></p>
+    <div class="stepper">
+      <div class="steps" role="tablist" aria-label="Steps" id="stepTabs">
+        <button role="tab" data-step="1" aria-selected="true"><b>1</b><span data-i18n="step1_t"></span></button>
+        <button role="tab" data-step="2" aria-selected="false"><b>2</b><span data-i18n="step2_t"></span></button>
+        <button role="tab" data-step="3" aria-selected="false"><b>3</b><span data-i18n="step3_t"></span></button>
+        <button role="tab" data-step="4" aria-selected="false"><b>4</b><span data-i18n="step4_t"></span></button>
+      </div>
+      <figure class="chip">
+        <div class="chip-imgs">
+          <img src="assets/img/step1.png" alt="" data-step-img="1" class="on">
+          <img src="assets/img/step2.png" alt="" data-step-img="2">
+          <img src="assets/img/step3.png" alt="" data-step-img="3">
+          <img src="assets/img/step4.png" alt="" data-step-img="4">
+        </div>
+        <figcaption><span id="stepNo"></span> · <span data-i18n="chip_note"></span></figcaption>
+      </figure>
+      <div class="step-text">
+        <h3 id="stepTitle"></h3><p id="stepDesc"></p>
+        <div class="step-nav"><button class="btn ghost" id="prevStep" aria-label="Previous">←</button><button class="btn primary" id="nextStep" aria-label="Next">→</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="map" class="band alt">
+  <div class="wrap">
+    <h2 data-i18n="map_title"></h2>
+    <p class="sub" data-i18n="map_lead"></p>
+    <div class="mapgrid">
+      <div class="mapbox">
+        <div id="mapEl" role="application" aria-label="Map"></div>
+        <div class="basebtns" role="group"><button type="button" data-base="sat" class="on" data-i18n="base_sat"></button><button type="button" data-base="map" data-i18n="base_map"></button></div>
+      </div>
+      <aside class="side">
+        <fieldset class="layers">
+          <label><input type="checkbox" data-layer="known" checked><i class="sw sw-known"></i><span data-i18n="layer_known"></span><em data-n="known"></em></label>
+          <label><input type="checkbox" data-layer="ai" checked><i class="sw sw-ai"></i><span data-i18n="layer_ai"></span><em data-n="ai"></em></label>
+          <label><input type="checkbox" data-layer="human" checked><i class="sw sw-human"></i><span data-i18n="layer_human"></span><em data-n="human"></em></label>
+          <label><input type="checkbox" data-layer="cand" checked><i class="sw sw-cand"></i><span data-i18n="layer_cand"></span><em data-n="cand"></em></label>
+          <label><input type="checkbox" data-layer="mines" checked><i class="sw sw-mines"></i><span data-i18n="layer_mines"></span><em data-n="mines"></em></label>
+        </fieldset>
+        <p class="note" data-i18n="privacy"></p>
+        <h3 data-i18n="regions_title"></h3>
+        <div id="regions"></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section id="results" class="band">
+  <div class="wrap">
+    <h2 data-i18n="res_title"></h2>
+    <p class="sub" data-i18n="res_lead"></p>
+    <div class="cards3">
+      <article class="card"><h3 data-i18n="chart_title"></h3><div id="chart" aria-live="polite"></div><p class="small" data-i18n="chart_note"></p></article>
+      <article class="card"><h3 data-i18n="ai_title"></h3><div class="big" id="aiBig"></div><p id="aiText"></p></article>
+      <article class="card"><h3 data-i18n="safe_title"></h3><div class="big" id="safeBig"></div><p id="safeText"></p></article>
+    </div>
+    <div class="honest"><h3 data-i18n="honest_title"></h3><p id="honestText"></p></div>
+  </div>
+</section>
+
+<section id="why" class="band alt">
+  <div class="wrap">
+    <h2 data-i18n="why_title"></h2>
+    <div class="cards3">
+      <article class="card"><h3 data-i18n="why1_t"></h3><p data-i18n="why1_d"></p></article>
+      <article class="card"><h3 data-i18n="why2_t"></h3><p data-i18n="why2_d"></p></article>
+      <article class="card"><h3 data-i18n="why3_t"></h3><p data-i18n="why3_d"></p></article>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="band">
+  <div class="wrap narrow">
+    <h2 data-i18n="contact_title"></h2>
+    <p class="sub" data-i18n="contact_lead"></p>
+    <form id="contactForm" novalidate>
+      <label><span data-i18n="f_name"></span><input name="name" autocomplete="name" required></label>
+      <label><span data-i18n="f_email"></span><input name="email" type="email" autocomplete="email" required></label>
+      <label><span data-i18n="f_msg"></span><textarea name="msg" rows="4" required></textarea></label>
+      <div class="formrow"><button class="btn primary" type="submit" data-i18n="f_send"></button><span class="demo" data-i18n="f_demo"></span></div>
+      <p id="formMsg" role="status"></p>
+    </form>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap"><p data-i18n="foot_text"></p><p class="small" data-i18n="foot_data"></p></div>
+</footer>
+
+<script src="assets/vendor/leaflet/leaflet.js"></script>
+<script src="assets/i18n.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
