@@ -1,0 +1,93 @@
+{
+ "reviewed": 2190,
+ "confirmed": 67,
+ "hit_rate": 0.0306,
+ "rounds": [
+  {
+   "round": "chile",
+   "reviewed": 207,
+   "confirmed": 9
+  },
+  {
+   "round": "v4",
+   "reviewed": 496,
+   "confirmed": 15
+  },
+  {
+   "round": "v5",
+   "reviewed": 494,
+   "confirmed": 10
+  },
+  {
+   "round": "v6",
+   "reviewed": 498,
+   "confirmed": 18
+  },
+  {
+   "round": "v7",
+   "reviewed": 495,
+   "confirmed": 15
+  }
+ ],
+ "ai_high": {
+  "n": 75,
+  "confirmed": 40,
+  "share": 0.533
+ },
+ "ai_low": {
+  "n": 2013,
+  "confirmed": 16,
+  "share": 0.0079
+ },
+ "ai_high_recent": {
+  "n": 42,
+  "confirmed": 29,
+  "share": 0.69
+ },
+ "auto_clean": 900,
+ "spot_checks": 180,
+ "spot_misses": 0,
+ "known_polygons": 205,
+ "mines": 138,
+ "found_cells": 63,
+ "candidates": 500,
+ "found_by_how": {
+  "ai": 47,
+  "human": 20
+ },
+ "regions": {
+  "north": {
+   "name": "Norte (Arica - Tarapacá)",
+   "south": -22.6,
+   "north": -17.0,
+   "known": 0,
+   "found": 23,
+   "found_ai": 19,
+   "found_human": 4,
+   "reviewed": 730,
+   "candidates": 204
+  },
+  "atacama": {
+   "name": "Atacama (Antofagasta)",
+   "south": -25.7,
+   "north": -22.6,
+   "known": 205,
+   "found": 23,
+   "found_ai": 16,
+   "found_human": 7,
+   "reviewed": 620,
+   "candidates": 286
+  },
+  "south": {
+   "name": "Sur (Atacama - Coquimbo)",
+   "south": -33.0,
+   "north": -25.7,
+   "known": 0,
+   "found": 21,
+   "found_ai": 12,
+   "found_human": 9,
+   "reviewed": 840,
+   "candidates": 10
+  }
+ }
+}

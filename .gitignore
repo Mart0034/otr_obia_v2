@@ -9,3 +9,8 @@ output*/
 *.gpkg
 *.pkl
 qgis_plugin/dist/
+
+# the public demo site's (generalised) data must be committed
+!docs/data/
+!docs/data/*.js
+!docs/data/*.json
