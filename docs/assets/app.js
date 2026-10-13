@@ -42,6 +42,8 @@
     const s = DATA.stats; if (!s) return;
     $$("[data-count]").forEach((el) => { el.dataset.target = s[el.dataset.count]; el.textContent = nf(s[el.dataset.count]); });
     $$("[data-n]").forEach((el) => { const k = el.dataset.n; el.textContent = nf(counts()[k] ?? 0); });
+    const pn = $(".places"); if (pn) pn.textContent = t("places_note", { k: s.known_places });
+    $("#heroGain").innerHTML = t("hero_gain", { x: "<b>" + s.gain.toLocaleString(LOCALE[lang]) + "×</b>", n: nf(s.reviewed), open: nf(s.candidates) });
     $("#aiBig").textContent = pct(s.ai_high.share) + " %";
     $("#aiText").textContent = t("ai_text", { hi: pct(s.ai_high.share), hir: pct(s.ai_high_recent.share), lo: pct(s.ai_low.share, 1) });
     $("#safeBig").textContent = nf(s.spot_misses) + " / " + nf(s.spot_checks);

@@ -104,12 +104,16 @@
  "spot_checks": 179,
  "spot_misses": 0,
  "known_polygons": 205,
+ "known_places": 38,
+ "found_sites": 97,
+ "found_places": 88,
+ "gain": 2.3,
  "mines": 138,
- "found_cells": 93,
+ "found_cells": 87,
  "candidates": 500,
  "found_by_how": {
-  "ai": 46,
-  "human": 51
+  "ai": 40,
+  "human": 48
  },
  "regions": {
   "north": {
@@ -117,8 +121,8 @@
    "south": -22.6,
    "north": -17.0,
    "known": 0,
-   "found": 32,
-   "found_ai": 19,
+   "found": 30,
+   "found_ai": 17,
    "found_human": 13,
    "reviewed": 531,
    "candidates": 204
@@ -127,10 +131,10 @@
    "name": "Atacama (Antofagasta)",
    "south": -25.7,
    "north": -22.6,
-   "known": 205,
-   "found": 35,
-   "found_ai": 15,
-   "found_human": 20,
+   "known": 38,
+   "found": 32,
+   "found_ai": 13,
+   "found_human": 19,
    "reviewed": 616,
    "candidates": 286
   },
@@ -139,9 +143,9 @@
    "south": -33.0,
    "north": -25.7,
    "known": 0,
-   "found": 30,
-   "found_ai": 12,
-   "found_human": 18,
+   "found": 26,
+   "found_ai": 10,
+   "found_human": 16,
    "reviewed": 675,
    "candidates": 10
   }

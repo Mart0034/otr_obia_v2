@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0e1116">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f2a541' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f2a541'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="assets/style.css?v=202610131333">
+<link rel="stylesheet" href="assets/style.css?v=202610131343">
 </head>
 <body>
 <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
@@ -39,11 +39,12 @@
     <p class="lead" data-i18n="hero_sub"></p>
     <p class="cta"><a class="btn primary" href="#map" data-i18n="cta_map">Explore the map</a> <a class="btn ghost" href="#how" data-i18n="cta_how">How it works</a></p>
     <dl class="stats" id="heroStats">
-      <div><dt data-i18n="stat_known"></dt><dd data-count="known_polygons">–</dd></div>
+      <div><dt data-i18n="stat_known"></dt><dd data-count="known_places">–</dd></div>
+      <div><dt data-i18n="stat_found"></dt><dd data-count="found_places">–</dd></div>
       <div><dt data-i18n="stat_reviewed"></dt><dd data-count="reviewed">–</dd></div>
-      <div><dt data-i18n="stat_found"></dt><dd data-count="confirmed">–</dd></div>
       <div><dt data-i18n="stat_cand"></dt><dd data-count="candidates">–</dd></div>
     </dl>
+    <p class="gain" id="heroGain"></p>
   </div>
 </section>
 
@@ -79,6 +80,7 @@
   <div class="wrap">
     <h2 data-i18n="map_title"></h2>
     <p class="sub" data-i18n="map_lead"></p>
+    <p class="note places" data-i18n="places_note"></p>
     <div class="mapgrid">
       <div class="mapbox">
         <div id="mapEl" role="application" aria-label="Map"></div>
@@ -144,8 +146,8 @@
 </footer>
 
 <script src="assets/vendor/leaflet/leaflet.js"></script>
-<script src="data/data.js?v=202610131333"></script>
-<script src="assets/i18n.js?v=202610131333"></script>
-<script src="assets/app.js?v=202610131333"></script>
+<script src="data/data.js?v=202610131343"></script>
+<script src="assets/i18n.js?v=202610131343"></script>
+<script src="assets/app.js?v=202610131343"></script>
 </body>
 </html>
