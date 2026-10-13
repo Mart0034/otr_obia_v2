@@ -1622,6 +1622,11 @@ def compute_road_density(result, osm_roads_dir, radius_m=150, grid_threshold_m=5
 # 7) Vollprädiktion + Export für QGIS
 # ------------------------------------------------------------------
 def predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg):
+    if cfg.get("export_extra_only") and cfg.get("export_mines"):
+        # nur die neuen Kacheln werden exportiert -> auch nur dort vorhersagen (statt über alle Millionen Segmente)
+        keep = set(cfg["export_mines"])
+        feature_df = feature_df[feature_df["mine_id"].isin(keep)].reset_index(drop=True)
+        polygons_gdf = polygons_gdf[polygons_gdf["mine_id"].isin(keep)].reset_index(drop=True)
     X_all = feature_df[feature_cols].fillna(0.0).values
     if len(clf.classes_) < 2:
         # Das Modell wurde nur auf einer Klasse trainiert (z.B. 0 positive
