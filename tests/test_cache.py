@@ -298,3 +298,58 @@ def test_unreadable_tile_cache_entry_is_recomputed(tmp_path, write_synthetic_ras
         f.write_bytes(b"garbage")
     feats, polys = pipe.build_dataset(cfg)                       # must not raise
     assert len(feats) > 0
+
+
+def test_road_density_vectorised_matches_loop(tmp_path):
+    import geopandas as gpd
+    import numpy as np
+    from shapely.geometry import LineString, Point
+    import otr_obia_pipeline as pipe
+
+    rng = np.random.default_rng(0)
+    lines = [LineString(rng.uniform(0, 1000, size=(3, 2))) for _ in range(40)]
+    gpd.GeoDataFrame(geometry=lines, crs="EPSG:32719").to_file(tmp_path / "m1.gpkg", driver="GPKG")
+    xy = rng.uniform(0, 1000, size=(60, 2))
+    got = pipe._road_density_for_mine(str(tmp_path), "m1", 150, "EPSG:32719", xy)
+    sindex = gpd.GeoSeries(lines).sindex
+    want = []
+    for x, y in xy:                      # die frühere Schleife
+        buf = Point(x, y).buffer(150)
+        cand = [lines[i] for i in sindex.intersection(buf.bounds)]
+        want.append(sum(l.intersection(buf).length for l in cand if l.intersects(buf)))
+    assert np.allclose(got, want, atol=1e-6)
+    assert pipe._road_density_for_mine(str(tmp_path), "nope", 150, "EPSG:32719", xy) is None
+
+
+def test_model_cache_skips_training_for_new_unlabelled_tiles(tmp_path, write_synthetic_raster):
+    import otr_obia_pipeline as pipe
+    cfg = _make_cfg(tmp_path, tmp_path / "imagery", write_synthetic_raster)
+    cfg["model_cache_dir"] = str(tmp_path / "models")
+    main(cfg)                                              # Volllauf: Modell wird abgelegt
+    assert len(list((tmp_path / "models").glob("model_*.joblib"))) == 1
+
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    write_synthetic_raster(extra / "3.tif", seed=3)
+    cfg2 = dict(cfg, extra_imagery_dir=str(extra), export_extra_only=True, skip_polygons_extra=True)
+    with patch("otr_obia_pipeline.train_and_evaluate", wraps=pipe.train_and_evaluate) as spy:
+        main(cfg2)                                         # nur eine neue, ungelabelte Kachel
+        assert spy.call_count == 0                         # gleiche Trainingsdaten -> Modell aus dem Speicher
+    assert not (tmp_path / "output" / "polygons_extra.gpkg").exists()
+    out = gpd.read_file(tmp_path / "output" / "segments_classified.gpkg")
+    assert set(out["mine_id"]) == {"3"}                    # nur die neue Kachel exportiert
+    assert (tmp_path / "output" / "oof_predictions.pkl").exists()
+
+
+def test_model_fingerprint_changes_with_labels_and_settings(tmp_path, write_synthetic_raster):
+    import numpy as np
+    import pandas as pd
+    import otr_obia_pipeline as pipe
+    df = pd.DataFrame({"mine_id": ["a", "a", "b"], "label": [0, 1, 0], "f1": [0.1, 0.2, 0.3]})
+    base = pipe.model_fingerprint(df, {"n_estimators": 10})
+    assert base == pipe.model_fingerprint(df.copy(), {"n_estimators": 10})
+    assert base != pipe.model_fingerprint(df, {"n_estimators": 11})
+    df2 = df.copy(); df2.loc[0, "label"] = 1
+    assert base != pipe.model_fingerprint(df2, {"n_estimators": 10})
+    df3 = df.copy(); df3.loc[2, "f1"] = 0.9
+    assert base != pipe.model_fingerprint(df3, {"n_estimators": 10})

@@ -173,8 +173,16 @@ def main(argv=None):
     p.add_argument("--fetch", action="store_true", help="Kacheln auch wirklich laden.")
     p.add_argument("--with-osm", action="store_true",
                    help="Mit --fetch: auch OSM-Gebäude/Straßen/POI laden (braucht Zugriff auf overpass-api.de).")
-    p.add_argument("--n-workers", type=int, default=4,
-                   help="Anzahl gleichzeitig geladener Kacheln (das Laden ist netzwerkbegrenzt).")
+    p.add_argument("--n-workers", type=int, default=8,
+                   help="Anzahl gleichzeitig geladener Kacheln (das Laden ist netzwerkbegrenzt; gemessen skaliert "
+                        "es von 6 auf 12 etwa 1,8-fach, darüber kaum noch).")
+    p.add_argument("--inner-workers", type=int, default=3,
+                   help="Pro Kachel gleichzeitig: Radar, Höhenmodell, Mehrjahres-Helligkeit (nach dem Basisbild).")
+    p.add_argument("--osm-build-dir", metavar="DIR",
+                   help="Ordner mit den zerlegten OSM-Dateien (roads/buildings/poi.gpkg, siehe osm_local.py): "
+                        "OSM wird daraus pro Kachel zugeschnitten statt von Overpass geladen.")
+    p.add_argument("--staged", action="store_true",
+                   help="Alte Reihenfolge: erst alle Basisbilder, dann alle Radarbilder usw. (statt alles gleichzeitig).")
     p.add_argument("--limit", type=int, help="Nur die ersten N passenden Objekte laden (zum Ausprobieren).")
     args = p.parse_args(argv)
 
@@ -206,6 +214,20 @@ def main(argv=None):
         ok = ok.head(args.limit)
     from fetch_s2_base_imagery import fetch_for_site
     from fetch_sentinel1 import open_catalog
+
+    if not args.staged:
+        from fetch_tiles import fetch_tiles
+        open_catalog()  # Logging + GDAL-Pfade einmal einrichten
+        osm_clip = None
+        if args.osm_build_dir:
+            import osm_local
+            paths = {k: os.path.join(args.osm_build_dir, f"{k}.gpkg") for k in osm_local.LAYERS}
+            missing = [v for v in paths.values() if not os.path.exists(v)]
+            if missing:
+                raise SystemExit(f"--osm-build-dir unvollständig, es fehlen: {missing} (osm_local.py --pbf ... ausführen)")
+            osm_clip = lambda tif: osm_local.clip_tile(paths, tif, args.out_dir)
+        res = fetch_tiles(ok.to_dict("records"), args.out_dir, args.n_workers, args.inner_workers, osm_clip=osm_clip)
+        return 1 if res["failed"] and not res["done"] else 0
 
     imagery, s1, dem = (os.path.join(args.out_dir, d) for d in ("imagery", "sentinel1", "dem"))
     os.makedirs(imagery, exist_ok=True)

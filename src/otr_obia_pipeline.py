@@ -1531,8 +1531,11 @@ _ROAD_CTX = None
 
 def _road_density_for_mine(osm_roads_dir, mine_id, radius_m, crs, xy):
     """Straßenlänge (m) im Umkreis radius_m um jeden Segment-Mittelpunkt (xy: n x 2) einer Mine.
-    None, wenn es für die Mine keine (oder leere) Straßendaten gibt."""
-    from shapely.geometry import Point
+    None, wenn es für die Mine keine (oder leere) Straßendaten gibt.
+
+    Vektorisiert (shapely 2): ein Raumindex-Treffer pro (Kreis, Straße)-Paar statt einer Python-Schleife über
+    alle Segmente; das Ergebnis ist dasselbe wie bei der früheren Schleife (Straßenlänge im Kreis)."""
+    import shapely
     roads_path = os.path.join(osm_roads_dir, f"{mine_id}.gpkg")
     if not os.path.exists(roads_path):
         return None
@@ -1541,18 +1544,15 @@ def _road_density_for_mine(osm_roads_dir, mine_id, radius_m, crs, xy):
         return None
     if roads.crs != crs:
         roads = roads.to_crs(crs)
-    sindex = roads.sindex
-    densities = []
-    for x, y in xy:
-        buf = Point(x, y).buffer(radius_m)
-        candidate_idx = list(sindex.intersection(buf.bounds))
-        if not candidate_idx:
-            densities.append(0.0)
-            continue
-        candidates = roads.iloc[candidate_idx]
-        nearby = candidates[candidates.geometry.intersects(buf)]
-        densities.append(nearby.geometry.intersection(buf).length.sum())
-    return densities
+    xy = np.asarray(xy, dtype=float)
+    lines = roads.geometry.values
+    circles = shapely.buffer(shapely.points(xy[:, 0], xy[:, 1]), radius_m, quad_segs=16)
+    pairs = shapely.STRtree(lines).query(circles, predicate="intersects")      # (2, n_paare): Kreis, Straße
+    density = np.zeros(len(xy))
+    if pairs.shape[1]:
+        lengths = shapely.length(shapely.intersection(lines[pairs[1]], circles[pairs[0]]))
+        density = np.bincount(pairs[0], weights=lengths, minlength=len(xy))
+    return density.tolist()
 
 
 def _road_density_job(mine_id):
@@ -2012,6 +2012,118 @@ def drop_ignored_negatives(feature_df, polygons_gdf, points_path, radius_m):
     return kept, polygons_gdf[keep_poly].reset_index(drop=True)
 
 
+MODEL_CACHE_VERSION = "1"
+_MODEL_CACHE_KEYS = ("n_estimators", "random_state", "hard_negative_factor", "classification_threshold",
+                     "min_overlap_ratio", "ignore_radius_m")
+_MODEL_CACHE_FILES = ("labels_path", "extra_labels_path", "add_labels_path", "hard_negatives_path",
+                      "ignore_points_path")
+
+
+def model_fingerprint(train_feat, cfg, reviewed_ids=()):
+    """Kennung der Trainingsdaten + Einstellungen. Gleiche Kennung = dasselbe Modell, das Training kann entfallen
+    (z.B. wenn nur neue, ungelabelte Kacheln bewertet werden). Eingang: Einstellungen, Label-/Ignorier-/Harte-Negative-
+    Dateien (Größe + Änderungszeit), Minen mit Segmentzahl und Label-Summe sowie Spaltensummen der Merkmale."""
+    import hashlib
+    h = hashlib.sha1(MODEL_CACHE_VERSION.encode())
+    for key in _MODEL_CACHE_KEYS:
+        h.update(f"{key}={cfg.get(key)};".encode())
+    for key in _MODEL_CACHE_FILES:
+        for path in str(cfg.get(key) or "").split(","):
+            path = path.strip()
+            if path and os.path.exists(path):
+                st = os.stat(path)
+                h.update(f"{key}:{os.path.basename(path)}:{st.st_size}:{st.st_mtime_ns};".encode())
+    per_mine = train_feat.groupby("mine_id")["label"].agg(["size", "sum"])
+    h.update(per_mine.to_csv().encode())
+    h.update(",".join(sorted(map(str, reviewed_ids))).encode())
+    num = train_feat.select_dtypes("number")
+    h.update(np.round(num.sum().values.astype("float64"), 3).tobytes())
+    h.update(",".join(num.columns).encode())
+    return h.hexdigest()[:16]
+
+
+def _read_polygons_cache(cache_polygons):
+    """Polygon-Zwischenspeicher: schneller aus einer Pickle-Datei neben dem GeoPackage lesen; fehlt sie, das
+    GeoPackage lesen und die Pickle-Datei für das nächste Mal anlegen (Fehler dabei stören nicht)."""
+    real = os.path.realpath(cache_polygons)
+    pkl = os.path.splitext(real)[0] + ".pkl"
+    try:
+        if os.path.exists(pkl) and os.path.getmtime(pkl) >= os.path.getmtime(real):
+            return pd.read_pickle(pkl)
+    except Exception:
+        logger.warning("Pickle-Zwischenspeicher %s nicht lesbar - lese das GeoPackage.", pkl)
+    gdf = gpd.read_file(cache_polygons)
+    try:
+        gdf.to_pickle(pkl + ".part")
+        os.replace(pkl + ".part", pkl)
+    except Exception:
+        pass
+    return gdf
+
+
+
+def _train_for_cfg(train_feat, train_poly, cfg, reviewed_ids):
+    """Ignorier-Zonen, harte Negative und geprüfte Stellen anwenden und trainieren (+ Kreuzvalidierung)."""
+    if cfg.get("ignore_points_path"):
+        train_feat, train_poly = drop_ignored_negatives(
+            train_feat, train_poly, cfg["ignore_points_path"], cfg.get("ignore_radius_m", 150.0),
+        )
+    hard_mask = None
+    if cfg.get("hard_negatives_path"):
+        hard_mask = mark_hard_negatives(train_feat, train_poly, gpd.read_file(cfg["hard_negatives_path"]))
+        logger.info("Harte Negative werden im Training %dx gewichtet.", int(cfg.get("hard_negative_factor", 10)))
+    if reviewed_ids:
+        if hard_mask is None:
+            hard_mask = np.zeros(len(train_feat), dtype=bool)
+        train_feat, train_poly, hard_mask = restrict_to_reviewed(train_feat, train_poly, hard_mask, reviewed_ids)
+        if not hard_mask.any():
+            hard_mask = None
+    if hard_mask is None:
+        clf, feature_cols, _ = train_and_evaluate(train_feat, train_poly, cfg)
+    else:
+        clf, feature_cols, _ = train_and_evaluate(
+            train_feat, train_poly, cfg, hard_neg_mask=hard_mask,
+            hard_neg_factor=int(cfg.get("hard_negative_factor", 10)))
+    return clf, feature_cols
+
+
+def _load_cached_model(cache_dir, fingerprint, output_dir):
+    """Gespeichertes Modell mit derselben Kennung laden (samt Out-of-Fold-Datei für die Auswertungen)."""
+    import shutil
+    import joblib
+    path = os.path.join(cache_dir, f"model_{fingerprint}.joblib")
+    if not os.path.exists(path):
+        logger.info("Modell-Zwischenspeicher: kein Treffer (Kennung %s) - trainiere.", fingerprint)
+        return None
+    try:
+        bundle = joblib.load(path)
+    except Exception:
+        logger.warning("Modell-Zwischenspeicher %s nicht lesbar - trainiere neu.", path)
+        return None
+    oof = os.path.join(cache_dir, f"model_{fingerprint}.oof.pkl")
+    if os.path.exists(oof):
+        os.makedirs(output_dir, exist_ok=True)
+        shutil.copyfile(oof, os.path.join(output_dir, "oof_predictions.pkl"))
+    logger.info("Modell-Zwischenspeicher: Treffer (Kennung %s) - Training und Kreuzvalidierung entfallen.", fingerprint)
+    return bundle["clf"], bundle["feature_cols"]
+
+
+def _save_cached_model(cache_dir, fingerprint, clf, feature_cols, output_dir):
+    import shutil
+    import joblib
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        path = os.path.join(cache_dir, f"model_{fingerprint}.joblib")
+        joblib.dump({"clf": clf, "feature_cols": feature_cols}, path + ".part", compress=3)
+        os.replace(path + ".part", path)
+        oof = os.path.join(output_dir, "oof_predictions.pkl")
+        if os.path.exists(oof):
+            shutil.copyfile(oof, os.path.join(cache_dir, f"model_{fingerprint}.oof.pkl"))
+        logger.info("Modell im Zwischenspeicher abgelegt (Kennung %s).", fingerprint)
+    except Exception:
+        logger.warning("Modell konnte nicht zwischengespeichert werden.", exc_info=True)
+
+
 def main(cfg=CONFIG):
     logging.basicConfig(
         level=logging.INFO,
@@ -2030,7 +2142,7 @@ def main(cfg=CONFIG):
         # diesen Schritt nicht bei jedem Versuch zu wiederholen.
         logger.info("1) Lade zwischengespeicherten Segment-Datensatz aus %s ...", cfg["output_dir"])
         feature_df = pd.read_pickle(cache_features)
-        polygons_gdf = gpd.read_file(cache_polygons)
+        polygons_gdf = _read_polygons_cache(cache_polygons)
         for key, names, label in (("s1_dir", S1_BAND_NAMES, "Sentinel-1"),
                                   ("dem_dir", DEM_BAND_NAMES, "Gelände"),
                                   ("s2t_dir", S2T_BAND_NAMES, "Zeitreihen"),
@@ -2078,15 +2190,17 @@ def main(cfg=CONFIG):
         # Die Segment-Polygone der neuen Kacheln stehen NICHT im polygons_cache.gpkg
         # (der gehört zum Volllauf) - separat ablegen, damit sich z.B.
         # eval_segment_size.py für diese Kacheln auswerten lässt.
-        gpd.GeoDataFrame(pd.concat(new_polys, ignore_index=True), crs=polygons_gdf.crs).to_file(
-            os.path.join(cfg["output_dir"], "polygons_extra.gpkg"), driver="GPKG"
-        )
+        if not cfg.get("skip_polygons_extra"):
+            gpd.GeoDataFrame(pd.concat(new_polys, ignore_index=True), crs=polygons_gdf.crs).to_file(
+                os.path.join(cfg["output_dir"], "polygons_extra.gpkg"), driver="GPKG"
+            )
         feature_df = pd.concat([feature_df[~feature_df["mine_id"].isin(replaced)]] + new_feats, ignore_index=True)
         polygons_gdf = gpd.GeoDataFrame(
             pd.concat([polygons_gdf[~polygons_gdf["mine_id"].isin(replaced)]] + new_polys, ignore_index=True),
             crs=polygons_gdf.crs,
         )
-        cfg = {**cfg, "export_mines": (extra_ids + reviewed_ids) or labeled_ids}
+        cfg = {**cfg, "export_mines": (extra_ids if cfg.get("export_extra_only") and extra_ids
+                                        else (extra_ids + reviewed_ids) or labeled_ids)}
 
     if feature_df is None:
         logger.info("1) Baue Segment-Datensatz aus allen Minen auf ...")
@@ -2117,26 +2231,17 @@ def main(cfg=CONFIG):
     poly_trained_on = ~polygons_gdf["mine_id"].isin(extra_ids)
     train_feat = feature_df[trained_on].reset_index(drop=True)
     train_poly = polygons_gdf[poly_trained_on].reset_index(drop=True)
-    if cfg.get("ignore_points_path"):
-        train_feat, train_poly = drop_ignored_negatives(
-            train_feat, train_poly, cfg["ignore_points_path"], cfg.get("ignore_radius_m", 150.0),
-        )
-    hard_mask = None
-    if cfg.get("hard_negatives_path"):
-        hard_mask = mark_hard_negatives(train_feat, train_poly, gpd.read_file(cfg["hard_negatives_path"]))
-        logger.info("Harte Negative werden im Training %dx gewichtet.", int(cfg.get("hard_negative_factor", 10)))
-    if reviewed_ids:
-        if hard_mask is None:
-            hard_mask = np.zeros(len(train_feat), dtype=bool)
-        train_feat, train_poly, hard_mask = restrict_to_reviewed(train_feat, train_poly, hard_mask, reviewed_ids)
-        if not hard_mask.any():
-            hard_mask = None
-    if hard_mask is None:
-        clf, feature_cols, scores_df = train_and_evaluate(train_feat, train_poly, cfg)
+    cache_dir = cfg.get("model_cache_dir")
+    fingerprint, cached = None, None
+    if cache_dir:
+        fingerprint = model_fingerprint(train_feat, cfg, reviewed_ids)
+        cached = _load_cached_model(cache_dir, fingerprint, cfg["output_dir"])
+    if cached is not None:
+        clf, feature_cols = cached
     else:
-        clf, feature_cols, scores_df = train_and_evaluate(
-            train_feat, train_poly, cfg, hard_neg_mask=hard_mask,
-            hard_neg_factor=int(cfg.get("hard_negative_factor", 10)))
+        clf, feature_cols = _train_for_cfg(train_feat, train_poly, cfg, reviewed_ids)
+        if cache_dir:
+            _save_cached_model(cache_dir, fingerprint, clf, feature_cols, cfg["output_dir"])
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
     predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)

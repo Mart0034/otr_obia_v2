@@ -2,6 +2,7 @@
 # One review-and-retrain cycle in a single command (run on the VPS in /home/container).
 #
 #   bash scripts/run_cycle.sh TAG --reviewed rev_in/my_reviews.gpkg --prev all4 --new all5 [--compare out_px12_qv4]
+#       [--extra-root DIR] [--ops-extra FILE]   # more tile folders (made by sites_from_vector.py) and their mine/quarry outlines
 #   bash scripts/run_cycle.sh TAG --labels all4 [--compare out_px12_qv4]       # same labels, e.g. a speed test
 #
 # What it does: reviews -> labels (reviewed_to_labels, merged with the earlier labels), splits the quarry tiles
@@ -21,7 +22,7 @@ Q=data/sites_quarries
 TILE_CACHE=data/tile_cache
 
 TAG=$1; shift
-REVIEWED=""; PREV=""; NEW=""; LABELS=""; COMPARE=""; CACHE_FLAG="--tile-cache-dir $TILE_CACHE"
+REVIEWED=""; PREV=""; NEW=""; LABELS=""; COMPARE=""; EXTRA_ROOT=""; OPS_EXTRA=""; CACHE_FLAG="--tile-cache-dir $TILE_CACHE"
 while [ $# -gt 0 ]; do
   case $1 in
     --reviewed) REVIEWED=$2; shift 2;;
@@ -29,6 +30,8 @@ while [ $# -gt 0 ]; do
     --new) NEW=$2; shift 2;;
     --labels) LABELS=$2; shift 2;;
     --compare) COMPARE=$2; shift 2;;
+    --extra-root) EXTRA_ROOT=$2; shift 2;;
+    --ops-extra) OPS_EXTRA=$2; shift 2;;
     --no-cache) CACHE_FLAG=""; shift;;
     *) echo "unknown argument $1"; exit 2;;
   esac
@@ -55,13 +58,32 @@ for d in data/run15/labeled $Q/imagery; do
     [ -e data/all_dem/$id ] || for s in $Q/dem data/run15/dem data/boss/dem; do [ -e $s/$id ] && { ln -sf "$(realpath $s/$id)" data/all_dem/$id; break; }; done
   done
 done
+# extra tiles (new regions): keep only tiles that have all inputs, link them into the shared folders
+TILES_ALL=$Q/imagery
+if [ -n "$EXTRA_ROOT" ]; then
+  rm -rf data/tiles_all; mkdir -p data/tiles_all $EXTRA_ROOT/complete
+  for f in $Q/imagery/*.tif; do ln -sf "$(realpath $f)" data/tiles_all/$(basename $f); done
+  n=0
+  for f in $EXTRA_ROOT/imagery/*.tif; do id=$(basename $f .tif)
+    if [ -e $EXTRA_ROOT/sentinel1/$id.tif ] && [ -e $EXTRA_ROOT/dem/$id.tif ] && [ -e $EXTRA_ROOT/s2my/$id.tif ]; then
+      ln -sf "$(realpath $f)" data/tiles_all/$id.tif
+      ln -sf "$(realpath $EXTRA_ROOT/sentinel1/$id.tif)" data/all_s1/$id.tif
+      ln -sf "$(realpath $EXTRA_ROOT/dem/$id.tif)" data/all_dem/$id.tif
+      ln -sf "$(realpath $EXTRA_ROOT/s2my/$id.tif)" data/s2_multiyear_all/$id.tif
+      for k in roads buildings poi; do [ -e $EXTRA_ROOT/osm_$k/$id.gpkg ] && ln -sf "$(realpath $EXTRA_ROOT/osm_$k/$id.gpkg)" $Q/osm_$k/$id.gpkg; done
+      n=$((n+1))
+    fi
+  done
+  TILES_ALL=data/tiles_all
+  stamp "extra tiles with all inputs: $n (from $EXTRA_ROOT)"
+fi
 stamp "all_s1: $(ls data/all_s1 | wc -l) files, all_dem: $(ls data/all_dem | wc -l) files"
 phase "0 input folders"
 
 if [ -n "$REVIEWED" ]; then
   stamp "=== 1. reviews -> labels ($PREV -> $NEW)"
   mkdir -p rev_in
-  $PY src/reviewed_to_labels.py --reviewed "$REVIEWED" --tiles-dir $Q/imagery --out-dir rev_in/${TAG}_out > rev_in/$TAG.log 2>&1 \
+  $PY src/reviewed_to_labels.py --reviewed "$REVIEWED" --tiles-dir $TILES_ALL --out-dir rev_in/${TAG}_out > rev_in/$TAG.log 2>&1 \
     || { stamp "reviewed_to_labels FAILED"; tail -8 rev_in/$TAG.log; exit 1; }
   tail -12 rev_in/$TAG.log
   $PY src/merge_review_outputs.py --base-dir $OUT --suffix $PREV --out-suffix $NEW --new rev_in/${TAG}_out \
@@ -71,7 +93,7 @@ fi
 
 stamp "=== 2. split quarry tiles: reviewed / rest"
 rm -rf $Q/imagery_reviewed $Q/imagery_rest; mkdir -p $Q/imagery_reviewed $Q/imagery_rest
-for f in $Q/imagery/*.tif; do
+for f in $TILES_ALL/*.tif; do
   id=$(basename $f .tif)
   if grep -qx "$id" $OUT/reviewed_tiles_$LABELS.txt; then ln -s "$(realpath $f)" $Q/imagery_reviewed/; else ln -s "$(realpath $f)" $Q/imagery_rest/; fi
 done
@@ -105,7 +127,7 @@ grep -c "aus dem Zwischenspeicher geladen" log_q$TAG.txt | sed 's/^/tiles loaded
 stamp "=== 4. candidate lists (top 2% area per mine, rank by size x mean score, with context)"
 COMMONC="--segments $RUN/segments_classified.gpkg --preselect --area-pct 2 --labels $OUT/labels_${LABELS}_for_eval.gpkg --exclude-known \
   --rank-by score --min-area-m2 2500 --max-site-m2 40000 --max-urban-frac 0.3 --exclude-areas $OUT/negatives_${LABELS}_clean.gpkg,$OUT/ignore_reviewed_$LABELS.geojson \
-  --operations data/mine_boundaries.gpkg,data/northChileQuarrys.geojson"
+  --operations data/mine_boundaries.gpkg,data/northChileQuarrys.geojson${OPS_EXTRA:+,$OPS_EXTRA}"
 $PY src/candidate_sites.py $COMMONC --top 2500 --sample-every 5 --out $RUN/candidate_sites_${TAG}_sample5.gpkg > log_${TAG}_sample5.txt 2>&1
 $PY src/candidate_sites.py $COMMONC --top 500 --out $RUN/candidate_sites_${TAG}_top500.gpkg > log_${TAG}_top500.txt 2>&1
 phase "4 candidate lists"

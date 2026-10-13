@@ -195,6 +195,21 @@ def build_arg_parser(description):
              "--extra-imagery-dir, das nur bewertet wird).",
     )
     parser.add_argument(
+        "--model-cache-dir", dest="model_cache_dir", metavar="DIR",
+        help="Das trainierte Modell hier ablegen und wiederverwenden, solange Trainingsdaten und Einstellungen gleich "
+             "sind (z.B. beim Bewerten neuer Kacheln): spart Training und Kreuzvalidierung (ca. 6 Minuten).",
+    )
+    parser.add_argument(
+        "--export-extra-only", dest="export_extra_only", action="store_true",
+        help="Nur die mit --extra-imagery-dir bewerteten Kacheln bewerten/exportieren (nicht auch die geprüften "
+             "Kacheln): spart Vorhersage, OSM-Flags, Straßendichte und Schreiben für alle anderen.",
+    )
+    parser.add_argument(
+        "--skip-polygons-extra", dest="skip_polygons_extra", action="store_true",
+        help="polygons_extra.gpkg (alle Segment-Polygone der neuen Kacheln, oft 2 GB) nicht schreiben; "
+             "eval_segment_size.py braucht sie.",
+    )
+    parser.add_argument(
         "--export-min-proba", dest="export_min_proba", type=float, metavar="P",
         help="Nur Segmente mit dump_proba >= P exportieren (z.B. 0.5). Spart bei Millionen von Segmenten "
              "den größten Teil der Export- und OSM-Flag-Zeit (die Datei wird auch viel kleiner).",
@@ -302,6 +317,9 @@ def resolve_config(base_config, args):
         "labeled_imagery_dir": getattr(args, "labeled_imagery_dir", None),
         "reviewed_imagery_dir": getattr(args, "reviewed_imagery_dir", None),
         "export_min_proba": getattr(args, "export_min_proba", None),
+        "model_cache_dir": getattr(args, "model_cache_dir", None),
+        "export_extra_only": getattr(args, "export_extra_only", False),
+        "skip_polygons_extra": getattr(args, "skip_polygons_extra", False),
         "candidate_lists_path": getattr(args, "candidate_lists_path", None),
         "add_labels_path": getattr(args, "add_labels_path", None),
         "hard_negatives_path": getattr(args, "hard_negatives_path", None),
