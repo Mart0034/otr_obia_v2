@@ -103,11 +103,197 @@
  "auto_clean": 889,
  "spot_checks": 179,
  "spot_misses": 0,
+ "growth": [
+  {
+   "round": "r01",
+   "found": 4,
+   "total": 42
+  },
+  {
+   "round": "r02",
+   "found": 6,
+   "total": 44
+  },
+  {
+   "round": "r03",
+   "found": 20,
+   "total": 58
+  },
+  {
+   "round": "r04",
+   "found": 31,
+   "total": 69
+  },
+  {
+   "round": "r05",
+   "found": 46,
+   "total": 84
+  },
+  {
+   "round": "r06",
+   "found": 56,
+   "total": 94
+  },
+  {
+   "round": "r07",
+   "found": 72,
+   "total": 110
+  },
+  {
+   "round": "r08",
+   "found": 80,
+   "total": 118
+  },
+  {
+   "round": "r09",
+   "found": 88,
+   "total": 126
+  }
+ ],
+ "gain": {
+  "n": 2424,
+  "positives": 67,
+  "points": [
+   {
+    "p": 1.01,
+    "x": 0.0,
+    "y": 0.0
+   },
+   {
+    "p": 0.95,
+    "x": 0.0037,
+    "y": 0.0746,
+    "sites": 9,
+    "found": 5
+   },
+   {
+    "p": 0.9,
+    "x": 0.0091,
+    "y": 0.1343,
+    "sites": 22,
+    "found": 9
+   },
+   {
+    "p": 0.85,
+    "x": 0.0202,
+    "y": 0.3881,
+    "sites": 49,
+    "found": 26
+   },
+   {
+    "p": 0.8,
+    "x": 0.0227,
+    "y": 0.4179,
+    "sites": 55,
+    "found": 28
+   },
+   {
+    "p": 0.7,
+    "x": 0.0305,
+    "y": 0.5821,
+    "sites": 74,
+    "found": 39
+   },
+   {
+    "p": 0.6,
+    "x": 0.0375,
+    "y": 0.6716,
+    "sites": 91,
+    "found": 45
+   },
+   {
+    "p": 0.5,
+    "x": 0.0396,
+    "y": 0.6866,
+    "sites": 96,
+    "found": 46
+   },
+   {
+    "p": 0.4,
+    "x": 0.0561,
+    "y": 0.7164,
+    "sites": 136,
+    "found": 48
+   },
+   {
+    "p": 0.3,
+    "x": 0.0747,
+    "y": 0.7463,
+    "sites": 181,
+    "found": 50
+   },
+   {
+    "p": 0.2,
+    "x": 0.1312,
+    "y": 0.8358,
+    "sites": 318,
+    "found": 56
+   },
+   {
+    "p": 0.1,
+    "x": 0.5248,
+    "y": 0.9851,
+    "sites": 1272,
+    "found": 66
+   },
+   {
+    "p": 0.0,
+    "x": 1.0,
+    "y": 1.0,
+    "sites": 2424,
+    "found": 67
+   }
+  ]
+ },
+ "ai_rounds": [
+  {
+   "round": "r04",
+   "flagged": 1,
+   "flagged_real": 0,
+   "positives": 1,
+   "caught": 0
+  },
+  {
+   "round": "r05",
+   "flagged": 26,
+   "flagged_real": 6,
+   "positives": 15,
+   "caught": 8
+  },
+  {
+   "round": "r06",
+   "flagged": 7,
+   "flagged_real": 5,
+   "positives": 10,
+   "caught": 7
+  },
+  {
+   "round": "r07",
+   "flagged": 17,
+   "flagged_real": 13,
+   "positives": 17,
+   "caught": 13
+  },
+  {
+   "round": "r08",
+   "flagged": 8,
+   "flagged_real": 3,
+   "positives": 9,
+   "caught": 5
+  },
+  {
+   "round": "r09",
+   "flagged": 15,
+   "flagged_real": 12,
+   "positives": 15,
+   "caught": 13
+  }
+ ],
  "known_polygons": 205,
  "known_places": 38,
  "found_sites": 97,
  "found_places": 88,
- "gain": 2.3,
+ "multiple": 2.3,
  "mines": 138,
  "found_cells": 87,
  "candidates": 500,

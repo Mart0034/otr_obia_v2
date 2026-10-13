@@ -170,6 +170,46 @@ def stats_from(reviewed, rounds):
     }
 
 
+def growth_curve(pos_sites, rounds, known_places):
+    """Wie viele Haldenorte sind bekannt, wenn man Runde für Runde dazunimmt? (Start + kumulierte Funde)"""
+    out, seen = [], []
+    for r in rounds:
+        if r.get("open"):
+            continue
+        seen.append(r["round"])
+        sub = pos_sites[pos_sites["round"].isin(seen)]
+        out.append({"round": r["round"], "found": int(len(to_places(sub))) if len(sub) else 0})
+    for o in out:
+        o["total"] = known_places + o["found"]
+    return out
+
+
+def gain_curve(reviewed):
+    """Prüft man die Standorte nach KI-Wert geordnet: welcher Anteil der Standorte muss angesehen werden, um welchen Anteil der
+    bestätigten Halden zu finden? (nur Runden mit KI-Wert; automatisch verworfene Standorte zählen als nicht-Halde)"""
+    d = reviewed[reviewed["review"].isin(["dump", "partial", "clean"]) & reviewed["ai_dump_p"].notna()].copy()
+    d["pos"] = d["review"].isin(["dump", "partial"])
+    n, total_pos = len(d), int(d["pos"].sum())
+    pts = [{"p": 1.01, "x": 0.0, "y": 0.0}]
+    for t in (0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0):
+        sub = d[d["ai_dump_p"] >= t]
+        pts.append({"p": t, "x": round(len(sub) / n, 4), "y": round(float(sub["pos"].sum()) / max(total_pos, 1), 4),
+                    "sites": int(len(sub)), "found": int(sub["pos"].sum())})
+    return {"n": n, "positives": total_pos, "points": pts}
+
+
+def ai_by_round(reviewed):
+    """Pro Runde: Anteil der Standorte mit KI >= 70 %, die echte Halden waren, und Anteil der Halden der Runde, die die KI (>= 50 %) markiert hat."""
+    d = reviewed[reviewed["review"].isin(["dump", "partial", "clean"]) & reviewed["ai_dump_p"].notna()].copy()
+    d["pos"] = d["review"].isin(["dump", "partial"])
+    rows = []
+    for r, g in d.groupby("round", sort=True):
+        hi, mid = g[g["ai_dump_p"] >= 0.7], g[g["ai_dump_p"] >= 0.5]
+        rows.append({"round": r, "flagged": int(len(hi)), "flagged_real": int(hi["pos"].sum()),
+                     "positives": int(g["pos"].sum()), "caught": int(mid["pos"].sum())})
+    return rows
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--out", default="docs/data")
@@ -222,11 +262,14 @@ def main(argv=None):
         rounds.append({"round": "r%02d" % (len(rounds) + 1), "tag": args.open_round, "listed": n_open, "checked": 0,
                        "auto": 0, "confirmed": 0, "open": True})
     st = stats_from(reviewed, rounds)
+    st["growth"] = growth_curve(pos, rounds, int(len(kdf)))
+    st["gain"] = gain_curve(reviewed)
+    st["ai_rounds"] = ai_by_round(reviewed)
     st["known_polygons"] = int(len(known))
     st["known_places"] = int(len(kdf))
     st["found_sites"] = int(len(pos))
     st["found_places"] = int(len(places))
-    st["gain"] = round(len(places) / max(len(kdf), 1), 1)
+    st["multiple"] = round(len(places) / max(len(kdf), 1), 1)
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
     st["candidates"] = int(sum(f["properties"]["n"] for f in cand_cells["features"]))

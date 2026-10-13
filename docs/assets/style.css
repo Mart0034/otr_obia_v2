@@ -81,3 +81,26 @@ input,textarea{background:var(--panel);border:1px solid var(--line);color:var(--
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}.reveal{opacity:1;transform:none}}
 
 .gain{margin:18px 0 0;color:#c4ccd5;font-size:16px}.gain b{color:var(--amber)}.note.places{max-width:760px;margin:-10px 0 20px}
+
+.seg{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+.seg button{flex:1;background:none;border:0;color:var(--muted);padding:10px 8px;font:600 13px var(--font);cursor:pointer;line-height:1.25}
+.seg button+button{border-left:1px solid var(--line)}.seg .on{background:var(--amber);color:#1a1205}
+.legend{list-style:none;margin:10px 0 0;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:grid;gap:10px}
+.legend li{display:grid;grid-template-columns:18px 1fr auto;gap:10px;align-items:center;font-size:14px;transition:opacity .25s}.legend li.off{opacity:.35}
+.legend em{font-style:normal;color:var(--muted);font-variant-numeric:tabular-nums}
+.sw-found{background:var(--green);border:2px solid #fff;border-radius:50%}
+.chk{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:14px;margin:8px 2px;cursor:pointer}.chk em{font-style:normal;color:var(--muted);font-size:13px}
+.bub{display:grid;place-items:center;border-radius:50%;color:#fff;font:700 12px var(--font);border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.5);transition:transform .15s}
+.bub:hover{transform:scale(1.12)}
+.bub.known{background:var(--blue);border-radius:4px}.bub.found{background:var(--green);color:#06281a}
+.bub.cand{background:rgba(216,222,230,.22);border:1.5px solid #d8dee6;box-shadow:none;color:#e8ecf1;font-weight:600}
+.card.wide.growth{margin-bottom:18px}.growth-head{display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.growth-head .big{font-size:clamp(40px,6vw,64px);white-space:nowrap}.growth-head h3{margin:0 0 4px}.growth-head p{margin:0;max-width:520px}
+#growthChart svg,#gainChart svg{width:100%;height:auto;display:block}
+.axis text{fill:var(--muted);font:11px var(--font)}.axis line,.axis path{stroke:var(--line)}
+.gridline{stroke:var(--line);stroke-dasharray:3 4}
+.aibar{display:grid;grid-template-columns:78px 1fr 92px;gap:10px;align-items:center;font-size:13px;color:var(--muted);margin:7px 0}
+.aibar .track{height:12px;border-radius:99px;background:var(--line);overflow:hidden}.aibar .fill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--green),#9af0c8);border-radius:99px;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.aibar .v{text-align:right;color:var(--text);font-variant-numeric:tabular-nums}.aibar .v small{color:var(--muted);font-size:11px;margin-left:4px}
+.rounds{margin:18px 0 0;border:1px solid var(--line);border-radius:12px;padding:10px 16px;background:var(--panel)}.rounds summary{cursor:pointer;color:var(--muted);font-size:14px}.rounds[open] summary{margin-bottom:10px}
+.cards-res{align-items:stretch}
