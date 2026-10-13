@@ -152,7 +152,18 @@ def plan_sites(gdf, buffer_m=0.0, south=None, north=None, min_area_m2=0.0,
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Kacheln aus einer Vektordatei (z.B. Steinbrüche) bauen.")
-    p.add_argument("--input", required=True, help="Vektordatei (GeoJSON, GPKG, SHP, ...).")
+    p.add_argument("--input", help="Vektordatei (GeoJSON, GPKG, SHP, ...). Entfällt bei --grid-bounds.")
+    p.add_argument("--grid-bounds", metavar="W,S,E,N",
+                   help="Statt einer Vektordatei: ein Raster aus quadratischen Kacheln über dieses Gebiet "
+                        "(Längen/Breiten in Grad), z.B. eine ganze Region.")
+    p.add_argument("--grid-tile-m", type=float, default=2700.0, help="Kantenlänge der Rasterkacheln in Metern.")
+    p.add_argument("--exclude-near", metavar="FILE",
+                   help="Kacheln überspringen, deren Mitte näher als --exclude-buffer-m an dieser Vektordatei liegt "
+                        "(z.B. bekannte Minen/Steinbrüche - wenn man weiter weg suchen will).")
+    p.add_argument("--exclude-buffer-m", type=float, default=1500.0)
+    p.add_argument("--prescreen", action="store_true",
+                   help="Kacheln nach ESA-WorldCover vorab aussortieren (Wasser, Schnee, Wald/Acker, Siedlung), "
+                        "bevor etwas heruntergeladen wird (siehe prescreen.py).")
     p.add_argument("--out-dir", default="data/sites", metavar="DIR",
                    help="Zielordner; darin imagery/, sentinel1/, dem/ und sites.csv.")
     p.add_argument("--buffer-m", type=float, default=0.0, help="Erweiterung jedes Objekts in Metern.")
@@ -188,14 +199,34 @@ def main(argv=None):
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
                         datefmt="%H:%M:%S")
-    gdf = gpd.read_file(args.input)
-    plan = plan_sites(
-        gdf, buffer_m=args.buffer_m, south=args.south, north=args.north,
-        min_area_m2=args.min_area_m2, max_tile_m=args.max_tile_m,
-        min_radius_m=args.min_radius_m, prefix=args.prefix,
-        merge_overlaps=args.merge_overlaps, buffer_scale=args.buffer_scale,
-        buffer_min_m=args.buffer_min_m, buffer_max_m=args.buffer_max_m,
-    )
+    if args.grid_bounds:
+        import prescreen
+        w, s_, e, n_ = (float(v) for v in args.grid_bounds.split(","))
+        plan = pd.DataFrame(prescreen.grid_tiles(w, s_, e, n_, args.grid_tile_m, prefix=args.prefix))
+    elif args.input:
+        gdf = gpd.read_file(args.input)
+        plan = plan_sites(
+            gdf, buffer_m=args.buffer_m, south=args.south, north=args.north,
+            min_area_m2=args.min_area_m2, max_tile_m=args.max_tile_m,
+            min_radius_m=args.min_radius_m, prefix=args.prefix,
+            merge_overlaps=args.merge_overlaps, buffer_scale=args.buffer_scale,
+            buffer_min_m=args.buffer_min_m, buffer_max_m=args.buffer_max_m,
+        )
+    else:
+        p.error("--input oder --grid-bounds angeben")
+    if args.exclude_near and len(plan):
+        from shapely.geometry import Point
+        known = gpd.read_file(args.exclude_near).to_crs(WORK_CRS)
+        zone = known.geometry.buffer(args.exclude_buffer_m).union_all()
+        near = [zone.intersects(Point(x, y)) for x, y in zip(plan["center_x"], plan["center_y"])]
+        plan.loc[[bool(v) and st == "ok" for v, st in zip(near, plan["status"])], "status"] = "nahe bekannter Mine/Steinbruch"
+    if args.prescreen and len(plan):
+        import prescreen
+        okm = plan["status"] == "ok"
+        screened = prescreen.screen_tiles(plan[okm].to_dict("records"))
+        reasons = pd.Series({i: (why if not keep else "") for i, (keep, why, _) in zip(plan.index[okm], screened)})
+        drop = reasons[reasons != ""]
+        plan.loc[drop.index, "status"] = "Landbedeckung: " + drop
     os.makedirs(args.out_dir, exist_ok=True)
     plan.to_csv(os.path.join(args.out_dir, "sites.csv"), index=False)
     ok = plan[plan["status"] == "ok"]
