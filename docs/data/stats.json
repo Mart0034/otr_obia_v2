@@ -107,47 +107,47 @@
   {
    "round": "r01",
    "found": 4,
-   "total": 209
+   "total": 42
   },
   {
    "round": "r02",
    "found": 6,
-   "total": 211
+   "total": 44
   },
   {
    "round": "r03",
    "found": 20,
-   "total": 225
+   "total": 58
   },
   {
    "round": "r04",
    "found": 31,
-   "total": 236
+   "total": 69
   },
   {
    "round": "r05",
    "found": 46,
-   "total": 251
+   "total": 84
   },
   {
    "round": "r06",
    "found": 56,
-   "total": 261
+   "total": 94
   },
   {
    "round": "r07",
-   "found": 73,
-   "total": 278
+   "found": 72,
+   "total": 110
   },
   {
    "round": "r08",
-   "found": 82,
-   "total": 287
+   "found": 80,
+   "total": 118
   },
   {
    "round": "r09",
-   "found": 97,
-   "total": 302
+   "found": 88,
+   "total": 126
   }
  ],
  "gain": {
@@ -290,15 +290,16 @@
   }
  ],
  "known_polygons": 205,
- "known_items": 205,
- "found_items": 97,
- "added_share": 0.473,
+ "known_places": 38,
+ "found_sites": 97,
+ "found_places": 88,
+ "multiple": 2.3,
  "mines": 138,
- "found_cells": 93,
+ "found_cells": 87,
  "candidates": 500,
  "found_by_how": {
-  "ai": 46,
-  "human": 51
+  "ai": 40,
+  "human": 48
  },
  "regions": {
   "north": {
@@ -306,8 +307,8 @@
    "south": -22.6,
    "north": -17.0,
    "known": 0,
-   "found": 32,
-   "found_ai": 19,
+   "found": 30,
+   "found_ai": 17,
    "found_human": 13,
    "reviewed": 531,
    "candidates": 204
@@ -316,10 +317,10 @@
    "name": "Atacama (Antofagasta)",
    "south": -25.7,
    "north": -22.6,
-   "known": 205,
-   "found": 35,
-   "found_ai": 15,
-   "found_human": 20,
+   "known": 38,
+   "found": 32,
+   "found_ai": 13,
+   "found_human": 19,
    "reviewed": 616,
    "candidates": 286
   },
@@ -328,9 +329,9 @@
    "south": -33.0,
    "north": -25.7,
    "known": 0,
-   "found": 30,
-   "found_ai": 12,
-   "found_human": 18,
+   "found": 26,
+   "found_ai": 10,
+   "found_human": 16,
    "reviewed": 675,
    "candidates": 10
   }

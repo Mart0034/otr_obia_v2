@@ -46,3 +46,10 @@ def test_round_table_counts_only_human_checked(tmp_path):
                       "auto": [False, False, True, False]})
     rows = ex.round_table(["r1:mines=x.gpkg"], d)
     assert rows == [{"round": "r1", "tag": "mines", "listed": 10, "checked": 3, "auto": 1, "confirmed": 1}]
+
+
+def test_place_ids_group_nearby_pieces_but_not_far_ones():
+    from shapely.geometry import box
+    pieces = [box(0, 0, 50, 50), box(120, 0, 170, 50), box(5000, 5000, 5050, 5050)]
+    ids = ex.place_ids(pieces)
+    assert ids[0] == ids[1] != ids[2]                       # zwei Stücke 70 m auseinander = ein Ort
