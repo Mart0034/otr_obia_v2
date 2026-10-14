@@ -95,7 +95,30 @@
     $("#lowBig").textContent = pct(s.ai_low.share, 1) + " %";
     $("#lowText").textContent = t("low_text", { n: nf(s.ai_low.n), c: nf(s.ai_low.confirmed) });
     $("#honestText").textContent = t("honest_text", { rate: pct(s.hit_rate, 1) });
-    renderSizes(); renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
+    renderFunnel(); renderSizes(); renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
+  }
+  function wrap(txt, n) { const out = []; let cur = ""; txt.split(" ").forEach((w) => { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; }); out.push(cur); return out; }
+  function renderFunnel() {
+    const el = $("#funnelChart"), f = DATA.stats && DATA.stats.funnel; if (!el || !f || !f.area_ha) return;
+    const steps = [
+      { k: "fun_area", n: null, ha: f.area_ha, sub: t("fun_tiles", { n: nf(f.tiles) }) },
+      { k: "fun_listed", n: f.listed.n, ha: f.listed.ha },
+      { k: "fun_human", n: f.human.n, ha: f.human.ha },
+      { k: "fun_conf", n: f.confirmed.n, ha: f.confirmed.ha },
+    ];
+    const lg = (v) => Math.log10(Math.max(v, 1)), top = lg(steps[0].ha), bot = lg(steps[steps.length - 1].ha) - 0.35;
+    const W = 760, H = 330, B = 74, T = 40, bw = 140, gap = (W - 4 * bw) / 5;
+    const hh = (v) => 24 + ((lg(v) - bot) / (top - bot)) * (H - B - T - 24);
+    const cols = steps.map((st, i) => {
+      const x = gap + i * (bw + gap), h = hh(st.ha), y = H - B - h, pctv = (st.ha / f.area_ha) * 100;
+      const pc = pctv >= 10 ? "100 %" : pctv >= 0.1 ? pctv.toLocaleString(LOCALE[lang], { maximumFractionDigits: 2 }) + " %" : "<0.1 %";
+      return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="6" fill="${i === 0 ? "#d6d3cc" : i === 3 ? "#16a34a" : "#e8590c"}" opacity="${i === 0 || i === 3 ? 1 : 1 - i * 0.18}"/>
+        <text x="${x + bw / 2}" y="${y - 22}" text-anchor="middle" class="fv">${nf(Math.round(st.ha))} ha</text>
+        <text x="${x + bw / 2}" y="${y - 7}" text-anchor="middle" class="fs">${i ? pc : ""}${st.n != null ? (i ? " · " : "") + nf(st.n) + " " + t("fun_sites") : st.sub}</text>
+        <text x="${x + bw / 2}" y="${H - B + 20}" text-anchor="middle" class="fl">${wrap(t(st.k), 17).map((ln, j) => `<tspan x="${x + bw / 2}" dy="${j ? 16 : 0}">${ln}</tspan>`).join("")}</text>`;
+    }).join("");
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="funsvg" aria-hidden="true">${cols}</svg>`;
+    $("#funnelNote").textContent = t("fun_note", { p: ((f.human.ha / f.area_ha) * 100).toLocaleString(LOCALE[lang], { maximumFractionDigits: 2 }) });
   }
   function renderSizes() {
     const el = $("#sizeChart"), bs = DATA.stats && DATA.stats.by_size; if (!el || !bs) return;
@@ -241,7 +264,7 @@
 
   /* ---------- gallery and before/after (high-resolution imagery loaded live) ---------- */
   function esri(map) {
-    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 17, maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(map);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 17, maxZoom: 20, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(map);
   }
   function initGallery() {
     const box = $("#gallery"); if (!box || !window.OTR_EX || !window.L) return;
@@ -249,10 +272,10 @@
     const io = new IntersectionObserver((es) => es.forEach((e) => {
       if (!e.isIntersecting) return; io.unobserve(e.target);
       const i = +e.target.id.slice(2), g = window.OTR_EX.gallery[i];
-      const m = L.map(e.target, { maxZoom: 19, zoomControl: false, attributionControl: i === 0, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+      const m = L.map(e.target, { maxZoom: 20, zoomControl: false, attributionControl: i === 0, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
       esri(m);
       const lay = L.geoJSON(g.geom, { style: { color: "#22c55e", weight: 2.5, fillOpacity: 0.08 } }).addTo(m);
-      m.fitBounds(lay.getBounds().pad(0.7), { maxZoom: 19, animate: false });
+      m.fitBounds(lay.getBounds().pad(0.7), { maxZoom: 19, animate: false }); m.setZoom(Math.min(20, m.getZoom() + 1), { animate: false });
     }), { rootMargin: "200px" });
     $$(".gmap", box).forEach((m) => io.observe(m));
     renderGalleryText();
@@ -281,25 +304,19 @@
       g.places = groups.length;
       return g;
     };
-    const known = mk(b.known, "#2563eb").addTo(cmpMap);
-    cmpFound = mk(b.found.map((f) => f.geom), "#16a34a").addTo(cmpMap);
-    cmpAll = L.featureGroup([known, cmpFound]);
-    // start close: the hand-marked outline with the nearest find, not the whole area
-    const nearest = b.known.map((g) => L.geoJSON(g).getBounds()).map((kb) => {
-      const f = b.found.map((x) => L.geoJSON(x.geom).getBounds()).sort((u, v) => kb.getCenter().distanceTo(u.getCenter()) - kb.getCenter().distanceTo(v.getCenter()))[0];
-      return { kb, f, d: f ? kb.getCenter().distanceTo(f.getCenter()) : 1e9 };
-    }).sort((u, v) => u.d - v.d)[0];
-    cmpFocus = nearest ? L.latLngBounds(nearest.kb.getSouthWest(), nearest.kb.getNorthEast()).extend(nearest.f) : cmpAll.getBounds();
+        cmpFound = mk(b.found.map((f) => f.geom), "#16a34a").addTo(cmpMap);
+    cmpAll = cmpFound;
+    cmpFocus = cmpAll.getBounds();
     const fit = (bb, pad) => { cmpMap.invalidateSize(); cmpMap.fitBounds(bb.pad(pad), { maxZoom: 18, animate: false }); };
-    const home = () => fit(cmpFocus, 1.2);
+    const home = () => fit(cmpFocus, 0.3);
     home(); setTimeout(home, 400);
-    $("#cmpKnown").textContent = nf(known.places); $("#cmpFound").textContent = nf(cmpFound.places);
-    $("#cmpAllBtn").addEventListener("click", () => { cmpMap.fitBounds(cmpAll.getBounds().pad(0.15), { maxZoom: 16 }); });
-    $("#cmpCloseBtn").addEventListener("click", () => { cmpMap.fitBounds(cmpFocus.pad(1.2), { maxZoom: 18 }); });
+    $("#cmpFound").textContent = nf(cmpFound.places);
+    $("#cmpAllBtn").addEventListener("click", () => { cmpMap.fitBounds(cmpAll.getBounds().pad(0.3), { maxZoom: 18 }); });
     $$("#cmpSeg button").forEach((x) => x.addEventListener("click", () => {
       cmpMode = x.dataset.cmp; $$("#cmpSeg button").forEach((y) => y.classList.toggle("on", y === x));
       cmpMode === "now" ? cmpFound.addTo(cmpMap) : cmpMap.removeLayer(cmpFound);
       $("#cmpFoundLi").classList.toggle("off", cmpMode !== "now");
+      $("#cmpEmpty").hidden = cmpMode === "now";
     }));
   }
 

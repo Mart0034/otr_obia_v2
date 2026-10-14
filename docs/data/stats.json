@@ -300,6 +300,22 @@
  "mines": 138,
  "found_cells": 87,
  "candidates": 500,
+ "funnel": {
+  "area_ha": 911440,
+  "tiles": 791,
+  "listed": {
+   "n": 2711,
+   "ha": 5218.6
+  },
+  "human": {
+   "n": 1822,
+   "ha": 3408.6
+  },
+  "confirmed": {
+   "n": 97,
+   "ha": 165.4
+  }
+ },
  "by_size": {
   "s": {
    "dump": 2,

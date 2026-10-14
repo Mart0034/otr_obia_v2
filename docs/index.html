@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8590c' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e8590c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="assets/style.css?v=202610141142">
+<link rel="stylesheet" href="assets/style.css?v=202610141148">
 </head>
 <body>
 <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
@@ -87,9 +87,9 @@
     <h2 data-i18n="cmp_title"></h2>
     <p class="sub" data-i18n="cmp_lead"></p>
     <div class="seg cmpseg" role="group" id="cmpSeg"><button type="button" data-cmp="start" data-i18n="cmp_start"></button><button type="button" data-cmp="now" class="on" data-i18n="cmp_now"></button></div>
-    <div class="cmpbtns"><button type="button" class="btn ghost" id="cmpCloseBtn" data-i18n="cmp_close"></button><button type="button" class="btn ghost" id="cmpAllBtn" data-i18n="cmp_all"></button></div>
-    <div class="cmpbox"><div id="cmpMap" role="application" aria-label="Map"></div></div>
-    <ul class="legend cmplegend"><li><i class="sw sw-known"></i><span data-i18n="cmp_known"></span><em id="cmpKnown"></em></li><li id="cmpFoundLi"><i class="sw sw-found"></i><span data-i18n="cmp_found"></span><em id="cmpFound"></em></li></ul>
+    <div class="cmpbtns"><button type="button" class="btn ghost" id="cmpAllBtn" data-i18n="cmp_all"></button></div>
+    <div class="cmpbox"><div id="cmpMap" role="application" aria-label="Map"></div><div id="cmpEmpty" class="cmpempty" hidden data-i18n="cmp_empty"></div></div>
+    <ul class="legend cmplegend"><li id="cmpFoundLi"><i class="sw sw-found"></i><span data-i18n="cmp_found"></span><em id="cmpFound"></em></li></ul>
   </div>
 </section>
 
@@ -126,6 +126,7 @@
   <div class="wrap">
     <h2 data-i18n="res_title"></h2>
     <p class="sub" data-i18n="res_lead"></p>
+    <article class="card wide funnel"><h3 data-i18n="fun_title"></h3><p class="sub" data-i18n="fun_lead"></p><div id="funnelChart" role="img" aria-label="Funnel"></div><p class="small" id="funnelNote"></p></article>
     <div class="proof" id="proof">
       <article class="card"><h3 data-i18n="ai_title"></h3><div class="big" id="aiBig"></div><p id="aiText"></p></article>
       <article class="card"><h3 data-i18n="low_title"></h3><div class="big" id="lowBig"></div><p id="lowText"></p></article>
@@ -177,9 +178,9 @@
 </footer>
 
 <script src="assets/vendor/leaflet/leaflet.js"></script>
-<script src="data/examples.js?v=202610141142"></script>
-<script src="data/data.js?v=202610141142"></script>
-<script src="assets/i18n.js?v=202610141142"></script>
-<script src="assets/app.js?v=202610141142"></script>
+<script src="data/examples.js?v=202610141148"></script>
+<script src="data/data.js?v=202610141148"></script>
+<script src="assets/i18n.js?v=202610141148"></script>
+<script src="assets/app.js?v=202610141148"></script>
 </body>
 </html>

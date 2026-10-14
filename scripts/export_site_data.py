@@ -276,6 +276,12 @@ def main(argv=None):
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
     st["candidates"] = int(sum(f["properties"]["n"] for f in cand_cells["features"]))
+    human_rows = reviewed[~reviewed["auto"]]
+    ha = lambda df: round(float(df["area_m2"].sum()) / 10000, 1)
+    st["funnel"] = {"area_ha": round(args.scan_km2 * 100) if args.scan_km2 else None, "tiles": args.scan_tiles,
+                    "listed": {"n": int(len(reviewed)), "ha": ha(reviewed)},
+                    "human": {"n": int(len(human_rows)), "ha": ha(human_rows)},
+                    "confirmed": {"n": int(len(pos)), "ha": ha(pos)}}
     st["by_size"] = {sz: {k: int(((places["size"] == sz) & (places["kind"] == k)).sum()) for k in ("dump", "partial")} for sz in ("s", "m", "l")}
     st["found_by_how"] = {k: int((places["how"] == k).sum()) for k in ("ai", "human")}
     st["regions"] = {}

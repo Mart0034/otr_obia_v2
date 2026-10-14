@@ -339,3 +339,29 @@ Object.assign(window.I18N.es, { ai_title: "Cuando la IA está segura, más de la
 Object.assign(window.I18N.en, { cmp_close: "Zoom to one pair", cmp_all: "Show the whole area", cmp_lead: "The same area at the start and today. Blue pins mark spots our partner marked by hand. Green pins mark spots found with the system. Click a pin to zoom in." });
 Object.assign(window.I18N.de, { cmp_close: "Auf ein Paar zoomen", cmp_all: "Ganzes Gebiet zeigen", cmp_lead: "Dasselbe Gebiet am Anfang und heute. Blaue Pins markieren Stellen, die unser Partner von Hand markiert hat. Grüne Pins markieren Stellen, die mit dem System gefunden wurden. Ein Klick auf einen Pin zoomt hinein." });
 Object.assign(window.I18N.es, { cmp_close: "Acercar a un par", cmp_all: "Mostrar toda el área", cmp_lead: "La misma zona al inicio y hoy. Los pines azules marcan lugares que nuestro socio marcó a mano. Los pines verdes marcan lugares encontrados con el sistema. Haz clic en un pin para acercar." });
+
+Object.assign(window.I18N.en, {
+  cmp_title: "A place where we knew nothing", cmp_lead: "No dump was known in this area at the start. The pins show what the system found. Click a pin to zoom in.",
+  cmp_start: "At the start", cmp_now: "Today", cmp_found: "dump places found with the system", cmp_empty: "At the start: no known dump here", cmp_all: "Show the whole area",
+  fun_title: "A person checks a tiny fraction of the area", fun_lead: "From all the imagery analysed down to the confirmed dumps. Heights use a logarithmic scale, so the numbers matter more than the bar heights.",
+  fun_area: "Area analysed", fun_listed: "Sites the model shortlisted", fun_human: "Left for a person after the AI check", fun_conf: "Confirmed dumps", fun_sites: "sites", fun_tiles: "{n} tiles",
+  fun_note: "People looked at {p}% of the analysed area. The model and the AI checked the rest.",
+});
+Object.assign(window.I18N.de, {
+  cmp_title: "Ein Ort, von dem wir nichts wussten", cmp_lead: "In diesem Gebiet war am Anfang keine Halde bekannt. Die Pins zeigen, was das System gefunden hat. Ein Klick auf einen Pin zoomt hinein.",
+  cmp_start: "Am Anfang", cmp_now: "Heute", cmp_found: "mit dem System gefundene Haldenorte", cmp_empty: "Am Anfang: keine Halde bekannt", cmp_all: "Ganzes Gebiet zeigen",
+  fun_title: "Ein Mensch prüft nur einen winzigen Teil der Fläche", fun_lead: "Von allen analysierten Bildern bis zu den bestätigten Halden. Die Höhen sind logarithmisch skaliert, die Zahlen zählen mehr als die Balkenhöhen.",
+  fun_area: "Analysierte Fläche", fun_listed: "Vom Modell vorgeschlagene Standorte", fun_human: "Nach der KI-Prüfung für einen Menschen übrig", fun_conf: "Bestätigte Halden", fun_sites: "Standorte", fun_tiles: "{n} Kacheln",
+  fun_note: "Menschen haben {p} % der analysierten Fläche angesehen. Den Rest haben Modell und KI geprüft.",
+});
+Object.assign(window.I18N.es, {
+  cmp_title: "Un lugar del que no sabíamos nada", cmp_lead: "Al inicio no se conocía ningún vertedero en esta zona. Los pines muestran lo que encontró el sistema. Haz clic en un pin para acercar.",
+  cmp_start: "Al inicio", cmp_now: "Hoy", cmp_found: "lugares con vertedero encontrados con el sistema", cmp_empty: "Al inicio: ningún vertedero conocido aquí", cmp_all: "Mostrar toda el área",
+  fun_title: "Una persona revisa una fracción diminuta del área", fun_lead: "De todas las imágenes analizadas hasta los vertederos confirmados. Las alturas usan escala logarítmica, así que importan más las cifras que la altura de las barras.",
+  fun_area: "Área analizada", fun_listed: "Sitios preseleccionados por el modelo", fun_human: "Para una persona tras la revisión de la IA", fun_conf: "Vertederos confirmados", fun_sites: "sitios", fun_tiles: "{n} teselas",
+  fun_note: "Las personas revisaron el {p} % del área analizada. El resto lo revisaron el modelo y la IA.",
+});
+
+Object.assign(window.I18N.en, { fun_listed: "Shortlisted by the model", fun_human: "Left for a person after the AI check" });
+Object.assign(window.I18N.de, { fun_listed: "Vom Modell vorgeschlagen", fun_human: "Nach der KI-Prüfung für einen Menschen" });
+Object.assign(window.I18N.es, { fun_listed: "Preseleccionados por el modelo", fun_human: "Para una persona tras la IA" });
