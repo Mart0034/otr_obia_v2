@@ -369,3 +369,31 @@ Object.assign(window.I18N.es, { fun_listed: "Preseleccionados por el modelo", fu
 Object.assign(window.I18N.en, { stat_area: "hectares of dump sites outlined by the system", area_full: "(of which {n} ha are whole dumps, the rest sit inside larger sites)" });
 Object.assign(window.I18N.de, { stat_area: "Hektar Haldenstandorte vom System umrissen", area_full: "(davon {n} ha ganze Halden, der Rest liegt innerhalb größerer Standorte)" });
 Object.assign(window.I18N.es, { stat_area: "hectáreas de sitios con vertedero delimitados por el sistema", area_full: "(de las cuales {n} ha son vertederos completos, el resto está dentro de sitios mayores)" });
+
+/* time series */
+Object.assign(window.I18N.en, {
+  tl_title: "The same place, year by year", tl_lead: "Free Sentinel-2 images make it possible to watch a place over time. The model uses this change as one of its clues.",
+  tl_tab: "Example {i} · {a} m²", tl_play: "Play", tl_pause: "Pause", tl_outline: "Show the confirmed outline",
+  tl_chart_title: "Average brightness inside the outline (lower = darker)",
+  tl_text_a: "The ground inside the outline was bright until 2019. From 2020 a dark patch appears, and it keeps getting darker and larger. This is what a growing tire dump looks like from space. Selected year: {y}.",
+  tl_text_c: "This dump is already visible in 2017 and stays almost unchanged since. Satellites can tell a long-standing stockpile from a new one. Selected year: {y}.",
+});
+Object.assign(window.I18N.de, {
+  tl_title: "Derselbe Ort, Jahr für Jahr", tl_lead: "Mit freien Sentinel-2-Bildern lässt sich ein Ort über die Zeit verfolgen. Das Modell nutzt diese Veränderung als einen seiner Hinweise.",
+  tl_tab: "Beispiel {i} · {a} m²", tl_play: "Abspielen", tl_pause: "Pause", tl_outline: "Bestätigten Umriss zeigen",
+  tl_chart_title: "Mittlere Helligkeit im Umriss (niedriger = dunkler)",
+  tl_text_a: "Der Boden im Umriss war bis 2019 hell. Ab 2020 entsteht eine dunkle Fläche, die immer dunkler und größer wird. So sieht eine wachsende Reifenhalde aus dem All aus. Gewähltes Jahr: {y}.",
+  tl_text_c: "Diese Halde ist schon 2017 sichtbar und bleibt seitdem fast unverändert. Satelliten können einen langjährigen Lagerplatz von einem neuen unterscheiden. Gewähltes Jahr: {y}.",
+});
+Object.assign(window.I18N.es, {
+  tl_title: "El mismo lugar, año tras año", tl_lead: "Las imágenes gratuitas de Sentinel-2 permiten seguir un lugar en el tiempo. El modelo usa este cambio como una de sus pistas.",
+  tl_tab: "Ejemplo {i} · {a} m²", tl_play: "Reproducir", tl_pause: "Pausa", tl_outline: "Mostrar el contorno confirmado",
+  tl_chart_title: "Brillo medio dentro del contorno (menor = más oscuro)",
+  tl_text_a: "El suelo dentro del contorno era claro hasta 2019. Desde 2020 aparece una mancha oscura que se oscurece y crece. Así se ve desde el espacio un vertedero de neumáticos en crecimiento. Año elegido: {y}.",
+  tl_text_c: "Este vertedero ya es visible en 2017 y casi no ha cambiado desde entonces. Los satélites distinguen un acopio antiguo de uno nuevo. Año elegido: {y}.",
+});
+Object.assign(window.I18N.en, { nav_finds: "Finds" });
+
+Object.assign(window.I18N.en, { nav_time: "Over time" });
+Object.assign(window.I18N.de, { nav_time: "Zeitverlauf" });
+Object.assign(window.I18N.es, { nav_time: "En el tiempo" });

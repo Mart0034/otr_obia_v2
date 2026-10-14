@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8590c' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e8590c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="assets/style.css?v=202610141224">
+<link rel="stylesheet" href="assets/style.css?v=202610141241">
 </head>
 <body>
 <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
@@ -21,6 +21,7 @@
   <nav aria-label="Main">
     <a href="#how" data-i18n="nav_how">How it works</a>
     <a href="#finds" data-i18n="nav_finds">Finds</a>
+    <a href="#timeline" data-i18n="nav_time">Over time</a>
     <a href="#map" data-i18n="nav_map">Map</a>
     <a href="#results" data-i18n="nav_results">Results</a>
     <a href="#why" data-i18n="nav_why">Use cases</a>
@@ -33,6 +34,7 @@
 
 <main id="main">
 <section class="hero">
+  <img class="hero-art" src="assets/img/hero-mine.webp" alt="" aria-hidden="true">
   <div class="wrap hero-inner">
     <p class="kicker" data-i18n="hero_kicker">Proof of concept</p>
     <h1 data-i18n="hero_title">Finding mining tire dumps from satellite images</h1>
@@ -83,14 +85,25 @@
   </div>
 </section>
 
-<section id="compare" class="band">
+<section id="timeline" class="band">
   <div class="wrap">
-    <h2 data-i18n="cmp_title"></h2>
-    <p class="sub" data-i18n="cmp_lead"></p>
-    <div class="seg cmpseg" role="group" id="cmpSeg"><button type="button" data-cmp="start" data-i18n="cmp_start"></button><button type="button" data-cmp="now" class="on" data-i18n="cmp_now"></button></div>
-    <div class="cmpbtns"><button type="button" class="btn ghost" id="cmpAllBtn" data-i18n="cmp_all"></button></div>
-    <div class="cmpbox"><div id="cmpMap" role="application" aria-label="Map"></div><div id="cmpEmpty" class="cmpempty" hidden data-i18n="cmp_empty"></div></div>
-    <ul class="legend cmplegend"><li id="cmpFoundLi"><i class="sw sw-found"></i><span data-i18n="cmp_found"></span><em id="cmpFound"></em></li></ul>
+    <h2 data-i18n="tl_title"></h2>
+    <p class="sub" data-i18n="tl_lead"></p>
+    <div class="examples" role="tablist" aria-label="Examples" id="tlTabs"></div>
+    <div class="tlgrid">
+      <figure class="chip tlfig">
+        <div class="chip-imgs" id="tlImgs"></div>
+        <div class="tlyear" id="tlYear"></div>
+      </figure>
+      <div class="tlside">
+        <div class="tlctl"><button class="btn primary" id="tlPlay" type="button" aria-label="Play"></button><input type="range" id="tlRange" min="0" max="8" step="1" aria-label="Year"></div>
+        <div class="tlscale" id="tlScale"></div>
+        <h3 data-i18n="tl_chart_title"></h3>
+        <div id="tlChart" role="img" aria-label="Brightness over the years"></div>
+        <p id="tlText"></p>
+        <label class="chk"><input type="checkbox" id="tlOutline" checked><span data-i18n="tl_outline"></span><em></em></label>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -179,9 +192,10 @@
 </footer>
 
 <script src="assets/vendor/leaflet/leaflet.js"></script>
-<script src="data/examples.js?v=202610141224"></script>
-<script src="data/data.js?v=202610141224"></script>
-<script src="assets/i18n.js?v=202610141224"></script>
-<script src="assets/app.js?v=202610141224"></script>
+<script src="data/timeline.js?v=202610141241"></script>
+<script src="data/examples.js?v=202610141241"></script>
+<script src="data/data.js?v=202610141241"></script>
+<script src="assets/i18n.js?v=202610141241"></script>
+<script src="assets/app.js?v=202610141241"></script>
 </body>
 </html>
