@@ -287,3 +287,7 @@ Object.assign(window.I18N.es, { ex_s2: "Sentinel-2 (lo que ve el sistema)", ex_h
 Object.assign(window.I18N.en, { privacy: "Locations on the map are rounded to ~1 km cells. The three examples above show their real position." });
 Object.assign(window.I18N.de, { privacy: "Orte auf der Karte sind auf ~1-km-Zellen gerundet. Die drei Beispiele oben zeigen ihre echte Position." });
 Object.assign(window.I18N.es, { privacy: "Las ubicaciones del mapa están redondeadas a celdas de ~1 km. Los tres ejemplos de arriba muestran su posición real." });
+
+Object.assign(window.I18N.en, { stat_scan: "hectares of satellite imagery analysed" });
+Object.assign(window.I18N.de, { stat_scan: "Hektar Satellitenbilder analysiert" });
+Object.assign(window.I18N.es, { stat_scan: "hectáreas de imágenes satelitales analizadas" });

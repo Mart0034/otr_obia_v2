@@ -30,8 +30,8 @@
   /* ---------- steps ---------- */
   const EXAMPLES = [
     { id: "a", lat: -28.1938, lon: -69.558, area: 14400, ai: 98 },
-    { id: "b", lat: -26.8165, lon: -69.273, area: 29000, ai: 85 },
-    { id: "c", lat: -22.3491, lon: -68.8655, area: 10700, ai: 85 },
+    { id: "b", lat: -24.2224, lon: -69.0386, area: 35700, ai: 70 },
+    { id: "c", lat: -22.3432, lon: -68.9051, area: 25800, ai: 95 },
   ];
   let ex = 0;
   function buildExamples() {
@@ -48,12 +48,12 @@
     if (!on || !window.L || !window.OTR_EX) return;
     const e = EXAMPLES[ex], geom = window.OTR_EX[e.id];
     if (!exMap) {
-      exMap = L.map("exMap", { zoomControl: true, maxZoom: 19, scrollWheelZoom: false });
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(exMap);
+      exMap = L.map("exMap", { zoomControl: true, maxZoom: 17, scrollWheelZoom: false });
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 17, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(exMap);
     }
     if (exLayer) exMap.removeLayer(exLayer);
     exLayer = L.geoJSON(geom, { style: { color: "#22c55e", weight: 3, fillOpacity: 0.08 } }).addTo(exMap);
-    exMap.invalidateSize(); exMap.fitBounds(exLayer.getBounds().pad(2.5), { maxZoom: 18, animate: false });
+    exMap.invalidateSize(); exMap.fitBounds(exLayer.getBounds().pad(2.5), { maxZoom: 17, animate: false });
   }
   function renderStep() {
     const e = EXAMPLES[ex];

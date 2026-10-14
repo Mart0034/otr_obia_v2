@@ -267,6 +267,7 @@ def main(argv=None):
     st["gain"] = gain_curve(reviewed)
     st["ai_rounds"] = ai_by_round(reviewed)
     st["scan_tiles"], st["scan_km2"] = args.scan_tiles, args.scan_km2
+    st["scan_ha"] = round(args.scan_km2 * 100) if args.scan_km2 else None
     st["known_polygons"] = int(len(known))
     st["known_places"] = int(len(kdf))
     st["found_sites"] = int(len(pos))

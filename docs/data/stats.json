@@ -289,8 +289,9 @@
    "caught": 13
   }
  ],
- "scan_tiles": null,
- "scan_km2": null,
+ "scan_tiles": 791,
+ "scan_km2": 9114.4,
+ "scan_ha": 911440,
  "known_polygons": 205,
  "known_places": 38,
  "found_sites": 97,
