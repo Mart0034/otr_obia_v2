@@ -283,6 +283,8 @@ def main(argv=None):
                     "listed": {"n": int(len(reviewed)), "ha": ha(reviewed)},
                     "human": {"n": int(len(human_rows)), "ha": ha(human_rows)},
                     "confirmed": {"n": int(len(pos)), "ha": ha(pos)}}
+    st["found_ha"] = round(float(pos["area_m2"].sum()) / 10000, 1)
+    st["found_full_ha"] = round(float(pos.loc[pos["review"] == "dump", "area_m2"].sum()) / 10000, 1)
     st["by_size"] = {sz: {k: int(((places["size"] == sz) & (places["kind"] == k)).sum()) for k in ("dump", "partial")} for sz in ("s", "m", "l")}
     st["found_by_how"] = {k: int((places["how"] == k).sum()) for k in ("ai", "human")}
     st["regions"] = {}

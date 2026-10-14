@@ -365,3 +365,7 @@ Object.assign(window.I18N.es, {
 Object.assign(window.I18N.en, { fun_listed: "Shortlisted by the model", fun_human: "Left for a person after the AI check" });
 Object.assign(window.I18N.de, { fun_listed: "Vom Modell vorgeschlagen", fun_human: "Nach der KI-Prüfung für einen Menschen" });
 Object.assign(window.I18N.es, { fun_listed: "Preseleccionados por el modelo", fun_human: "Para una persona tras la IA" });
+
+Object.assign(window.I18N.en, { stat_area: "hectares of dump sites outlined by the system", area_full: "(of which {n} ha are whole dumps, the rest sit inside larger sites)" });
+Object.assign(window.I18N.de, { stat_area: "Hektar Haldenstandorte vom System umrissen", area_full: "(davon {n} ha ganze Halden, der Rest liegt innerhalb größerer Standorte)" });
+Object.assign(window.I18N.es, { stat_area: "hectáreas de sitios con vertedero delimitados por el sistema", area_full: "(de las cuales {n} ha son vertederos completos, el resto está dentro de sitios mayores)" });

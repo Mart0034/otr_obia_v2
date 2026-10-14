@@ -78,6 +78,7 @@
     const s = DATA.stats; if (!s) return;
     const c = counts();
     $$("[data-count]").forEach((el) => { const v = s[el.dataset.count]; el.dataset.target = v == null ? "" : v; el.textContent = v == null ? "–" : nf(Math.round(v)); });
+    $("#areaFull").textContent = t("area_full", { n: nf(Math.round(s.found_full_ha)) });
     $("#scanTiles").textContent = s.scan_tiles ? "(" + t("scan_tiles", { n: nf(s.scan_tiles) }) + ")" : "";
     $$("[data-n]").forEach((el) => (el.textContent = nf(c[el.dataset.n] ?? 0)));
     $("#foundSplit").textContent = t("found_split", { ai: nf(c.ai), human: nf(c.human) });

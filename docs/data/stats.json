@@ -316,6 +316,8 @@
    "ha": 165.4
   }
  },
+ "found_ha": 165.4,
+ "found_full_ha": 46.5,
  "by_size": {
   "s": {
    "dump": 2,
@@ -343,7 +345,7 @@
    "found": 30,
    "found_ai": 17,
    "found_human": 13,
-   "reviewed": 531,
+   "reviewed": 469,
    "candidates": 204
   },
   "atacama": {
@@ -354,7 +356,7 @@
    "found": 32,
    "found_ai": 13,
    "found_human": 19,
-   "reviewed": 616,
+   "reviewed": 563,
    "candidates": 286
   },
   "south": {
@@ -365,7 +367,7 @@
    "found": 26,
    "found_ai": 10,
    "found_human": 16,
-   "reviewed": 675,
+   "reviewed": 611,
    "candidates": 10
   }
  }

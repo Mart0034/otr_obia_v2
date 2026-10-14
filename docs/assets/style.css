@@ -170,3 +170,6 @@ a{color:var(--amber)}
 
 .cmpbox{position:relative}.cmpempty{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:800;background:#fff;border:1px solid var(--line);border-radius:999px;padding:8px 18px;font-weight:600;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.15)}.cmpempty[hidden]{display:none}
 .funnel .funsvg{width:100%;height:auto;display:block}.funsvg .fv{font:700 17px var(--font);fill:var(--text)}.funsvg .fs{font:12px var(--font);fill:var(--muted)}.funsvg .fl{font:600 13px var(--font);fill:var(--text)}
+
+.stats{grid-template-columns:repeat(4,1fr)}.stats div{padding-right:18px}.stats div+div{padding-left:22px}
+@media (max-width:980px){.stats{grid-template-columns:1fr}.stats div+div{padding-left:0}}
