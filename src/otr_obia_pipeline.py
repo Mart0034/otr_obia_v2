@@ -2165,6 +2165,7 @@ def main(cfg=CONFIG):
     labeled_dir = cfg.get("labeled_imagery_dir")
     reviewed_dir = cfg.get("reviewed_imagery_dir")
     extra_ids, labeled_ids, reviewed_ids = [], [], []
+    foreign = None
     if extra_dir or labeled_dir or reviewed_dir:
         if feature_df is None:
             raise ValueError(
@@ -2191,6 +2192,16 @@ def main(cfg=CONFIG):
             rf, rp = build_dataset({**cfg, "imagery_dir": reviewed_dir})
             reviewed_ids = sorted(rf["mine_id"].unique())
             new_feats.append(rf); new_polys.append(rp)
+        # Kacheln in einem anderen Koordinatensystem (andere Länder/UTM-Zone) lassen sich nicht mit dem Chile-Datensatz
+        # in einer Tabelle zusammenfassen: sie werden nur bewertet und getrennt exportiert (--export-extra-only).
+        foreign = None
+        if extra_dir and cfg.get("export_extra_only") and ep.crs is not None and polygons_gdf.crs is not None \
+                and not ep.crs.equals(polygons_gdf.crs):
+            foreign = (ef, ep)
+            new_feats = [x for x in new_feats if x is not ef]
+            new_polys = [x for x in new_polys if x is not ep]
+            logger.info("Zusätzliche Kacheln liegen in %s (Datensatz: %s): getrennt bewertet und exportiert.",
+                        ep.crs.to_string(), polygons_gdf.crs.to_string())
         replaced = extra_ids + labeled_ids + reviewed_ids
         # Die Segment-Polygone der neuen Kacheln stehen NICHT im polygons_cache.gpkg
         # (der gehört zum Volllauf) - separat ablegen, damit sich z.B.
@@ -2249,7 +2260,12 @@ def main(cfg=CONFIG):
             _save_cached_model(cache_dir, fingerprint, clf, feature_cols, cfg["output_dir"])
 
     logger.info("3) Vollprädiktion über alle Segmente + Export als GeoPackage ...")
-    predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)
+    if foreign is not None:
+        ef, ep = foreign
+        predict_and_export(ef.reset_index(drop=True), ep.reset_index(drop=True), clf, feature_cols,
+                           {**cfg, "export_mines": extra_ids})
+    else:
+        predict_and_export(feature_df, polygons_gdf, clf, feature_cols, cfg)
 
 
 if __name__ == "__main__":
