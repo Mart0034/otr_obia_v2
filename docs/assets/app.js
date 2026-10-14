@@ -23,7 +23,7 @@
     $$("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
     $$("[data-i18n-aria]").forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
     $$(".lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
-    if (!$("#chipImgs").children.length) buildExamples(); renderStep(); renderDynamic();
+    if (!$("#chipImgs").children.length) buildExamples(); renderStep(); renderDynamic(); renderGalleryText();
   }
   function setLang(l) { lang = l; try { localStorage.setItem("otr-lang", l); } catch (e) {} applyI18n(); if (map) renderMarkers(); }
 
@@ -46,7 +46,7 @@
     $("#exMap").hidden = !on; $("#chipImgs").hidden = on;
     $$("[data-exview]").forEach((b) => b.classList.toggle("on", b.dataset.exview === exView));
     if (!on || !window.L || !window.OTR_EX) return;
-    const e = EXAMPLES[ex], geom = window.OTR_EX[e.id];
+    const e = EXAMPLES[ex], geom = window.OTR_EX.steps[e.id];
     if (!exMap) {
       exMap = L.map("exMap", { zoomControl: true, maxZoom: 17, scrollWheelZoom: false });
       L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 17, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(exMap);
@@ -92,8 +92,17 @@
     $("#aiText").textContent = t("ai_text", { hi: pct(s.ai_high.share), hir: pct(s.ai_high_recent.share), lo: pct(s.ai_low.share, 1) });
     $("#safeBig").textContent = nf(s.spot_misses) + " / " + nf(s.spot_checks);
     $("#safeText").textContent = t("safe_text", { auto: nf(s.auto_clean + s.spot_checks), spot: nf(s.spot_checks), miss: nf(s.spot_misses) });
+    $("#lowBig").textContent = pct(s.ai_low.share, 1) + " %";
+    $("#lowText").textContent = t("low_text", { n: nf(s.ai_low.n), c: nf(s.ai_low.confirmed) });
     $("#honestText").textContent = t("honest_text", { rate: pct(s.hit_rate, 1) });
-    renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
+    renderSizes(); renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
+  }
+  function renderSizes() {
+    const el = $("#sizeChart"), bs = DATA.stats && DATA.stats.by_size; if (!el || !bs) return;
+    const tot = Object.values(bs).map((v) => v.dump + v.partial), max = Math.max(...tot, 1);
+    el.innerHTML = ["s", "m", "l"].map((k, i) => `<div class="sbar"><span class="sl">${t("sz_" + k)}</span>
+      <span class="strack"><i class="f1" style="width:${(bs[k].dump / max) * 100}%"></i><i class="f2" style="width:${(bs[k].partial / max) * 100}%"></i></span>
+      <span class="sv">${nf(tot[i])}</span></div>`).join("") + `<p class="small slegend"><i class="f1"></i>${t("sz_dump")} <i class="f2"></i>${t("sz_partial")}</p>`;
   }
   function roundNo(r) { return parseInt(r.replace(/\D/g, ""), 10); }
 
@@ -230,6 +239,46 @@
     $$("[data-region]", box).forEach((b) => b.addEventListener("click", () => { const bb = bounds[b.dataset.region]; if (bb && map) { map.fitBounds(bb, { maxZoom: 10 }); $("#mapEl").scrollIntoView({ behavior: "smooth", block: "center" }); } }));
   }
 
+  /* ---------- gallery and before/after (high-resolution imagery loaded live) ---------- */
+  function esri(map) {
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 17, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(map);
+  }
+  function initGallery() {
+    const box = $("#gallery"); if (!box || !window.OTR_EX || !window.L) return;
+    box.innerHTML = window.OTR_EX.gallery.map((g, i) => `<figure class="gcard"><div class="gmap" id="gm${i}"></div><figcaption data-gal="${i}"></figcaption></figure>`).join("");
+    const io = new IntersectionObserver((es) => es.forEach((e) => {
+      if (!e.isIntersecting) return; io.unobserve(e.target);
+      const i = +e.target.id.slice(2), g = window.OTR_EX.gallery[i];
+      const m = L.map(e.target, { zoomControl: false, attributionControl: i === 0, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+      esri(m);
+      const lay = L.geoJSON(g.geom, { style: { color: "#22c55e", weight: 2.5, fillOpacity: 0.08 } }).addTo(m);
+      m.fitBounds(lay.getBounds().pad(2.2), { maxZoom: 17, animate: false });
+    }), { rootMargin: "200px" });
+    $$(".gmap", box).forEach((m) => io.observe(m));
+    renderGalleryText();
+  }
+  function renderGalleryText() {
+    if (!window.OTR_EX) return;
+    $$("[data-gal]").forEach((c) => { const g = window.OTR_EX.gallery[+c.dataset.gal]; c.innerHTML = `<b>${nf(g.area)} m²</b> · ${t("kind_" + g.kind)}` + (g.ai != null ? ` · ${t("gal_ai", { ai: g.ai })}` : ""); });
+  }
+  let cmpMap, cmpFound, cmpMode = "now";
+  function initCompare() {
+    const el = $("#cmpMap"); if (!el || !window.OTR_EX || !window.L) return;
+    const b = window.OTR_EX.before;
+    cmpMap = L.map(el, { scrollWheelZoom: false, maxZoom: 17 }); esri(cmpMap);
+    const known = L.geoJSON(b.known, { style: { color: "#3b82f6", weight: 2.5, fillOpacity: 0.15 } }).addTo(cmpMap);
+    cmpFound = L.geoJSON(b.found.map((f) => ({ type: "Feature", geometry: f.geom, properties: {} })), { style: { color: "#22c55e", weight: 2.5, fillOpacity: 0.15 } }).addTo(cmpMap);
+    const all = L.featureGroup([known, cmpFound]);
+    const fit = () => { cmpMap.invalidateSize(); cmpMap.fitBounds(all.getBounds().pad(0.15), { maxZoom: 16, animate: false }); };
+    fit(); setTimeout(fit, 400);
+    $("#cmpKnown").textContent = nf(b.known.length); $("#cmpFound").textContent = nf(b.found.length);
+    $$("#cmpSeg button").forEach((x) => x.addEventListener("click", () => {
+      cmpMode = x.dataset.cmp; $$("#cmpSeg button").forEach((y) => y.classList.toggle("on", y === x));
+      cmpMode === "now" ? cmpFound.addTo(cmpMap) : cmpMap.removeLayer(cmpFound);
+      $("#cmpFoundLi").classList.toggle("off", cmpMode !== "now");
+    }));
+  }
+
   /* ---------- misc ---------- */
   function initForm() {
     const f = $("#contactForm"), msg = $("#formMsg");
@@ -264,7 +313,7 @@
     $("#prevStep").addEventListener("click", () => goStep(step - 1)); $("#nextStep").addEventListener("click", () => goStep(step + 1));
     initForm();
     applyI18n();
-    try { await load(); initMap(); applyI18n(); animateCounters(); }
+    try { await load(); initMap(); initGallery(); initCompare(); applyI18n(); animateCounters(); }
     catch (e) { const m = $("#mapEl"); if (m) m.textContent = "Data could not be loaded (" + e.message + ")."; console.error(e); }
     initReveal();
   });

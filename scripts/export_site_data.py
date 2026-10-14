@@ -276,6 +276,7 @@ def main(argv=None):
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
     st["candidates"] = int(sum(f["properties"]["n"] for f in cand_cells["features"]))
+    st["by_size"] = {sz: {k: int(((places["size"] == sz) & (places["kind"] == k)).sum()) for k in ("dump", "partial")} for sz in ("s", "m", "l")}
     st["found_by_how"] = {k: int((places["how"] == k).sum()) for k in ("ai", "human")}
     st["regions"] = {}
     for key, name, south, north in REGIONS:

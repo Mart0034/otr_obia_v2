@@ -300,6 +300,20 @@
  "mines": 138,
  "found_cells": 87,
  "candidates": 500,
+ "by_size": {
+  "s": {
+   "dump": 2,
+   "partial": 14
+  },
+  "m": {
+   "dump": 9,
+   "partial": 20
+  },
+  "l": {
+   "dump": 12,
+   "partial": 31
+  }
+ },
  "found_by_how": {
   "ai": 40,
   "human": 48

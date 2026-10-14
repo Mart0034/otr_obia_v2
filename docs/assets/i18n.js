@@ -291,3 +291,47 @@ Object.assign(window.I18N.es, { privacy: "Las ubicaciones del mapa están redond
 Object.assign(window.I18N.en, { stat_scan: "hectares of satellite imagery analysed" });
 Object.assign(window.I18N.de, { stat_scan: "Hektar Satellitenbilder analysiert" });
 Object.assign(window.I18N.es, { stat_scan: "hectáreas de imágenes satelitales analizadas" });
+
+/* gallery, before/after, proof, sizes */
+Object.assign(window.I18N.en, {
+  nav_finds: "Finds",
+  finds_title: "More real finds", finds_lead: "Nine dumps found with the system, shown in high-resolution imagery with the confirmed outline in green. They differ in size and type.",
+  finds_note: "Imagery: Esri, Maxar, Earthstar Geographics. \"Dump within a larger site\" means the dump is part of a bigger outline.",
+  kind_dump: "full dump", kind_partial: "dump within a larger site", gal_ai: "AI {ai}%",
+  cmp_title: "Before and after at one site", cmp_lead: "The same area at the start and today. Blue outlines were marked by hand by our partner. Green outlines were found with the system.",
+  cmp_start: "At the start", cmp_now: "Today", cmp_known: "marked by hand at the start", cmp_found: "found with the system",
+  ai_title: "When the AI is confident, it is usually right", low_title: "When the AI is doubtful, it is rarely right", low_text: "Of {n} sites the AI rated below 30%, only {c} were real dumps.",
+  safe_title: "Automatic discards hold up under checks",
+  size_title: "All sizes, all types", size_lead: "New dump places by size. Small means under 0.8 ha, medium 0.8 to 1.6 ha, large over 1.6 ha.",
+  sz_s: "Small", sz_m: "Medium", sz_l: "Large", sz_dump: "full dump", sz_partial: "dump within a larger site",
+});
+Object.assign(window.I18N.de, {
+  nav_finds: "Funde",
+  finds_title: "Weitere echte Funde", finds_lead: "Neun mit dem System gefundene Halden in hochauflösenden Bildern, der bestätigte Umriss in Grün. Sie unterscheiden sich in Größe und Art.",
+  finds_note: "Bilder: Esri, Maxar, Earthstar Geographics. \"Halde innerhalb eines größeren Standorts\" heißt: die Halde ist Teil eines größeren Umrisses.",
+  kind_dump: "ganze Halde", kind_partial: "Halde innerhalb eines größeren Standorts", gal_ai: "KI {ai} %",
+  cmp_title: "Vorher und nachher an einem Standort", cmp_lead: "Dasselbe Gebiet am Anfang und heute. Blaue Umrisse hat unser Partner von Hand markiert. Grüne Umrisse wurden mit dem System gefunden.",
+  cmp_start: "Am Anfang", cmp_now: "Heute", cmp_known: "am Anfang von Hand markiert", cmp_found: "mit dem System gefunden",
+  ai_title: "Wenn die KI sicher ist, liegt sie meist richtig", low_title: "Wenn die KI zweifelt, liegt sie selten richtig", low_text: "Von {n} Standorten mit KI-Wert unter 30 % waren nur {c} echte Halden.",
+  safe_title: "Automatische Aussortierungen halten Prüfungen stand",
+  size_title: "Alle Größen, alle Arten", size_lead: "Neue Haldenorte nach Größe. Klein heißt unter 0,8 ha, mittel 0,8 bis 1,6 ha, groß über 1,6 ha.",
+  sz_s: "Klein", sz_m: "Mittel", sz_l: "Groß", sz_dump: "ganze Halde", sz_partial: "Halde innerhalb eines größeren Standorts",
+});
+Object.assign(window.I18N.es, {
+  nav_finds: "Hallazgos",
+  finds_title: "Más hallazgos reales", finds_lead: "Nueve vertederos encontrados con el sistema, en imágenes de alta resolución con el contorno confirmado en verde. Difieren en tamaño y tipo.",
+  finds_note: "Imágenes: Esri, Maxar, Earthstar Geographics. \"Vertedero dentro de un sitio mayor\" significa que el vertedero es parte de un contorno más grande.",
+  kind_dump: "vertedero completo", kind_partial: "vertedero dentro de un sitio mayor", gal_ai: "IA {ai} %",
+  cmp_title: "Antes y después en un sitio", cmp_lead: "La misma zona al inicio y hoy. Los contornos azules los marcó a mano nuestro socio. Los verdes se encontraron con el sistema.",
+  cmp_start: "Al inicio", cmp_now: "Hoy", cmp_known: "marcados a mano al inicio", cmp_found: "encontrados con el sistema",
+  ai_title: "Cuando la IA está segura, casi siempre acierta", low_title: "Cuando la IA duda, rara vez acierta", low_text: "De {n} sitios con valor de IA inferior a 30 %, solo {c} eran vertederos reales.",
+  safe_title: "Los descartes automáticos resisten las comprobaciones",
+  size_title: "Todos los tamaños, todos los tipos", size_lead: "Lugares nuevos por tamaño. Pequeño significa menos de 0,8 ha, mediano de 0,8 a 1,6 ha, grande más de 1,6 ha.",
+  sz_s: "Pequeño", sz_m: "Mediano", sz_l: "Grande", sz_dump: "vertedero completo", sz_partial: "vertedero dentro de un sitio mayor",
+});
+Object.assign(window.I18N.en, { ai_text: "Of the candidates the AI rated 70% or more, {hi}% were confirmed as dumps (latest rounds: {hir}%)." });
+Object.assign(window.I18N.de, { ai_text: "Von den Kandidaten mit KI-Wert 70 % oder mehr wurden {hi} % als Halden bestätigt (letzte Runden: {hir} %)." });
+Object.assign(window.I18N.es, { ai_text: "De los candidatos con valor de IA de 70 % o más, se confirmó el {hi} % como vertedero (últimas rondas: {hir} %)." });
+Object.assign(window.I18N.en, { ai_title: "When the AI is confident, more than half are real dumps", low_title: "When the AI is doubtful, almost none are" });
+Object.assign(window.I18N.de, { ai_title: "Wenn die KI sicher ist, sind mehr als die Hälfte echte Halden", low_title: "Wenn die KI zweifelt, sind es fast keine" });
+Object.assign(window.I18N.es, { ai_title: "Cuando la IA está segura, más de la mitad son vertederos reales", low_title: "Cuando la IA duda, casi ninguno lo es" });
