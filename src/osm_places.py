@@ -39,7 +39,9 @@ WORK_CRS = "EPSG:32719"
 KIND_ORDER = ["waste", "tyres", "works", "industrial", "brownfield"]
 POLY_WHERE = ("landuse IN ('landfill','industrial','brownfield') OR man_made = 'works' OR "
               "amenity IN ('waste_disposal','recycling','waste_transfer_station') OR shop = 'tyres'")
-POINT_WHERE = "amenity IN ('waste_disposal','recycling','waste_transfer_station') OR shop = 'tyres' OR man_made = 'works'"
+# Punkte führen amenity/shop nur in other_tags (GDAL-OSM-Treiber): erst grob filtern, dann genau klassifizieren
+POINT_WHERE = ("man_made = 'works' OR other_tags LIKE '%waste_disposal%' OR other_tags LIKE '%recycling%' OR "
+               "other_tags LIKE '%waste_transfer_station%' OR other_tags LIKE '%tyres%'")
 
 
 def classify(df):
@@ -97,6 +99,10 @@ def main(argv=None):
     logger.info("  %d Flächen", len(polys))
     logger.info("Punkte lesen ...")
     pts = pyogrio.read_dataframe(a.pbf, layer="points", where=POINT_WHERE, bbox=bbox)
+    if len(pts):
+        import osm_local
+        pts["amenity"] = osm_local._tag_series(pts, "amenity")
+        pts["shop"] = osm_local._tag_series(pts, "shop")
     logger.info("  %d Punkte", len(pts))
     places = build(polys.to_crs(WORK_CRS) if len(polys) else None, pts.to_crs(WORK_CRS) if len(pts) else None,
                    a.point_buffer_m, a.min_area_m2)
