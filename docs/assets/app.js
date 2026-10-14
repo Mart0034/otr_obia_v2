@@ -23,15 +23,45 @@
     $$("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
     $$("[data-i18n-aria]").forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
     $$(".lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
-    renderStep(); renderDynamic();
+    if (!$("#chipImgs").children.length) buildExamples(); renderStep(); renderDynamic();
   }
   function setLang(l) { lang = l; try { localStorage.setItem("otr-lang", l); } catch (e) {} applyI18n(); if (map) renderMarkers(); }
 
   /* ---------- steps ---------- */
+  const EXAMPLES = [
+    { id: "a", lat: -28.1938, lon: -69.558, area: 14400, ai: 98 },
+    { id: "b", lat: -26.8165, lon: -69.273, area: 29000, ai: 85 },
+    { id: "c", lat: -22.3491, lon: -68.8655, area: 10700, ai: 85 },
+  ];
+  let ex = 0;
+  function buildExamples() {
+    $("#chipImgs").innerHTML = EXAMPLES.map((e) => [1, 2, 3, 4].map((i) => `<img src="assets/img/ex_${e.id}_${i}.jpg" alt="" loading="lazy" data-ex="${e.id}" data-step-img="${i}">`).join("")).join("");
+    $("#exTabs").innerHTML = EXAMPLES.map((e, i) => `<button type="button" role="tab" data-ex-tab="${i}"></button>`).join("");
+    $$("[data-ex-tab]").forEach((b) => b.addEventListener("click", () => { ex = +b.dataset.exTab; renderStep(); }));
+    $$("[data-exview]").forEach((b) => b.addEventListener("click", () => { exView = b.dataset.exview; renderStep(); }));
+  }
+  let exView = "s2", exMap, exLayer;
+  function renderExMap() {
+    const on = exView === "hi";
+    $("#exMap").hidden = !on; $("#chipImgs").hidden = on;
+    $$("[data-exview]").forEach((b) => b.classList.toggle("on", b.dataset.exview === exView));
+    if (!on || !window.L || !window.OTR_EX) return;
+    const e = EXAMPLES[ex], geom = window.OTR_EX[e.id];
+    if (!exMap) {
+      exMap = L.map("exMap", { zoomControl: true, maxZoom: 19, scrollWheelZoom: false });
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(exMap);
+    }
+    if (exLayer) exMap.removeLayer(exLayer);
+    exLayer = L.geoJSON(geom, { style: { color: "#22c55e", weight: 3, fillOpacity: 0.08 } }).addTo(exMap);
+    exMap.invalidateSize(); exMap.fitBounds(exLayer.getBounds().pad(2.5), { maxZoom: 18, animate: false });
+  }
   function renderStep() {
+    const e = EXAMPLES[ex];
     $$("#stepTabs button").forEach((b) => b.setAttribute("aria-selected", String(+b.dataset.step === step)));
-    $$("[data-step-img]").forEach((im) => im.classList.toggle("on", +im.dataset.stepImg === step));
-    $("#stepNo").textContent = t("step_of", { i: step });
+    $$("[data-step-img]").forEach((im) => im.classList.toggle("on", im.dataset.ex === e.id && +im.dataset.stepImg === step));
+    $$("[data-ex-tab]").forEach((b, i) => { b.setAttribute("aria-selected", String(i === ex)); b.textContent = t("ex_tab", { i: i + 1, a: nf(EXAMPLES[i].area) }); });
+    $("#chipCap").textContent = t("chip_note", { a: nf(e.area), ai: e.ai, lat: e.lat.toFixed(4), lon: e.lon.toFixed(4) });
+    renderExMap();
     $("#stepTitle").textContent = t("step" + step + "_t");
     $("#stepDesc").textContent = t("step" + step + "_d");
   }
@@ -39,23 +69,23 @@
 
   /* ---------- numbers and charts ---------- */
   function counts() {
-    const c = { known: 0, found: 0, ai: 0, human: 0, cand: 0, mines: DATA.stats ? DATA.stats.mines : 0 };
+    const c = { known: 0, found: 0, ai: 0, human: 0, mines: DATA.stats ? DATA.stats.mines : 0 };
     DATA.known.features.forEach((f) => (c.known += f.properties.n));
     DATA.found.features.forEach((f) => { c.found += f.properties.n; c[f.properties.how] += f.properties.n; });
-    DATA.cand.features.forEach((f) => (c.cand += f.properties.n));
     return c;
   }
   function renderDynamic() {
     const s = DATA.stats; if (!s) return;
     const c = counts();
-    $$("[data-count]").forEach((el) => { el.dataset.target = s[el.dataset.count]; el.textContent = nf(s[el.dataset.count]); });
+    $$("[data-count]").forEach((el) => { const v = s[el.dataset.count]; el.dataset.target = v == null ? "" : v; el.textContent = v == null ? "–" : nf(Math.round(v)); });
+    $("#scanTiles").textContent = s.scan_tiles ? "(" + t("scan_tiles", { n: nf(s.scan_tiles) }) + ")" : "";
     $$("[data-n]").forEach((el) => (el.textContent = nf(c[el.dataset.n] ?? 0)));
     $("#foundSplit").textContent = t("found_split", { ai: nf(c.ai), human: nf(c.human) });
     const pn = $(".places"); if (pn) pn.textContent = t("places_note", { k: s.known_places });
-    $("#heroGain").innerHTML = t("hero_gain", { x: "<b>" + s.multiple.toLocaleString(LOCALE[lang]) + "×</b>", n: nf(s.reviewed), open: nf(s.candidates) });
+    $("#heroGain").innerHTML = t("hero_gain", { x: "<b>" + s.multiple.toLocaleString(LOCALE[lang]) + "×</b>" });
     const last = s.growth[s.growth.length - 1];
     $("#growthBig").textContent = nf(s.known_places) + " → " + nf(last.total);
-    $("#growthText").textContent = t("growth_text", { a: nf(s.known_places), b: nf(last.total), open: nf(s.candidates) });
+    $("#growthText").textContent = t("growth_text", { a: nf(s.known_places), b: nf(last.total) });
     const g = s.gain.points, at = (p) => g.find((q) => q.p === p);
     $("#gainText").textContent = t("gain_text", { x: pct(at(0.7).x, 0), y: pct(at(0.7).y, 0), x2: pct(at(0.2).x, 0), y2: pct(at(0.2).y, 0) });
     $("#aiBig").textContent = pct(s.ai_high.share) + " %";
@@ -75,11 +105,11 @@
     const line = pts.map((p, i) => `${x(i)},${y(p.total)}`).join(" ");
     const area = `${x(0)},${y(0)} ${line} ${x(pts.length - 1)},${y(0)}`;
     const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(max * f)}" y2="${y(max * f)}"/><text x="${L - 8}" y="${y(max * f) + 4}" text-anchor="end">${Math.round(max * f)}</text>`).join("");
-    const base0 = `<line x1="${L}" x2="${W - R}" y1="${y(pts[0].total)}" y2="${y(pts[0].total)}" stroke="#5aa9ff" stroke-width="1.5" stroke-dasharray="5 4"/>`;
-    const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.total)}" r="${i === 0 || i === pts.length - 1 ? 5 : 3.5}" fill="${i === 0 ? "#5aa9ff" : "#3ddc97"}" stroke="#0e1116" stroke-width="2"><title>${p.total}</title></circle>`).join("");
+    const base0 = `<line x1="${L}" x2="${W - R}" y1="${y(pts[0].total)}" y2="${y(pts[0].total)}" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+    const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.total)}" r="${i === 0 || i === pts.length - 1 ? 5 : 3.5}" fill="${i === 0 ? "#2563eb" : "#16a34a"}" stroke="#ffffff" stroke-width="2"><title>${p.total}</title></circle>`).join("");
     const labels = pts.map((p, i) => `<text x="${x(i)}" y="${H - 12}" text-anchor="middle">${i === 0 ? "" : p.label}</text>`).join("");
-    const ends = `<text x="${x(0) + 8}" y="${y(pts[0].total) - 10}" fill="#5aa9ff" font-weight="700" style="fill:#5aa9ff;font-size:13px">${nf(pts[0].total)}</text><text x="${x(pts.length - 1) - 8}" y="${y(pts[pts.length - 1].total) - 12}" text-anchor="end" style="fill:#3ddc97;font-size:14px;font-weight:700">${nf(pts[pts.length - 1].total)}</text>`;
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="axis" aria-hidden="true"><defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ddc97" stop-opacity=".35"/><stop offset="1" stop-color="#3ddc97" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="${area}" fill="url(#gg)"/>${base0}<polyline points="${line}" fill="none" stroke="#3ddc97" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${dots}${labels}${ends}</svg>`;
+    const ends = `<text x="${x(0) + 8}" y="${y(pts[0].total) - 10}" fill="#2563eb" font-weight="700" style="fill:#2563eb;font-size:13px">${nf(pts[0].total)}</text><text x="${x(pts.length - 1) - 8}" y="${y(pts[pts.length - 1].total) - 12}" text-anchor="end" style="fill:#16a34a;font-size:14px;font-weight:700">${nf(pts[pts.length - 1].total)}</text>`;
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="axis" aria-hidden="true"><defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16a34a" stop-opacity=".35"/><stop offset="1" stop-color="#16a34a" stop-opacity="0"/></linearGradient></defs>${grid}<polygon points="${area}" fill="url(#gg)"/>${base0}<polyline points="${line}" fill="none" stroke="#16a34a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${dots}${labels}${ends}</svg>`;
   }
 
   function renderGain() {
@@ -89,11 +119,11 @@
     const curve = pts.map((p) => `${x(p.x)},${y(p.y)}`).join(" ");
     const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(f)}" y2="${y(f)}"/><text x="${L - 8}" y="${y(f) + 4}" text-anchor="end">${Math.round(f * 100)}%</text><text x="${x(f)}" y="${H - B + 18}" text-anchor="middle">${Math.round(f * 100)}%</text>`).join("");
     const mark = pts.find((p) => p.p === 0.7), mark2 = pts.find((p) => p.p === 0.2);
-    const callout = (p, dx, dy, txt) => `<circle cx="${x(p.x)}" cy="${y(p.y)}" r="5" fill="#f2a541" stroke="#0e1116" stroke-width="2"/><text x="${x(p.x) + dx}" y="${y(p.y) + dy}" style="fill:#f2a541;font-size:12px;font-weight:700">${txt}</text>`;
+    const callout = (p, dx, dy, txt) => `<circle cx="${x(p.x)}" cy="${y(p.y)}" r="5" fill="#e8590c" stroke="#ffffff" stroke-width="2"/><text x="${x(p.x) + dx}" y="${y(p.y) + dy}" style="fill:#e8590c;font-size:12px;font-weight:700">${txt}</text>`;
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="axis" aria-hidden="true">${grid}
-      <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="#9aa6b2" stroke-dasharray="5 5"/>
-      <text x="${x(0.62)}" y="${y(0.62) + 18}" style="fill:#9aa6b2;font-size:11px" transform="rotate(-31 ${x(0.62)} ${y(0.62) + 18})">${t("gain_rand")}</text>
-      <polyline points="${curve}" fill="none" stroke="#3ddc97" stroke-width="3" stroke-linejoin="round"/>
+      <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="#6b7280" stroke-dasharray="5 5"/>
+      <text x="${x(0.62)}" y="${y(0.62) + 18}" style="fill:#6b7280;font-size:11px" transform="rotate(-31 ${x(0.62)} ${y(0.62) + 18})">${t("gain_rand")}</text>
+      <polyline points="${curve}" fill="none" stroke="#16a34a" stroke-width="3" stroke-linejoin="round"/>
       ${callout(mark, 10, 18, pct(mark.x, 0) + "% → " + pct(mark.y, 0) + "%")}${callout(mark2, 10, 18, pct(mark2.x, 0) + "% → " + pct(mark2.y, 0) + "%")}
       <text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${t("gain_x")}</text>
       <text x="11" y="${(T + H - B) / 2}" text-anchor="middle" transform="rotate(-90 11 ${(T + H - B) / 2})">${t("gain_y")}</text></svg>`;
@@ -151,8 +181,8 @@
     if (!map) return;
     markers.clearLayers();
     const z = map.getZoom(), g = gridSize(z), single = g <= CELL + 1e-9;
-    const cats = view === "start" ? ["known"] : view === "found" ? ["known", "found"] : ["cand", "known", "found"];
-    const src = { known: DATA.known.features, found: DATA.found.features, cand: DATA.cand.features };
+    const cats = view === "start" ? ["known"] : ["known", "found"];
+    const src = { known: DATA.known.features, found: DATA.found.features };
     cats.forEach((cat) => {
       aggregate(src[cat], g).forEach((a) => {
         const mk = L.marker([a.lat, a.lon], { icon: bubble(cat, a, single), zIndexOffset: cat === "cand" ? 0 : cat === "known" ? 400 : 800 });
@@ -165,7 +195,7 @@
     if (minesLayer) { const on = $("#minesToggle").checked && z >= 9; on ? minesLayer.addTo(map) : map.removeLayer(minesLayer); }
   }
   function legendState() {
-    const on = view === "start" ? ["known"] : view === "found" ? ["known", "found"] : ["known", "found", "cand"];
+    const on = view === "start" ? ["known"] : ["known", "found"];
     $$(".legend li").forEach((li) => li.classList.toggle("off", !on.includes(li.dataset.cat)));
     $$("#viewSeg button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   }
@@ -173,12 +203,12 @@
   function initMap() {
     map = L.map("mapEl", { zoomControl: true, minZoom: 4 }); window.otrMap = map;
     base.sat = L.tileLayer("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg", { maxZoom: 13, attribution: 'Sentinel-2 cloudless – <a href="https://s2maps.eu">s2maps.eu</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2020)' });
-    base.map = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: '&copy; OpenStreetMap contributors &copy; CARTO' });
-    base.sat.addTo(map);
+    base.map = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", { maxZoom: 16, attribution: 'Tiles &copy; Esri, HERE, Garmin, OpenStreetMap contributors' });
+    base.map.addTo(map);
     markers = L.layerGroup().addTo(map);
-    minesLayer = L.geoJSON(DATA.mines, { style: { color: "#f2a541", weight: 1.4, fillColor: "#f2a541", fillOpacity: 0.08 }, interactive: false });
+    minesLayer = L.geoJSON(DATA.mines, { style: { color: "#e8590c", weight: 1.4, fillColor: "#e8590c", fillOpacity: 0.08 }, interactive: false });
     const regionPts = {};
-    [DATA.known, DATA.found, DATA.cand].forEach((fc) => fc.features.forEach((f) => { (regionPts[f.properties.region] = regionPts[f.properties.region] || []).push([f.geometry.coordinates[1], f.geometry.coordinates[0]]); }));
+    [DATA.known, DATA.found].forEach((fc) => fc.features.forEach((f) => { (regionPts[f.properties.region] = regionPts[f.properties.region] || []).push([f.geometry.coordinates[1], f.geometry.coordinates[0]]); }));
     Object.keys(regionPts).forEach((r) => (bounds[r] = L.latLngBounds(regionPts[r]).pad(0.1)));
     const home = () => { map.invalidateSize(); map.fitBounds(bounds.atacama || bounds[Object.keys(bounds)[0]], { maxZoom: 9, animate: false }); renderMarkers(); };
     home(); setTimeout(home, 300); window.addEventListener("load", home);
@@ -195,7 +225,7 @@
     const box = $("#regions"); if (!box || !DATA.stats) return;
     box.innerHTML = Object.entries(DATA.stats.regions).map(([k, r]) => `<div class="region"><h4>${t("region_" + k)}</h4><dl>
       <dt>${t("reg_known")}</dt><dd>${nf(r.known)}</dd><dt>${t("reg_found")}</dt><dd>${nf(r.found)}</dd>
-      <dt>${t("reg_reviewed")}</dt><dd>${nf(r.reviewed)}</dd><dt>${t("reg_cand")}</dt><dd>${nf(r.candidates)}</dd></dl>
+      <dt>${t("reg_reviewed")}</dt><dd>${nf(r.reviewed)}</dd></dl>
       <button class="btn ghost" type="button" data-region="${k}">${t("reg_show")}</button></div>`).join("");
     $$("[data-region]", box).forEach((b) => b.addEventListener("click", () => { const bb = bounds[b.dataset.region]; if (bb && map) { map.fitBounds(bb, { maxZoom: 10 }); $("#mapEl").scrollIntoView({ behavior: "smooth", block: "center" }); } }));
   }
@@ -224,8 +254,8 @@
   async function load() {
     if (window.OTR_DATA) { Object.assign(DATA, window.OTR_DATA); return; }          // data/data.js (also works from file://)
     const get = (f) => fetch("data/" + f).then((r) => { if (!r.ok) throw new Error(f); return r.json(); });
-    const [stats, found, known, cand, mines] = await Promise.all(["stats.json", "found.json", "known.json", "candidates.json", "mines.json"].map(get));
-    Object.assign(DATA, { stats, found, known, cand, mines });
+    const [stats, found, known, mines] = await Promise.all(["stats.json", "found.json", "known.json", "mines.json"].map(get));
+    Object.assign(DATA, { stats, found, known, mines });
   }
 
   document.addEventListener("DOMContentLoaded", async () => {

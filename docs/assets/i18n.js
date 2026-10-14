@@ -223,3 +223,67 @@ window.I18N = {
     ,hero_gain: "Son {x} más lugares de vertedero que al inicio, tras revisar {n} sitios. Esperan {open} candidatos más."
   }
 };
+
+/* Wording of the light redesign: overrides earlier keys */
+Object.assign(window.I18N.en, {
+  hero_title: "Finding mining tire dumps from satellite images",
+  hero_sub: "Used giant tires from open-pit mines pile up in dumps of every size, abandoned or still in use. OTR-finder reads free satellite data. A model and an AI shortlist the suspicious spots, and a person confirms them.",
+  stat_scan: "of satellite imagery analysed", scan_tiles: "{n} tiles",
+  stat_known: "dump places known at the start, marked by hand by our partner",
+  stat_found: "new dump places found with the system",
+  hero_gain: "That is {x} as many dump places as we started with.",
+  growth_text: "From {a} places at the start to {b} today, one review round at a time.",
+  how_lead: "Three real finds from northern Chile. Pick one and follow what the system does with its satellite scene.",
+  ex_tab: "Example {i} · {a} m²",
+  step1_d: "Free Sentinel-2 images (10 m per pixel) plus radar and elevation data. A tire dump shows up as a dark, rough patch on bare ground.",
+  step2_d: "The image is divided into thousands of small, uniform patches. Each patch is described by colour, texture, shape, radar, terrain and change over the years.",
+  step3_d: "A model trained on dumps we already know scores every patch. Neighbouring high scores merge into one candidate site, outlined in red.",
+  step4_d: "A vision AI checks the candidate in its surroundings and gives a probability and a reason. A person makes the final call. The green outline is the confirmed dump.",
+  chip_note: "Sentinel-2 scene, about 1 km wide. Dump area {a} m², AI estimate {ai}%. Position {lat}, {lon}.",
+  map_lead: "The blue markers were known at the start. Everything else was found by the system or with its help.",
+  foot_text: "OTR-finder is a proof of concept.",
+});
+Object.assign(window.I18N.de, {
+  hero_title: "Reifenhalden des Bergbaus auf Satellitenbildern finden",
+  hero_sub: "Gebrauchte Riesenreifen aus Tagebauen liegen in Halden jeder Größe, verlassen oder noch in Benutzung. OTR-finder liest freie Satellitendaten. Ein Modell und eine KI wählen die verdächtigen Stellen aus, und ein Mensch bestätigt sie.",
+  stat_scan: "Satellitenbilder analysiert", scan_tiles: "{n} Kacheln",
+  stat_known: "Haldenorte zu Beginn bekannt, von unserem Partner von Hand markiert",
+  stat_found: "neue Haldenorte mit dem System gefunden",
+  hero_gain: "Das sind {x} so viele Haldenorte wie am Anfang.",
+  growth_text: "Von {a} Orten am Anfang auf {b} heute, Prüfrunde für Prüfrunde.",
+  how_lead: "Drei echte Funde aus Nordchile. Wähle einen und folge dem, was das System mit seiner Satellitenszene macht.",
+  ex_tab: "Beispiel {i} · {a} m²",
+  step1_d: "Freie Sentinel-2-Bilder (10 m pro Pixel) plus Radar- und Höhendaten. Eine Reifenhalde erscheint als dunkle, raue Fläche auf nacktem Boden.",
+  step2_d: "Das Bild wird in tausende kleine, einheitliche Flecken geteilt. Jeder Fleck wird durch Farbe, Textur, Form, Radar, Gelände und Veränderung über die Jahre beschrieben.",
+  step3_d: "Ein Modell, trainiert auf bereits bekannten Halden, bewertet jeden Fleck. Benachbarte hohe Werte werden zu einem Kandidaten zusammengefasst, rot umrandet.",
+  step4_d: "Eine Bild-KI prüft den Kandidaten samt Umgebung und nennt eine Wahrscheinlichkeit und einen Grund. Ein Mensch entscheidet. Der grüne Umriss ist die bestätigte Halde.",
+  chip_note: "Sentinel-2-Szene, etwa 1 km breit. Haldenfläche {a} m², KI-Schätzung {ai} %. Position {lat}, {lon}.",
+  map_lead: "Die blauen Markierungen waren am Anfang bekannt. Alles andere hat das System gefunden oder dabei geholfen.",
+  foot_text: "OTR-finder ist eine Machbarkeitsstudie.",
+});
+Object.assign(window.I18N.es, {
+  hero_title: "Encontrar vertederos de neumáticos mineros en imágenes satelitales",
+  hero_sub: "Los neumáticos gigantes usados de las minas a cielo abierto se acumulan en vertederos de todos los tamaños, abandonados o aún en uso. OTR-finder lee datos satelitales gratuitos. Un modelo y una IA preseleccionan los puntos sospechosos y una persona los confirma.",
+  stat_scan: "de imágenes satelitales analizadas", scan_tiles: "{n} teselas",
+  stat_known: "lugares con vertedero conocidos al inicio, marcados a mano por nuestro socio",
+  stat_found: "lugares nuevos encontrados con el sistema",
+  hero_gain: "Es {x} la cantidad de lugares con la que empezamos.",
+  growth_text: "De {a} lugares al inicio a {b} hoy, ronda de revisión tras ronda.",
+  how_lead: "Tres hallazgos reales del norte de Chile. Elige uno y sigue lo que hace el sistema con su escena satelital.",
+  ex_tab: "Ejemplo {i} · {a} m²",
+  step1_d: "Imágenes gratuitas de Sentinel-2 (10 m por píxel) más radar y datos de elevación. Un vertedero de neumáticos aparece como una mancha oscura y rugosa sobre suelo desnudo.",
+  step2_d: "La imagen se divide en miles de pequeñas zonas uniformes. Cada zona se describe por color, textura, forma, radar, relieve y cambio a lo largo de los años.",
+  step3_d: "Un modelo entrenado con vertederos ya conocidos puntúa cada zona. Las puntuaciones altas vecinas se unen en un candidato, con contorno rojo.",
+  step4_d: "Una IA de visión revisa el candidato con su entorno y da una probabilidad y una razón. Una persona decide. El contorno verde es el vertedero confirmado.",
+  chip_note: "Escena de Sentinel-2, de aproximadamente 1 km de ancho. Superficie del vertedero {a} m², estimación de la IA {ai} %. Posición {lat}, {lon}.",
+  map_lead: "Los marcadores azules se conocían al inicio. Todo lo demás lo encontró el sistema o se encontró con su ayuda.",
+  foot_text: "OTR-finder es una prueba de concepto.",
+});
+
+Object.assign(window.I18N.en, { ex_s2: "Sentinel-2 (what the system sees)", ex_hi: "High-resolution view" });
+Object.assign(window.I18N.de, { ex_s2: "Sentinel-2 (was das System sieht)", ex_hi: "Hochauflösende Ansicht" });
+Object.assign(window.I18N.es, { ex_s2: "Sentinel-2 (lo que ve el sistema)", ex_hi: "Vista de alta resolución" });
+
+Object.assign(window.I18N.en, { privacy: "Locations on the map are rounded to ~1 km cells. The three examples above show their real position." });
+Object.assign(window.I18N.de, { privacy: "Orte auf der Karte sind auf ~1-km-Zellen gerundet. Die drei Beispiele oben zeigen ihre echte Position." });
+Object.assign(window.I18N.es, { privacy: "Las ubicaciones del mapa están redondeadas a celdas de ~1 km. Los tres ejemplos de arriba muestran su posición real." });

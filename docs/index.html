@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OTR-finder</title>
-<meta name="description" content="OTR-finder: finding abandoned mining-tire dumps from satellite data. Proof of concept.">
-<meta name="theme-color" content="#0e1116">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f2a541' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f2a541'/%3E%3C/svg%3E">
+<meta name="description" content="OTR-finder: finding mining tire dumps from satellite data. Proof of concept.">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8590c' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e8590c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="assets/style.css?v=202610131413">
+<link rel="stylesheet" href="assets/style.css?v=202610140719">
 </head>
 <body>
 <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
@@ -32,17 +32,15 @@
 
 <main id="main">
 <section class="hero">
-  <div class="hero-bg" aria-hidden="true"></div>
   <div class="wrap hero-inner">
     <p class="kicker" data-i18n="hero_kicker">Proof of concept</p>
-    <h1 data-i18n="hero_title">Finding abandoned mining-tire dumps from space</h1>
+    <h1 data-i18n="hero_title">Finding mining tire dumps from satellite images</h1>
     <p class="lead" data-i18n="hero_sub"></p>
     <p class="cta"><a class="btn primary" href="#map" data-i18n="cta_map">Explore the map</a> <a class="btn ghost" href="#how" data-i18n="cta_how">How it works</a></p>
     <dl class="stats" id="heroStats">
-      <div><dt data-i18n="stat_known"></dt><dd data-count="known_places">–</dd></div>
-      <div><dt data-i18n="stat_found"></dt><dd data-count="found_places">–</dd></div>
-      <div><dt data-i18n="stat_reviewed"></dt><dd data-count="reviewed">–</dd></div>
-      <div><dt data-i18n="stat_cand"></dt><dd data-count="candidates">–</dd></div>
+      <div><dd data-count="scan_km2">&ndash;</dd><dt><span data-i18n="stat_scan"></span> <small id="scanTiles"></small></dt></div>
+      <div><dd data-count="known_places">&ndash;</dd><dt data-i18n="stat_known"></dt></div>
+      <div class="hl"><dd data-count="found_places">&ndash;</dd><dt data-i18n="stat_found"></dt></div>
     </dl>
     <p class="gain" id="heroGain"></p>
   </div>
@@ -52,6 +50,7 @@
   <div class="wrap">
     <h2 data-i18n="how_title"></h2>
     <p class="sub" data-i18n="how_lead"></p>
+    <div class="examples" role="tablist" aria-label="Examples" id="exTabs"></div>
     <div class="stepper">
       <div class="steps" role="tablist" aria-label="Steps" id="stepTabs">
         <button role="tab" data-step="1" aria-selected="true"><b>1</b><span data-i18n="step1_t"></span></button>
@@ -60,17 +59,14 @@
         <button role="tab" data-step="4" aria-selected="false"><b>4</b><span data-i18n="step4_t"></span></button>
       </div>
       <figure class="chip">
-        <div class="chip-imgs">
-          <img src="assets/img/step1.png" alt="" data-step-img="1" class="on">
-          <img src="assets/img/step2.png" alt="" data-step-img="2">
-          <img src="assets/img/step3.png" alt="" data-step-img="3">
-          <img src="assets/img/step4.png" alt="" data-step-img="4">
-        </div>
-        <figcaption><span id="stepNo"></span> · <span data-i18n="chip_note"></span></figcaption>
+        <div class="chip-imgs" id="chipImgs"></div>
+        <div id="exMap" class="exmap" hidden></div>
+        <div class="viewsw" role="group"><button type="button" data-exview="s2" class="on" data-i18n="ex_s2"></button><button type="button" data-exview="hi" data-i18n="ex_hi"></button></div>
+        <figcaption id="chipCap"></figcaption>
       </figure>
       <div class="step-text">
         <h3 id="stepTitle"></h3><p id="stepDesc"></p>
-        <div class="step-nav"><button class="btn ghost" id="prevStep" aria-label="Previous">←</button><button class="btn primary" id="nextStep" aria-label="Next">→</button></div>
+        <div class="step-nav"><button class="btn ghost" id="prevStep" aria-label="Previous">&larr;</button><button class="btn primary" id="nextStep" aria-label="Next">&rarr;</button></div>
       </div>
     </div>
   </div>
@@ -84,18 +80,16 @@
     <div class="mapgrid">
       <div class="mapbox">
         <div id="mapEl" role="application" aria-label="Map"></div>
-        <div class="basebtns" role="group"><button type="button" data-base="sat" class="on" data-i18n="base_sat"></button><button type="button" data-base="map" data-i18n="base_map"></button></div>
+        <div class="basebtns" role="group"><button type="button" data-base="map" class="on" data-i18n="base_map"></button><button type="button" data-base="sat" data-i18n="base_sat"></button></div>
       </div>
       <aside class="side">
         <div class="seg" role="group" aria-label="View" id="viewSeg">
           <button type="button" data-view="start" data-i18n="view_start"></button>
           <button type="button" data-view="found" class="on" data-i18n="view_found"></button>
-          <button type="button" data-view="all" data-i18n="view_all"></button>
         </div>
         <ul class="legend">
           <li data-cat="known"><i class="sw sw-known"></i><span data-i18n="layer_known"></span><em data-n="known"></em></li>
           <li data-cat="found"><i class="sw sw-found"></i><span data-i18n="layer_found"></span><em data-n="found"></em></li>
-          <li data-cat="cand"><i class="sw sw-cand"></i><span data-i18n="layer_cand"></span><em data-n="cand"></em></li>
         </ul>
         <p class="note" id="foundSplit"></p>
         <label class="chk"><input type="checkbox" id="minesToggle"><span data-i18n="layer_mines"></span><em data-n="mines"></em></label>
@@ -158,8 +152,9 @@
 </footer>
 
 <script src="assets/vendor/leaflet/leaflet.js"></script>
-<script src="data/data.js?v=202610131413"></script>
-<script src="assets/i18n.js?v=202610131413"></script>
-<script src="assets/app.js?v=202610131413"></script>
+<script src="data/examples.js"></script>
+<script src="data/data.js?v=202610140719"></script>
+<script src="assets/i18n.js?v=202610140719"></script>
+<script src="assets/app.js?v=202610140719"></script>
 </body>
 </html>

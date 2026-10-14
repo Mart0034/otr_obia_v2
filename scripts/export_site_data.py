@@ -218,6 +218,8 @@ def main(argv=None):
     p.add_argument("--open-round", help="Art der noch offenen Runde (zeigt sie im Diagramm als offen), z.B. chile_all.")
     p.add_argument("--known", required=True, help="Von Hand markierte Halden-Polygone (dump_labels.gpkg).")
     p.add_argument("--mines", required=True, help="Umrisse der bekannten Minen.")
+    p.add_argument("--scan-tiles", type=int, help="Anzahl aller bisher analysierten Kacheln (alle Läufe zusammen).")
+    p.add_argument("--scan-km2", type=float, help="Gesamtfläche dieser Kacheln in km² (Überlappungen nur einmal gezählt).")
     args = p.parse_args(argv)
     os.makedirs(args.out, exist_ok=True)
 
@@ -249,8 +251,7 @@ def main(argv=None):
         cdf = pd.DataFrame({"lon": cc.x, "lat": cc.y, "size": c["area_m2"].map(size_class),
                             "score": (c["mean_proba"] * 20).round().astype(int) * 5})
         cand_cells = cells(cdf, ["size", "score"])
-    json.dump(cand_cells, open(os.path.join(args.out, "candidates.json"), "w"), separators=(",", ":"))
-
+    
     mines = gpd.read_file(args.mines).to_crs(32719)
     mines["geometry"] = mines.geometry.simplify(40)
     mines = mines[~mines.geometry.is_empty].to_crs(4326)[["geometry"]]
@@ -265,6 +266,7 @@ def main(argv=None):
     st["growth"] = growth_curve(pos, rounds, int(len(kdf)))
     st["gain"] = gain_curve(reviewed)
     st["ai_rounds"] = ai_by_round(reviewed)
+    st["scan_tiles"], st["scan_km2"] = args.scan_tiles, args.scan_km2
     st["known_polygons"] = int(len(known))
     st["known_places"] = int(len(kdf))
     st["found_sites"] = int(len(pos))
@@ -287,7 +289,7 @@ def main(argv=None):
         }
     json.dump(st, open(os.path.join(args.out, "stats.json"), "w"), indent=1, ensure_ascii=False)
     # Alle Daten zusätzlich als eine JS-Datei: so läuft die Seite auch direkt aus dem Ordner (file://), nicht nur über http(s)
-    bundle = {"stats": st, "found": found, "known": known_cells, "cand": cand_cells,
+    bundle = {"stats": st, "found": found, "known": known_cells,
               "mines": json.load(open(os.path.join(args.out, "mines.json")))}
     with open(os.path.join(args.out, "data.js"), "w") as f:
         f.write("window.OTR_DATA = " + json.dumps(bundle, separators=(",", ":"), ensure_ascii=False) + ";\n")
