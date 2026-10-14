@@ -161,6 +161,9 @@ def main(argv=None):
                    help="Kacheln überspringen, deren Mitte näher als --exclude-buffer-m an dieser Vektordatei liegt "
                         "(z.B. bekannte Minen/Steinbrüche - wenn man weiter weg suchen will).")
     p.add_argument("--exclude-buffer-m", type=float, default=1500.0)
+    p.add_argument("--work-crs", default=None,
+                   help="Metrisches Koordinatensystem der Kacheln (Standard EPSG:32719 = UTM 19S, passt für Chile). Für andere Länder die UTM-Zone der "
+                        "Region wählen, z.B. EPSG:32612 für Arizona/Utah/Sonora; alle Kacheln eines Laufs müssen dasselbe haben.")
     p.add_argument("--prescreen", action="store_true",
                    help="Kacheln nach ESA-WorldCover vorab aussortieren (Wasser, Schnee, Wald/Acker, Siedlung), "
                         "bevor etwas heruntergeladen wird (siehe prescreen.py).")
@@ -196,19 +199,22 @@ def main(argv=None):
                    help="Alte Reihenfolge: erst alle Basisbilder, dann alle Radarbilder usw. (statt alles gleichzeitig).")
     p.add_argument("--limit", type=int, help="Nur die ersten N passenden Objekte laden (zum Ausprobieren).")
     args = p.parse_args(argv)
+    global WORK_CRS
+    if args.work_crs:
+        WORK_CRS = args.work_crs
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
                         datefmt="%H:%M:%S")
     if args.grid_bounds:
         import prescreen
         w, s_, e, n_ = (float(v) for v in args.grid_bounds.split(","))
-        plan = pd.DataFrame(prescreen.grid_tiles(w, s_, e, n_, args.grid_tile_m, prefix=args.prefix))
+        plan = pd.DataFrame(prescreen.grid_tiles(w, s_, e, n_, args.grid_tile_m, prefix=args.prefix, work_crs=WORK_CRS))
     elif args.input:
         gdf = gpd.read_file(args.input)
         plan = plan_sites(
             gdf, buffer_m=args.buffer_m, south=args.south, north=args.north,
             min_area_m2=args.min_area_m2, max_tile_m=args.max_tile_m,
-            min_radius_m=args.min_radius_m, prefix=args.prefix,
+            min_radius_m=args.min_radius_m, prefix=args.prefix, work_crs=WORK_CRS,
             merge_overlaps=args.merge_overlaps, buffer_scale=args.buffer_scale,
             buffer_min_m=args.buffer_min_m, buffer_max_m=args.buffer_max_m,
         )
@@ -223,7 +229,7 @@ def main(argv=None):
     if args.prescreen and len(plan):
         import prescreen
         okm = plan["status"] == "ok"
-        screened = prescreen.screen_tiles(plan[okm].to_dict("records"))
+        screened = prescreen.screen_tiles(plan[okm].to_dict("records"), work_crs=WORK_CRS)
         reasons = pd.Series({i: (why if not keep else "") for i, (keep, why, _) in zip(plan.index[okm], screened)})
         drop = reasons[reasons != ""]
         plan.loc[drop.index, "status"] = "Landbedeckung: " + drop
@@ -257,7 +263,7 @@ def main(argv=None):
             if missing:
                 raise SystemExit(f"--osm-build-dir unvollständig, es fehlen: {missing} (osm_local.py --pbf ... ausführen)")
             osm_clip = lambda tif: osm_local.clip_tile(paths, tif, args.out_dir)
-        res = fetch_tiles(ok.to_dict("records"), args.out_dir, args.n_workers, args.inner_workers, osm_clip=osm_clip)
+        res = fetch_tiles(ok.to_dict("records"), args.out_dir, args.n_workers, args.inner_workers, osm_clip=osm_clip, crs=WORK_CRS)
         return 1 if res["failed"] and not res["done"] else 0
 
     imagery, s1, dem = (os.path.join(args.out_dir, d) for d in ("imagery", "sentinel1", "dem"))

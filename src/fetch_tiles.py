@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 STAGES = ("sentinel1", "dem", "s2my")
 
 
-def _default_fetchers(catalog=None):
+def _default_fetchers(catalog=None, crs="EPSG:32719"):
     """Die echten Lade-Funktionen mit den bisherigen Standardwerten der einzelnen Skripte."""
     import fetch_dem
     import fetch_s2_multiyear
@@ -37,7 +37,7 @@ def _default_fetchers(catalog=None):
 
     def base(tile, out_path):
         return fetch_for_site(tile["center_x"], tile["center_y"], tile["radius_m"], out_path, catalog,
-                              crs="EPSG:32719")
+                              crs=crs)
 
     return {
         "base": base,
@@ -59,11 +59,12 @@ def _atomic(out, fn):
         raise
 
 
-def fetch_tiles(tiles, out_dir, n_workers=8, inner_workers=3, fetchers=None, osm_clip=None, imagery_name="imagery"):
+def fetch_tiles(tiles, out_dir, n_workers=8, inner_workers=3, fetchers=None, osm_clip=None, imagery_name="imagery",
+                crs="EPSG:32719"):
     """tiles: Liste von dicts (site_id, center_x, center_y, radius_m). Lädt alles nach out_dir/{imagery,sentinel1,dem,s2my}.
     osm_clip(tif_path): optional, schneidet OSM aus einer lokalen Datei zu (siehe osm_local.py).
     fetchers: für Tests austauschbar. Gibt {"done": [...], "failed": {site_id: Grund}, "seconds": {Stufe: Summe}} zurück."""
-    fetchers = fetchers or _default_fetchers()
+    fetchers = fetchers or _default_fetchers(crs=crs)
     dirs = {"base": os.path.join(out_dir, imagery_name)}
     for stage in STAGES:
         dirs[stage] = os.path.join(out_dir, stage)

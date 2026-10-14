@@ -89,6 +89,9 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Orte für den Rest eines Landes aus den Bergbau-Polygonen bauen.")
     p.add_argument("--polys", required=True, help="Bergbau-Polygone (Shapefile, Tang & Werner).")
     p.add_argument("--country", default="Chile")
+    p.add_argument("--work-crs", default=None, help="Metrisches Koordinatensystem (Standard EPSG:32719, Chile); für andere Länder die UTM-Zone der Region.")
+    p.add_argument("--lon-range", nargs=2, type=float, metavar=("W", "E"), help="Nur Polygone zwischen diesen Längengraden.")
+    p.add_argument("--lat-range", nargs=2, type=float, metavar=("S", "N"), help="Nur Polygone zwischen diesen Breitengraden.")
     p.add_argument("--border-cache", default="data/natural_earth")
     p.add_argument("--exclude-near", action="append", default=[], help="Vektordatei; Orte näher als --exclude-buffer-m fallen weg.")
     p.add_argument("--exclude-buffer-m", type=float, default=3000.0)
@@ -101,12 +104,21 @@ def main(argv=None):
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
+    work = args.work_crs or WORK_CRS
     border = country_border(args.country, args.border_cache)
     crs = gpd.read_file(args.polys, rows=1).crs
     bbox = tuple(border.to_crs(crs).total_bounds)
-    polys = gpd.read_file(args.polys, bbox=bbox).to_crs(WORK_CRS)
-    border_utm = border.to_crs(WORK_CRS).geometry.union_all()
+    polys = gpd.read_file(args.polys, bbox=bbox).to_crs(work)
+    border_utm = border.to_crs(work).geometry.union_all()
     polys = polys[polys.intersects(border_utm)].copy()
+    if args.lon_range or args.lat_range:
+        pts = gpd.GeoSeries(polys.geometry.representative_point(), crs=work).to_crs("EPSG:4326")
+        keep = pd.Series(True, index=polys.index)
+        if args.lon_range:
+            keep &= (pts.x >= args.lon_range[0]) & (pts.x <= args.lon_range[1])
+        if args.lat_range:
+            keep &= (pts.y >= args.lat_range[0]) & (pts.y <= args.lat_range[1])
+        polys = polys[keep.values].copy()
     logger.info("%d Bergbau-Polygone in %s.", len(polys), args.country)
     if args.ops_out:
         os.makedirs(os.path.dirname(args.ops_out) or ".", exist_ok=True)
@@ -114,13 +126,13 @@ def main(argv=None):
 
     zones = []
     for f in args.exclude_near:
-        zones.append(gpd.read_file(f).to_crs(WORK_CRS).geometry.buffer(args.exclude_buffer_m).union_all())
+        zones.append(gpd.read_file(f).to_crs(work).geometry.buffer(args.exclude_buffer_m).union_all())
     for d in args.exclude_tiles_dir:
         for tif in glob.glob(os.path.join(d, "*.tif")):
             with rasterio.open(tif) as ds:
-                zones.append(gpd.GeoSeries([box(*ds.bounds)], crs=ds.crs).to_crs(WORK_CRS).iloc[0])
+                zones.append(gpd.GeoSeries([box(*ds.bounds)], crs=ds.crs).to_crs(work).iloc[0])
     if zones:
-        zone = gpd.GeoSeries(zones, crs=WORK_CRS).union_all()
+        zone = gpd.GeoSeries(zones, crs=work).union_all()
         polys = polys[~polys.intersects(zone)].copy()
     logger.info("%d Polygone außerhalb der bereits bearbeiteten Gebiete.", len(polys))
     polys = polys[polys.area >= args.min_area_m2].copy()
