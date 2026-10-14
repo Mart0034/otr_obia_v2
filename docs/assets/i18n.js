@@ -397,3 +397,34 @@ Object.assign(window.I18N.en, { nav_finds: "Finds" });
 Object.assign(window.I18N.en, { nav_time: "Over time" });
 Object.assign(window.I18N.de, { nav_time: "Zeitverlauf" });
 Object.assign(window.I18N.es, { nav_time: "En el tiempo" });
+
+Object.assign(window.I18N.en, {
+  nav_layers: "What it sees", lay_title: "What the system looks at",
+  lay_lead: "A dump is more than a dark patch. For every small patch of ground the model combines 51 measurements from five kinds of data. This is the first example, shown layer by layer.",
+  lay1_t: "Colour", lay1_d: "Ten optical bands from Sentinel-2, plus indices for vegetation, water and bare soil.",
+  lay2_t: "Darkness", lay2_d: "Tire piles are darker across the infrared bands than the ground around them. Bright means dark ground here.",
+  lay3_t: "Radar", lay3_d: "Sentinel-1 radar measures surface roughness and sees through clouds.",
+  lay4_t: "Terrain", lay4_d: "Slope from the elevation model separates dumps from pit walls and shadows.",
+  lay5_t: "Change over the years", lay5_d: "Brightness in 2018 compared with 2025. The red spot got much darker.",
+  lay_note: "On top of these, the shape and texture of each patch count: buildings are rectangular, tire piles are irregular. All layers are free data.",
+});
+Object.assign(window.I18N.de, {
+  nav_layers: "Was es sieht", lay_title: "Worauf das System schaut",
+  lay_lead: "Eine Halde ist mehr als ein dunkler Fleck. Für jeden kleinen Bodenfleck kombiniert das Modell 51 Messwerte aus fünf Arten von Daten. Hier das erste Beispiel, Schicht für Schicht.",
+  lay1_t: "Farbe", lay1_d: "Zehn optische Bänder von Sentinel-2, dazu Indizes für Vegetation, Wasser und nackten Boden.",
+  lay2_t: "Dunkelheit", lay2_d: "Reifenhaufen sind in den Infrarotbändern dunkler als der Boden ringsum. Hell heißt hier dunkler Boden.",
+  lay3_t: "Radar", lay3_d: "Sentinel-1-Radar misst die Rauheit der Oberfläche und sieht durch Wolken.",
+  lay4_t: "Gelände", lay4_d: "Die Hangneigung aus dem Höhenmodell trennt Halden von Grubenwänden und Schatten.",
+  lay5_t: "Veränderung über die Jahre", lay5_d: "Helligkeit 2018 im Vergleich zu 2025. Der rote Fleck wurde deutlich dunkler.",
+  lay_note: "Dazu zählen Form und Textur jedes Flecks: Gebäude sind rechteckig, Reifenhaufen unregelmäßig. Alle Schichten sind freie Daten.",
+});
+Object.assign(window.I18N.es, {
+  nav_layers: "Qué ve", lay_title: "En qué se fija el sistema",
+  lay_lead: "Un vertedero es más que una mancha oscura. Para cada pequeña zona de terreno el modelo combina 51 mediciones de cinco tipos de datos. Aquí el primer ejemplo, capa por capa.",
+  lay1_t: "Color", lay1_d: "Diez bandas ópticas de Sentinel-2, más índices de vegetación, agua y suelo desnudo.",
+  lay2_t: "Oscuridad", lay2_d: "Las pilas de neumáticos son más oscuras en las bandas infrarrojas que el suelo alrededor. Claro significa suelo oscuro aquí.",
+  lay3_t: "Radar", lay3_d: "El radar de Sentinel-1 mide la rugosidad de la superficie y ve a través de las nubes.",
+  lay4_t: "Terreno", lay4_d: "La pendiente del modelo de elevación separa los vertederos de paredes de tajo y sombras.",
+  lay5_t: "Cambio a lo largo de los años", lay5_d: "Brillo en 2018 comparado con 2025. La mancha roja se oscureció mucho.",
+  lay_note: "Además cuentan la forma y la textura de cada zona: los edificios son rectangulares, las pilas de neumáticos irregulares. Todas las capas son datos gratuitos.",
+});

@@ -23,7 +23,7 @@
     $$("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
     $$("[data-i18n-aria]").forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
     $$(".lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
-    if (!$("#chipImgs").children.length) buildExamples(); renderStep(); renderDynamic(); renderGalleryText(); renderTl();
+    if (!$("#chipImgs").children.length) buildExamples(); renderStep(); renderDynamic(); renderGalleryText();
   }
   function setLang(l) { lang = l; try { localStorage.setItem("otr-lang", l); } catch (e) {} applyI18n(); if (map) renderMarkers(); }
 
@@ -285,41 +285,6 @@
     if (!window.OTR_EX) return;
     $$("[data-gal]").forEach((c) => { const g = window.OTR_EX.gallery[+c.dataset.gal]; c.innerHTML = `<b>${nf(g.area)} m²</b> · ${t("kind_" + g.kind)}` + (g.ai != null ? ` · ${t("gal_ai", { ai: g.ai })}` : ""); });
   }
-  /* ---------- time series: the same place, year by year ---------- */
-  let tlEx = 0, tlI = 0, tlTimer = null;
-  function tlData() { return window.OTR_TL ? window.OTR_TL.items[tlEx] : null; }
-  function initTimeline() {
-    const T = window.OTR_TL; if (!T || !$("#tlImgs")) return;
-    $("#tlImgs").innerHTML = T.items.map((it, e) => it.years.map((y, i) => [`<img src="assets/img/tl_${it.id}_${y}.jpg" alt="" loading="lazy" data-tl="${e}:${i}">`, `<img src="assets/img/tl_${it.id}_${y}_o.jpg" alt="" loading="lazy" data-tlo="${e}:${i}">`].join("")).join("")).join("");
-    $("#tlTabs").innerHTML = T.items.map((it, e) => `<button type="button" role="tab" data-tl-tab="${e}"></button>`).join("");
-    $$("[data-tl-tab]").forEach((b) => b.addEventListener("click", () => { tlEx = +b.dataset.tlTab; tlI = Math.max(0, tlData().years.length - 1); stopTl(); renderTl(); }));
-    $("#tlRange").addEventListener("input", (e) => { stopTl(); tlI = +e.target.value; renderTl(); });
-    $("#tlOutline").addEventListener("change", renderTl);
-    $("#tlPlay").addEventListener("click", () => { if (tlTimer) return stopTl(); if (tlI >= tlData().years.length - 1) tlI = 0; renderTl(); tlTimer = setInterval(() => { const n = tlData().years.length; if (tlI >= n - 1) return stopTl(); tlI++; renderTl(); }, 900); renderTl(); });
-    tlI = 0; renderTl();
-  }
-  function stopTl() { if (tlTimer) { clearInterval(tlTimer); tlTimer = null; } const b = $("#tlPlay"); if (b) b.textContent = t("tl_play"); }
-  function renderTl() {
-    const it = tlData(); if (!it) return;
-    $$("[data-tl-tab]").forEach((b, i) => { b.setAttribute("aria-selected", String(i === tlEx)); b.textContent = t("tl_tab", { i: i + 1, a: nf(window.OTR_TL.items[i].area) }); });
-    const outline = $("#tlOutline").checked;
-    $$("[data-tl]").forEach((im) => { const [e, i] = im.dataset.tl.split(":").map(Number); im.classList.toggle("on", e === tlEx && i === tlI && !outline); });
-    $$("[data-tlo]").forEach((im) => { const [e, i] = im.dataset.tlo.split(":").map(Number); im.classList.toggle("on", e === tlEx && i === tlI && outline); });
-    $("#tlYear").textContent = it.years[tlI];
-    const r = $("#tlRange"); r.max = it.years.length - 1; r.value = tlI;
-    $("#tlScale").innerHTML = it.years.map((y, i) => `<span class="${i === tlI ? "on" : ""}">${y}</span>`).join("");
-    const b = $("#tlPlay"); b.textContent = tlTimer ? t("tl_pause") : t("tl_play");
-    $("#tlText").textContent = t("tl_text_" + it.id, { y: it.years[tlI] });
-    // brightness chart
-    const W = 420, H = 190, L = 40, R = 14, T = 16, B = 28, vals = it.bright, lo = Math.floor(Math.min(...vals) - 2), hi = Math.ceil(Math.max(...vals) + 2);
-    const x = (i) => L + (i * (W - L - R)) / (vals.length - 1), y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
-    const line = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
-    $("#tlChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="axis" aria-hidden="true">${[lo, (lo + hi) / 2, hi].map((v) => `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v)}</text>`).join("")}
-      <polyline points="${line}" fill="none" stroke="#e8590c" stroke-width="3" stroke-linejoin="round"/>
-      ${vals.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="${i === tlI ? 6 : 3.5}" fill="${i === tlI ? "#e8590c" : "#fff"}" stroke="#e8590c" stroke-width="2"/>`).join("")}
-      ${it.years.map((yy, i) => (i % 2 === 0 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${yy}</text>` : "")).join("")}</svg>`;
-  }
-
   /* ---------- misc ---------- */
   function initForm() {
     const f = $("#contactForm"), msg = $("#formMsg");
@@ -354,7 +319,7 @@
     $("#prevStep").addEventListener("click", () => goStep(step - 1)); $("#nextStep").addEventListener("click", () => goStep(step + 1));
     initForm();
     applyI18n();
-    try { await load(); initMap(); initGallery(); initTimeline(); applyI18n(); animateCounters(); }
+    try { await load(); initMap(); initGallery(); applyI18n(); animateCounters(); }
     catch (e) { const m = $("#mapEl"); if (m) m.textContent = "Data could not be loaded (" + e.message + ")."; console.error(e); }
     initReveal();
   });
