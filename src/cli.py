@@ -200,12 +200,12 @@ def build_arg_parser(description):
              "sind (z.B. beim Bewerten neuer Kacheln): spart Training und Kreuzvalidierung (ca. 6 Minuten).",
     )
     parser.add_argument(
-        "--export-extra-only", dest="export_extra_only", action="store_true",
+        "--export-extra-only", dest="export_extra_only", action="store_true", default=None,
         help="Nur die mit --extra-imagery-dir bewerteten Kacheln bewerten/exportieren (nicht auch die geprüften "
              "Kacheln): spart Vorhersage, OSM-Flags, Straßendichte und Schreiben für alle anderen.",
     )
     parser.add_argument(
-        "--skip-polygons-extra", dest="skip_polygons_extra", action="store_true",
+        "--skip-polygons-extra", dest="skip_polygons_extra", action="store_true", default=None,
         help="polygons_extra.gpkg (alle Segment-Polygone der neuen Kacheln, oft 2 GB) nicht schreiben; "
              "eval_segment_size.py braucht sie.",
     )
@@ -318,8 +318,8 @@ def resolve_config(base_config, args):
         "reviewed_imagery_dir": getattr(args, "reviewed_imagery_dir", None),
         "export_min_proba": getattr(args, "export_min_proba", None),
         "model_cache_dir": getattr(args, "model_cache_dir", None),
-        "export_extra_only": getattr(args, "export_extra_only", False),
-        "skip_polygons_extra": getattr(args, "skip_polygons_extra", False),
+        "export_extra_only": getattr(args, "export_extra_only", None),
+        "skip_polygons_extra": getattr(args, "skip_polygons_extra", None),
         "candidate_lists_path": getattr(args, "candidate_lists_path", None),
         "add_labels_path": getattr(args, "add_labels_path", None),
         "hard_negatives_path": getattr(args, "hard_negatives_path", None),
