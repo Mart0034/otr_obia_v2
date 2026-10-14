@@ -192,3 +192,10 @@ a{color:var(--amber)}
 
 .hero-art{display:none}
 .hero-photo{position:absolute;inset:0;z-index:0;background:linear-gradient(90deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.86) 42%,rgba(255,255,255,.35) 100%),linear-gradient(0deg,#fff 0%,rgba(255,255,255,0) 28%),url(img/hero-wide.webp) center/cover no-repeat}
+
+.blind .sub{margin-bottom:14px}.bbar{display:grid;grid-template-columns:230px 1fr 110px;gap:14px;align-items:center;margin:12px 0;font-size:14px}
+.bbar .bl{color:var(--text)}.btrack{position:relative;height:18px;border-radius:99px;background:var(--bg2)}.btrack i{display:block;height:100%;border-radius:99px;background:var(--green)}
+.btrack u{position:absolute;top:-4px;bottom:-4px;width:3px;background:var(--text);border-radius:2px;text-decoration:none}
+.bbar .bv{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}.bbar .bv small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+.blegend i{display:inline-block;width:3px;height:12px;background:var(--text);margin-right:8px;vertical-align:-2px}
+@media (max-width:700px){.bbar{grid-template-columns:1fr}.bbar .bv{text-align:left}}

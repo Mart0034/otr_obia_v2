@@ -318,6 +318,29 @@
  },
  "found_ha": 165.4,
  "found_full_ha": 46.5,
+ "blind": {
+  "hidden_places": 103,
+  "folds": 4,
+  "list_sites": 11000,
+  "steps": [
+   {
+    "top": 500,
+    "recall": 0.1845,
+    "found": 19,
+    "random": 0.0276
+   },
+   {
+    "top": 2500,
+    "recall": 0.4951,
+    "found": 51,
+    "random": 0.1382
+   }
+  ],
+  "full": {
+   "recall": 0.6117,
+   "found": 63
+  }
+ },
  "by_size": {
   "s": {
    "dump": 2,

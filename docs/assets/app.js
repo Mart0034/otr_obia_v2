@@ -96,9 +96,17 @@
     $("#lowBig").textContent = pct(s.ai_low.share, 1) + " %";
     $("#lowText").textContent = t("low_text", { n: nf(s.ai_low.n), c: nf(s.ai_low.confirmed) });
     $("#honestText").textContent = t("honest_text", { rate: pct(s.hit_rate, 1) });
-    renderFunnel(); renderSizes(); renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
+    renderBlind(); renderFunnel(); renderSizes(); renderGrowth(); renderGain(); renderAiBars(); renderChart(); renderRegions(); legendState();
   }
   function wrap(txt, n) { const out = []; let cur = ""; txt.split(" ").forEach((w) => { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; }); out.push(cur); return out; }
+  function renderBlind() {
+    const el = $("#blindChart"), b = DATA.stats && DATA.stats.blind; if (!el || !b) return;
+    $("#blindLead").textContent = t("blind_lead", { n: nf(b.hidden_places) });
+    const rows = b.steps.map((s) => ({ label: t("blind_top", { n: nf(s.top) }), v: s.recall, base: s.random, found: s.found }))
+      .concat([{ label: t("blind_full", { n: nf(b.list_sites) }), v: b.full.recall, base: null, found: b.full.found }]);
+    el.innerHTML = rows.map((r) => `<div class="bbar"><span class="bl">${r.label}</span><span class="btrack"><i style="width:${r.v * 100}%"></i>${r.base != null ? `<u style="left:${r.base * 100}%" title="${t("blind_random")}"></u>` : ""}</span><span class="bv">${pct(r.v)}%<small>${nf(r.found)} / ${nf(b.hidden_places)}</small></span></div>`).join("")
+      + `<p class="small blegend"><i></i>${t("blind_random")}</p>`;
+  }
   function renderFunnel() {
     const el = $("#funnelChart"), f = DATA.stats && DATA.stats.funnel; if (!el || !f || !f.area_ha) return;
     const steps = [

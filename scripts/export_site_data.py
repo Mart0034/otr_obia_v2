@@ -219,6 +219,7 @@ def main(argv=None):
     p.add_argument("--open-round", help="Art der noch offenen Runde (zeigt sie im Diagramm als offen), z.B. chile_all.")
     p.add_argument("--known", required=True, help="Von Hand markierte Halden-Polygone (dump_labels.gpkg).")
     p.add_argument("--mines", required=True, help="Umrisse der bekannten Minen.")
+    p.add_argument("--blind", help="blind_results.json des Blindtests (scripts/blind_test.py merge).")
     p.add_argument("--scan-tiles", type=int, help="Anzahl aller bisher analysierten Kacheln (alle Läufe zusammen).")
     p.add_argument("--scan-km2", type=float, help="Gesamtfläche dieser Kacheln in km² (Überlappungen nur einmal gezählt).")
     args = p.parse_args(argv)
@@ -285,6 +286,15 @@ def main(argv=None):
                     "confirmed": {"n": int(len(pos)), "ha": ha(pos)}}
     st["found_ha"] = round(float(pos["area_m2"].sum()) / 10000, 1)
     st["found_full_ha"] = round(float(pos.loc[pos["review"] == "dump", "area_m2"].sum()) / 10000, 1)
+    if args.blind:
+        b = json.load(open(args.blind))
+        avg = float(np.mean(b["lists"]["cand_all.gpkg"]["sites_per_fold"]))
+        full = b["lists"]["cand_all.gpkg"]["recall"]
+        st["blind"] = {"hidden_places": b["hidden_places"], "folds": b["folds"], "list_sites": int(round(avg, -3)),
+                       "steps": [{"top": n, "recall": b["lists"][k]["recall"], "found": b["lists"][k]["found_places"],
+                                  "random": round(min(n / avg, 1.0) * full, 4)}
+                                 for n, k in ((500, "cand_top500.gpkg"), (2500, "cand_top2500.gpkg"))],
+                       "full": {"recall": full, "found": b["lists"]["cand_all.gpkg"]["found_places"]}}
     st["by_size"] = {sz: {k: int(((places["size"] == sz) & (places["kind"] == k)).sum()) for k in ("dump", "partial")} for sz in ("s", "m", "l")}
     st["found_by_how"] = {k: int((places["how"] == k).sum()) for k in ("ai", "human")}
     st["regions"] = {}

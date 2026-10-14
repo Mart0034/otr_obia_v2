@@ -428,3 +428,22 @@ Object.assign(window.I18N.es, {
   lay5_t: "Cambio a lo largo de los años", lay5_d: "Brillo en 2018 comparado con 2025. La mancha roja se oscureció mucho.",
   lay_note: "Además cuentan la forma y la textura de cada zona: los edificios son rectangulares, las pilas de neumáticos irregulares. Todas las capas son datos gratuitos.",
 });
+
+Object.assign(window.I18N.en, {
+  blind_title: "Blind test: dumps the system had never seen",
+  blind_lead: "We hid {n} confirmed dump places, a quarter at a time, together with the tiles around them. The system was retrained without them and had to find them again.",
+  blind_top: "A person reviews the top {n} sites", blind_full: "The whole list (about {n} sites)", blind_random: "Picking sites at random from the same list",
+  blind_note: "Share of the hidden dump places that appear in the list. The model was trained on roughly two thirds of the labels it has today, and the lists use the model order only, without the AI check that reorders them in practice. Places inside the cut-off size or outside the preselection never reach the list, which is why even the whole list stops at 61%.",
+});
+Object.assign(window.I18N.de, {
+  blind_title: "Blindtest: Halden, die das System nie gesehen hat",
+  blind_lead: "Wir haben {n} bestätigte Haldenorte versteckt, je ein Viertel auf einmal, samt den Kacheln um sie herum. Das System wurde ohne sie neu trainiert und musste sie wiederfinden.",
+  blind_top: "Ein Mensch prüft die besten {n} Standorte", blind_full: "Die ganze Liste (etwa {n} Standorte)", blind_random: "Zufällige Auswahl aus derselben Liste",
+  blind_note: "Anteil der versteckten Haldenorte, die in der Liste vorkommen. Das Modell war mit etwa zwei Dritteln der heutigen Labels trainiert, und die Listen folgen nur der Modell-Reihenfolge, ohne die KI-Prüfung, die sie in der Praxis umsortiert. Orte unter der Mindestgröße oder außerhalb der Vorauswahl kommen nie in die Liste, deshalb endet selbst die ganze Liste bei 61 %.",
+});
+Object.assign(window.I18N.es, {
+  blind_title: "Prueba ciega: vertederos que el sistema nunca vio",
+  blind_lead: "Ocultamos {n} lugares con vertedero confirmados, un cuarto cada vez, junto con las teselas a su alrededor. El sistema se reentrenó sin ellos y tuvo que encontrarlos de nuevo.",
+  blind_top: "Una persona revisa los mejores {n} sitios", blind_full: "La lista completa (unos {n} sitios)", blind_random: "Elegir sitios al azar de la misma lista",
+  blind_note: "Porcentaje de los lugares ocultos que aparecen en la lista. El modelo se entrenó con aproximadamente dos tercios de las etiquetas actuales, y las listas siguen solo el orden del modelo, sin la revisión de la IA que las reordena en la práctica. Los lugares bajo el tamaño mínimo o fuera de la preselección nunca llegan a la lista, por eso incluso la lista completa se queda en 61 %.",
+});
