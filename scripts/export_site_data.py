@@ -131,6 +131,7 @@ def load_reviewed(spec):
     d["_key"] = list(zip(d["lon"].round(4), d["lat"].round(4), d["area_m2"].round(-1)))
     d = d.drop_duplicates("_key", keep="last").drop(columns="_key")
     d["auto"] = d["ai_decision"] == "auto_clean"          # vom Plugin automatisch verworfen, nicht von einem Menschen gesehen
+    d["ctrl"] = d["ai_decision"].isin(["spot_ok", "spot_miss"])   # Stichprobe zur Kontrolle der automatischen Verwürfe: zählt nicht als Prüfung
     return d
 
 
@@ -141,7 +142,7 @@ def round_table(frames_spec, reviewed):
     for head in order:
         label, _, tag = head.partition(":")
         g = reviewed[reviewed["round"] == label]
-        human = g[~g["auto"]]
+        human = g[~g["auto"] & ~g["ctrl"]]
         rows.append({"round": label, "tag": tag, "listed": int(g["listed"].iloc[0]) if len(g) else 0,
                      "checked": int(len(human)), "auto": int(g["auto"].sum()),
                      "confirmed": int(human["review"].isin(["dump", "partial"]).sum())})
@@ -151,7 +152,7 @@ def round_table(frames_spec, reviewed):
 def stats_from(reviewed, rounds):
     d = reviewed[reviewed["review"].isin(["dump", "partial", "clean"])].copy()
     d["pos"] = d["review"].isin(["dump", "partial"])
-    human = reviewed[~reviewed["auto"]]
+    human = reviewed[~reviewed["auto"] & ~reviewed["ctrl"]]
     n_human, n_pos = int(len(human)), int(human["review"].isin(["dump", "partial"]).sum())
     ai = d[d["ai_dump_p"].notna()]
     hi, lo = ai[ai["ai_dump_p"] >= 0.7], ai[ai["ai_dump_p"] < 0.3]
@@ -276,7 +277,7 @@ def main(argv=None):
     st["mines"] = int(len(mines))
     st["found_cells"] = len(found["features"])
     st["candidates"] = int(sum(f["properties"]["n"] for f in cand_cells["features"]))
-    human_rows = reviewed[~reviewed["auto"]]
+    human_rows = reviewed[~reviewed["auto"] & ~reviewed["ctrl"]]
     ha = lambda df: round(float(df["area_m2"].sum()) / 10000, 1)
     st["funnel"] = {"area_ha": round(args.scan_km2 * 100) if args.scan_km2 else None, "tiles": args.scan_tiles,
                     "listed": {"n": int(len(reviewed)), "ha": ha(reviewed)},
@@ -291,7 +292,7 @@ def main(argv=None):
             "name": name, "south": south, "north": north,
             "known": in_region(kdf), "found": in_region(places),
             "found_ai": in_region(places[places["how"] == "ai"]), "found_human": in_region(places[places["how"] == "human"]),
-            "reviewed": in_region(reviewed[~reviewed["auto"]]),
+            "reviewed": in_region(reviewed[~reviewed["auto"] & ~reviewed["ctrl"]]),
             "candidates": int(sum(f["properties"]["n"] for f in cand_cells["features"]
                                   if south <= f["geometry"]["coordinates"][1] < north)),
         }

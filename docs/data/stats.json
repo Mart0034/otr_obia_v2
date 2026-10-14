@@ -1,7 +1,7 @@
 {
- "reviewed": 1822,
+ "reviewed": 1643,
  "confirmed": 97,
- "hit_rate": 0.0532,
+ "hit_rate": 0.059,
  "rounds": [
   {
    "round": "r01",
@@ -47,7 +47,7 @@
    "round": "r06",
    "tag": "atacama",
    "listed": 500,
-   "checked": 287,
+   "checked": 229,
    "auto": 213,
    "confirmed": 10
   },
@@ -55,7 +55,7 @@
    "round": "r07",
    "tag": "atacama",
    "listed": 500,
-   "checked": 275,
+   "checked": 207,
    "auto": 197,
    "confirmed": 17
   },
@@ -63,7 +63,7 @@
    "round": "r08",
    "tag": "chile",
    "listed": 209,
-   "checked": 183,
+   "checked": 179,
    "auto": 24,
    "confirmed": 9
   },
@@ -71,7 +71,7 @@
    "round": "r09",
    "tag": "mixed",
    "listed": 500,
-   "checked": 335,
+   "checked": 286,
    "auto": 165,
    "confirmed": 15
   },
@@ -308,8 +308,8 @@
    "ha": 5218.6
   },
   "human": {
-   "n": 1822,
-   "ha": 3408.6
+   "n": 1643,
+   "ha": 3079.5
   },
   "confirmed": {
    "n": 97,

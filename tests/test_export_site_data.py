@@ -34,8 +34,9 @@ def test_how_found_and_stats():
                       "ai_dump_p": [0.9, 0.05, 0.8, 0.1, 0.02],
                       "ai_decision": ["accepted", "spot_ok", "spot_miss", "auto_clean", "auto_clean"]})
     d["auto"] = d["ai_decision"] == "auto_clean"
+    d["ctrl"] = d["ai_decision"].isin(["spot_ok", "spot_miss"])
     st = ex.stats_from(d, [])
-    assert st["reviewed"] == 3 and st["confirmed"] == 1                 # nur von Menschen angesehene Standorte
+    assert st["reviewed"] == 1 and st["confirmed"] == 1                 # nur gezielt geprüfte Standorte (ohne Auto-Verwürfe und ohne Stichproben)
     assert st["auto_clean"] == 2
     assert st["ai_high"]["n"] == 2 and st["ai_high"]["confirmed"] == 1
     assert st["spot_checks"] == 2 and st["spot_misses"] == 0            # spot_miss zählt nur, wenn heute dump/partial
@@ -43,7 +44,7 @@ def test_how_found_and_stats():
 
 def test_round_table_counts_only_human_checked(tmp_path):
     d = pd.DataFrame({"round": ["r1"] * 4, "listed": [10] * 4, "review": ["dump", "clean", "clean", "unsure"],
-                      "auto": [False, False, True, False]})
+                      "auto": [False, False, True, False], "ctrl": [False, False, False, False]})
     rows = ex.round_table(["r1:mines=x.gpkg"], d)
     assert rows == [{"round": "r1", "tag": "mines", "listed": 10, "checked": 3, "auto": 1, "confirmed": 1}]
 
