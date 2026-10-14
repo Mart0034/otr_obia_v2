@@ -106,22 +106,24 @@ def prep(a):
 
 
 def places(gdf, buf=100):
-    u = gdf.geometry.buffer(buf).unary_union
+    u = gdf.geometry.buffer(buf).buffer(0).unary_union
     parts = list(u.geoms) if hasattr(u, "geoms") else [u]
     return parts
 
 
 def score(a):
     truth = gpd.read_file(os.path.join(a.out, "truth.gpkg")).to_crs(WORK)
+    truth["geometry"] = truth.geometry.buffer(0)                                   # ungültige Polygone reparieren
     tparts = places(truth)
     # ein Ort der Wahrheit gilt als gefunden, wenn ein Standort der Liste mindestens ein Polygon davon berührt
     res = {"fold": a.fold, "hidden_polygons": int(len(truth)), "hidden_places": len(tparts), "lists": {}}
     for path in a.lists:
         sites = gpd.read_file(path, layer="candidate_sites").to_crs(WORK)
+        sites["geometry"] = sites.geometry.buffer(0)
         found = 0
         for part in tparts:
             polys = truth[truth.geometry.intersects(part)]
-            if sites.geometry.intersects(polys.geometry.unary_union).any():
+            if any(sites.geometry.intersects(g).any() for g in polys.geometry):
                 found += 1
         res["lists"][os.path.basename(path)] = {"sites": int(len(sites)), "found_places": found,
                                                   "recall": round(found / max(len(tparts), 1), 4)}
