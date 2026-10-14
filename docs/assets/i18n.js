@@ -335,3 +335,7 @@ Object.assign(window.I18N.es, { ai_text: "De los candidatos con valor de IA de 7
 Object.assign(window.I18N.en, { ai_title: "When the AI is confident, more than half are real dumps", low_title: "When the AI is doubtful, almost none are" });
 Object.assign(window.I18N.de, { ai_title: "Wenn die KI sicher ist, sind mehr als die Hälfte echte Halden", low_title: "Wenn die KI zweifelt, sind es fast keine" });
 Object.assign(window.I18N.es, { ai_title: "Cuando la IA está segura, más de la mitad son vertederos reales", low_title: "Cuando la IA duda, casi ninguno lo es" });
+
+Object.assign(window.I18N.en, { cmp_close: "Zoom to one pair", cmp_all: "Show the whole area", cmp_lead: "The same area at the start and today. Blue pins mark spots our partner marked by hand. Green pins mark spots found with the system. Click a pin to zoom in." });
+Object.assign(window.I18N.de, { cmp_close: "Auf ein Paar zoomen", cmp_all: "Ganzes Gebiet zeigen", cmp_lead: "Dasselbe Gebiet am Anfang und heute. Blaue Pins markieren Stellen, die unser Partner von Hand markiert hat. Grüne Pins markieren Stellen, die mit dem System gefunden wurden. Ein Klick auf einen Pin zoomt hinein." });
+Object.assign(window.I18N.es, { cmp_close: "Acercar a un par", cmp_all: "Mostrar toda el área", cmp_lead: "La misma zona al inicio y hoy. Los pines azules marcan lugares que nuestro socio marcó a mano. Los pines verdes marcan lugares encontrados con el sistema. Haz clic en un pin para acercar." });

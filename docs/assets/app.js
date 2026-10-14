@@ -48,12 +48,12 @@
     if (!on || !window.L || !window.OTR_EX) return;
     const e = EXAMPLES[ex], geom = window.OTR_EX.steps[e.id];
     if (!exMap) {
-      exMap = L.map("exMap", { zoomControl: true, maxZoom: 17, scrollWheelZoom: false });
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 17, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(exMap);
+      exMap = L.map("exMap", { zoomControl: true, maxZoom: 19, scrollWheelZoom: false });
+      esri(exMap);
     }
     if (exLayer) exMap.removeLayer(exLayer);
     exLayer = L.geoJSON(geom, { style: { color: "#22c55e", weight: 3, fillOpacity: 0.08 } }).addTo(exMap);
-    exMap.invalidateSize(); exMap.fitBounds(exLayer.getBounds().pad(2.5), { maxZoom: 17, animate: false });
+    exMap.invalidateSize(); exMap.fitBounds(exLayer.getBounds().pad(1.2), { maxZoom: 19, animate: false });
   }
   function renderStep() {
     const e = EXAMPLES[ex];
@@ -241,7 +241,7 @@
 
   /* ---------- gallery and before/after (high-resolution imagery loaded live) ---------- */
   function esri(map) {
-    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 17, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(map);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 17, maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }).addTo(map);
   }
   function initGallery() {
     const box = $("#gallery"); if (!box || !window.OTR_EX || !window.L) return;
@@ -249,10 +249,10 @@
     const io = new IntersectionObserver((es) => es.forEach((e) => {
       if (!e.isIntersecting) return; io.unobserve(e.target);
       const i = +e.target.id.slice(2), g = window.OTR_EX.gallery[i];
-      const m = L.map(e.target, { zoomControl: false, attributionControl: i === 0, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+      const m = L.map(e.target, { maxZoom: 19, zoomControl: false, attributionControl: i === 0, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
       esri(m);
       const lay = L.geoJSON(g.geom, { style: { color: "#22c55e", weight: 2.5, fillOpacity: 0.08 } }).addTo(m);
-      m.fitBounds(lay.getBounds().pad(2.2), { maxZoom: 17, animate: false });
+      m.fitBounds(lay.getBounds().pad(0.7), { maxZoom: 19, animate: false });
     }), { rootMargin: "200px" });
     $$(".gmap", box).forEach((m) => io.observe(m));
     renderGalleryText();
@@ -261,17 +261,41 @@
     if (!window.OTR_EX) return;
     $$("[data-gal]").forEach((c) => { const g = window.OTR_EX.gallery[+c.dataset.gal]; c.innerHTML = `<b>${nf(g.area)} m²</b> · ${t("kind_" + g.kind)}` + (g.ai != null ? ` · ${t("gal_ai", { ai: g.ai })}` : ""); });
   }
-  let cmpMap, cmpFound, cmpMode = "now";
+  let cmpMap, cmpFound, cmpFocus, cmpAll, cmpMode = "now";
+  function pin(color) {
+    return L.divIcon({ className: "", iconSize: [34, 44], iconAnchor: [17, 42], html: `<svg class="pin" viewBox="0 0 34 44" width="34" height="44"><path d="M17 42C17 42 3 26 3 16a14 14 0 0 1 28 0c0 10-14 26-14 26z" fill="${color}" stroke="#fff" stroke-width="3"/><circle cx="17" cy="16" r="5.5" fill="#fff"/></svg>` });
+  }
   function initCompare() {
     const el = $("#cmpMap"); if (!el || !window.OTR_EX || !window.L) return;
     const b = window.OTR_EX.before;
-    cmpMap = L.map(el, { scrollWheelZoom: false, maxZoom: 17 }); esri(cmpMap);
-    const known = L.geoJSON(b.known, { style: { color: "#3b82f6", weight: 2.5, fillOpacity: 0.15 } }).addTo(cmpMap);
-    cmpFound = L.geoJSON(b.found.map((f) => ({ type: "Feature", geometry: f.geom, properties: {} })), { style: { color: "#22c55e", weight: 2.5, fillOpacity: 0.15 } }).addTo(cmpMap);
-    const all = L.featureGroup([known, cmpFound]);
-    const fit = () => { cmpMap.invalidateSize(); cmpMap.fitBounds(all.getBounds().pad(0.15), { maxZoom: 16, animate: false }); };
-    fit(); setTimeout(fit, 400);
-    $("#cmpKnown").textContent = nf(b.known.length); $("#cmpFound").textContent = nf(b.found.length);
+    cmpMap = L.map(el, { scrollWheelZoom: false, maxZoom: 19 }); esri(cmpMap);
+    const mk = (geoms, color) => {
+      const g = L.featureGroup(), items = geoms.map((geom) => { const lay = L.geoJSON(geom, { style: { color, weight: 5, opacity: 1, fillColor: color, fillOpacity: 0.3 } }).addTo(g); return { lay, c: lay.getBounds().getCenter() }; });
+      const groups = [];                                    // pieces closer than 150 m count as one place: one pin
+      items.forEach((it) => { const hit = groups.find((gr) => gr.items.some((o) => o.c.distanceTo(it.c) < 150)); hit ? hit.items.push(it) : groups.push({ items: [it] }); });
+      groups.forEach((gr) => {
+        const bb = L.latLngBounds(gr.items.map((i) => i.lay.getBounds().getCenter()));
+        gr.items.forEach((i) => bb.extend(i.lay.getBounds()));
+        L.marker(bb.getCenter(), { icon: pin(color), zIndexOffset: 500 }).addTo(g).on("click", () => cmpMap.fitBounds(bb.pad(1), { maxZoom: 18 }));
+      });
+      g.places = groups.length;
+      return g;
+    };
+    const known = mk(b.known, "#2563eb").addTo(cmpMap);
+    cmpFound = mk(b.found.map((f) => f.geom), "#16a34a").addTo(cmpMap);
+    cmpAll = L.featureGroup([known, cmpFound]);
+    // start close: the hand-marked outline with the nearest find, not the whole area
+    const nearest = b.known.map((g) => L.geoJSON(g).getBounds()).map((kb) => {
+      const f = b.found.map((x) => L.geoJSON(x.geom).getBounds()).sort((u, v) => kb.getCenter().distanceTo(u.getCenter()) - kb.getCenter().distanceTo(v.getCenter()))[0];
+      return { kb, f, d: f ? kb.getCenter().distanceTo(f.getCenter()) : 1e9 };
+    }).sort((u, v) => u.d - v.d)[0];
+    cmpFocus = nearest ? L.latLngBounds(nearest.kb.getSouthWest(), nearest.kb.getNorthEast()).extend(nearest.f) : cmpAll.getBounds();
+    const fit = (bb, pad) => { cmpMap.invalidateSize(); cmpMap.fitBounds(bb.pad(pad), { maxZoom: 18, animate: false }); };
+    const home = () => fit(cmpFocus, 1.2);
+    home(); setTimeout(home, 400);
+    $("#cmpKnown").textContent = nf(known.places); $("#cmpFound").textContent = nf(cmpFound.places);
+    $("#cmpAllBtn").addEventListener("click", () => { cmpMap.fitBounds(cmpAll.getBounds().pad(0.15), { maxZoom: 16 }); });
+    $("#cmpCloseBtn").addEventListener("click", () => { cmpMap.fitBounds(cmpFocus.pad(1.2), { maxZoom: 18 }); });
     $$("#cmpSeg button").forEach((x) => x.addEventListener("click", () => {
       cmpMode = x.dataset.cmp; $$("#cmpSeg button").forEach((y) => y.classList.toggle("on", y === x));
       cmpMode === "now" ? cmpFound.addTo(cmpMap) : cmpMap.removeLayer(cmpFound);
