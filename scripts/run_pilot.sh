@@ -48,7 +48,9 @@ grep -E "Kacheln geplant|übersprungen|Fertig in|unvollständig" $R/log_fetch.tx
 
 stamp "=== 3. link tiles that have all inputs"
 mkdir -p data/all_s1 data/all_dem data/s2_multiyear_all $R/ok_imagery
-n=0; for f in $R/tiles/imagery/*.tif; do id=$(basename $f .tif)
+n=0; rm -rf $R/ok_imagery; mkdir -p $R/ok_imagery
+for f in $R/tiles/imagery/*.tif; do id=$(basename $f .tif)
+  [ -e $Q/imagery_reviewed/$id.tif ] && continue     # tiles that went into a retrain are scored there, not twice
   if [ -e $R/tiles/sentinel1/$id.tif ] && [ -e $R/tiles/dem/$id.tif ] && [ -e $R/tiles/s2my/$id.tif ]; then
     ln -sf "$(realpath $f)" $R/ok_imagery/$id.tif
     ln -sf "$(realpath $R/tiles/sentinel1/$id.tif)" data/all_s1/$id.tif; ln -sf "$(realpath $R/tiles/dem/$id.tif)" data/all_dem/$id.tif
