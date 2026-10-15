@@ -69,6 +69,7 @@ $PY src/otr_obia_pipeline.py --imagery-dir data/imagery --labels-path data/dump_
 
 stamp "=== 5. candidate lists with Google Maps links"
 COMMONC="--segments $RUN/segments_classified.gpkg --preselect --area-pct 2 --rank-by mean_proba --min-area-m2 2500 --max-site-m2 40000 --operations $R/ops_all.gpkg"
+[ -n "$EXCL" ] && COMMONC="$COMMONC --labels $OUT/labels_${LABELS}_for_eval.gpkg --exclude-known --exclude-areas $OUT/negatives_${LABELS}_clean.gpkg,$OUT/ignore_reviewed_$LABELS.geojson"   # EXCL=1: leave out sites that were already reviewed
 $PY src/candidate_sites.py $COMMONC --top 500 --out $RUN/candidate_sites_${NAME}_top500.gpkg > log_pilot_${NAME}_top500.txt 2>&1
 $PY src/candidate_sites.py $COMMONC --top 1500 --out $RUN/candidate_sites_${NAME}_top1500.gpkg > log_pilot_${NAME}_top1500.txt 2>&1
 stamp "=== PILOT DONE ($NAME): $RUN/candidate_sites_${NAME}_top500.gpkg (+ .csv with maps_url) ==="
