@@ -11,10 +11,10 @@
 cd /home/container || exit 1
 export LD_LIBRARY_PATH=/home/container/libexpat_extracted/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 PY=venv/bin/python3; OUT=data/reviewed/out; Q=data/sites_quarries; BASE=out_px12_my_bright; BANDS=s2my_bright_early,s2my_bright_late
-NAME=$1; shift; CRS=EPSG:32612; NPER=150; LABELS=all8; REGIONS=()
+NAME=$1; shift; CRS=EPSG:32612; NPER=150; LABELS=all8; MINA=300000; REGIONS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --crs) CRS=$2; shift 2;; --n-per) NPER=$2; shift 2;; --labels) LABELS=$2; shift 2;;
+    --crs) CRS=$2; shift 2;; --n-per) NPER=$2; shift 2;; --labels) LABELS=$2; shift 2;; --min-area-m2) MINA=$2; shift 2;;
     --region) REGIONS+=("$2|$3|$4|$5|$6"); shift 6;;
     *) echo "unknown argument $1"; exit 2;;
   esac
@@ -27,14 +27,14 @@ SHP=$(ls data/chile_new/tang/*.shp | head -1)
 stamp "=== 1. places per region"
 i=0; for r in "${REGIONS[@]}"; do IFS='|' read C W E S N <<< "$r"; i=$((i+1))
   $PY src/region_vector.py --polys "$SHP" --country "$C" --work-crs $CRS --lon-range $W $E --lat-range $S $N \
-    --min-area-m2 300000 --out $R/places_$i.gpkg --ops-out $R/ops_$i.gpkg > $R/log_places_$i.txt 2>&1 || { stamp "places FAILED ($C)"; tail -8 $R/log_places_$i.txt; exit 1; }
+    --min-area-m2 $MINA --out $R/places_$i.gpkg --ops-out $R/ops_$i.gpkg > $R/log_places_$i.txt 2>&1 || { stamp "places FAILED ($C)"; tail -8 $R/log_places_$i.txt; exit 1; }
   grep -E "Polygone|Orte" $R/log_places_$i.txt | cut -c1-150
 done
 $PY - <<P
 import glob, geopandas as gpd, pandas as pd
 parts, ops = [], []
 for f in sorted(glob.glob("$R/places_*.gpkg")):
-    g = gpd.read_file(f); g = g[(g["area_m2"] >= 3e5) & (g["area_m2"] <= 15e6)]      # no giant evaporation ponds
+    g = gpd.read_file(f); g = g[(g["area_m2"] >= $MINA) & (g["area_m2"] <= 15e6)]      # no giant evaporation ponds
     parts.append(g.sample(min(len(g), $NPER), random_state=7))
 pd.concat(parts, ignore_index=True).pipe(lambda d: gpd.GeoDataFrame(d, crs=parts[0].crs)).to_file("$R/places.gpkg", driver="GPKG")
 gpd.GeoDataFrame(pd.concat([gpd.read_file(f)[["geometry"]] for f in sorted(glob.glob("$R/ops_*.gpkg"))], ignore_index=True), crs=parts[0].crs).to_file("$R/ops_all.gpkg", driver="GPKG")
@@ -60,15 +60,15 @@ stamp "=== 4. score (cached Chile model, export only the new tiles)"
 rm -rf $RUN; mkdir $RUN; for f in feature_cache.pkl polygons_cache.gpkg; do ln -s "$(realpath $BASE/$f)" $RUN/$f; done
 $PY src/otr_obia_pipeline.py --imagery-dir data/imagery --labels-path data/dump_labels.gpkg --mine-boundary-path data/mine_boundaries.gpkg \
   --s1-dir data/all_s1 --dem-dir data/all_dem --s2my-dir data/s2_multiyear_all --s2my-bands $BANDS --target-segment-px 12 \
-  --max-segments-per-mine 1000000 --n-jobs 12 --use-cache --tile-cache-dir data/tile_cache --model-cache-dir data/model_cache \
+  --max-segments-per-mine 1000000 --n-jobs 5 --use-cache --tile-cache-dir data/tile_cache --model-cache-dir data/model_cache \
   --labeled-imagery-dir data/run15/labeled --extra-labels-path data/run15/labels_extra.gpkg \
   --reviewed-imagery-dir $Q/imagery_reviewed --extra-imagery-dir $R/ok_imagery --export-extra-only --skip-polygons-extra \
   --add-labels-path $OUT/labels_reviewed_dump_$LABELS.gpkg --ignore-points-path data/run15/ignore_points.geojson,$OUT/ignore_reviewed_$LABELS.geojson \
-  --hard-negatives-path $OUT/negatives_${LABELS}_clean.gpkg --hard-negative-factor 20 --output-dir $RUN > log_pilot_$NAME.txt 2>&1 \
+  --hard-negatives-path $OUT/negatives_${LABELS}_clean.gpkg --hard-negative-factor ${HNF:-20} --output-dir $RUN > log_pilot_$NAME.txt 2>&1 \
   || { stamp "pipeline FAILED"; tail -15 log_pilot_$NAME.txt; exit 1; }
 
 stamp "=== 5. candidate lists with Google Maps links"
 COMMONC="--segments $RUN/segments_classified.gpkg --preselect --area-pct 2 --rank-by mean_proba --min-area-m2 2500 --max-site-m2 40000 --operations $R/ops_all.gpkg"
-$PY src/candidate_sites.py $COMMONC --top 300 --out $RUN/candidate_sites_${NAME}_top300.gpkg > log_pilot_${NAME}_top300.txt 2>&1
-$PY src/candidate_sites.py $COMMONC --top 1000 --out $RUN/candidate_sites_${NAME}_top1000.gpkg > log_pilot_${NAME}_top1000.txt 2>&1
-stamp "=== PILOT DONE ($NAME): $RUN/candidate_sites_${NAME}_top300.gpkg (+ .csv with maps_url) ==="
+$PY src/candidate_sites.py $COMMONC --top 500 --out $RUN/candidate_sites_${NAME}_top500.gpkg > log_pilot_${NAME}_top500.txt 2>&1
+$PY src/candidate_sites.py $COMMONC --top 1500 --out $RUN/candidate_sites_${NAME}_top1500.gpkg > log_pilot_${NAME}_top1500.txt 2>&1
+stamp "=== PILOT DONE ($NAME): $RUN/candidate_sites_${NAME}_top500.gpkg (+ .csv with maps_url) ==="
